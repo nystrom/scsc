@@ -1,0 +1,5 @@
+target/
+.ensime
+.ensime_cache/
+*.broken
+.DS_Store

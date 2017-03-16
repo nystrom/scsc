@@ -1,0 +1,85 @@
+module scsc.syntax.Lambda;
+
+header {
+  import scsc.syntax.LambdaSyntax.*;
+}
+
+body {
+}
+
+Root : Exp
+  = Spacing Exp EOF
+  .
+
+Exp {paren}
+  = "letrec" Vid sp "=" Binary sp "in" sp Exp  {Letrec, right, 2}
+  | "let" Vid sp "=" Binary sp "in" sp Exp     {Let, right, 2}
+  | "case" Binary sp "of" sp Alt ++ "|"     {Case, none, 1}
+  | Binary
+  .
+
+Binary : Exp
+  = Binary sp "||" Binary            {Or, left, 6}
+  | Binary sp "&&" Binary            {And, left, 5}
+  | Binary sp "==" Binary            {Eq, left, 4}
+  | Binary sp "!=" Binary            {Ne, left, 4}
+  | Binary sp "<" Binary             {Lt, left, 3}
+  | Binary sp "<=" Binary            {Le, left, 3}
+  | Binary sp ">" Binary             {Gt, left, 3}
+  | Binary sp ">=" Binary            {Ge, left, 3}
+  | Binary sp "+" Binary             {Add, left, 2}
+  | Binary sp "-" Binary             {Sub, left, 2}
+  | Binary sp "*" Binary             {Mul, left, 1}
+  | Binary sp "/" Binary             {Div, left, 1}
+  | Binary sp "%" Binary             {Mod, left, 1}
+  | '-' Apply                 {Neg}
+  | '!' Apply                 {Not}
+  | Apply
+  .
+
+Apply : Exp
+  = Apply sp Primary  {App, left, 1}
+  | Primary
+  .
+
+Primary : Exp
+  = '(' Exp ')'
+  | Integer {Num, 1: Integer.parseInt: Int}
+  | Cid Primary* {Ctor}
+  | Vid {Var}
+  | '\\' Vid sp "->" Exp           {Lam}
+  | '«' Exp '»' {Residual}
+  .
+
+Alt
+  = Pat "->" Exp
+  .
+
+Pat
+  = Cid sp Pat* {PCtor}
+  | Vid sp    {PVar}
+  | Integer {PNum, 1: Integer.parseInt: Int}
+  | '(' Pat ')'
+  .
+
+Integer : String
+  = Digits Spacing
+  .
+
+Digits : String
+  = [0-9]+
+  .
+
+Vid : String
+  = rats {
+    Word &{
+        ! contains (KEYWORDS, yyValue) && Character.isLowerCase(yyValue.charAt(0))
+    }
+  }.
+
+Cid : String
+  = rats {
+    Word &{
+        ! contains (KEYWORDS, yyValue) && Character.isUpperCase(yyValue.charAt(0))
+    }
+  }.
