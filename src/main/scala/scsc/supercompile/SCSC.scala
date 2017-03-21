@@ -37,7 +37,7 @@ object SCSC extends REPL {
   }
 
   def process(source: Source, e: Exp, config: REPLConfig) {
-    val result = CEK.eval(e, 200)
+    val result = CEK.eval(e, 1000)
     config.output().emitln(LambdaPrettyPrinter.show(result))
   }
 }
