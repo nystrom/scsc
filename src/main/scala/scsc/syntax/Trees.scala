@@ -1,28 +1,40 @@
 package scsc.syntax
 
-import scala.collection.mutable.ListBuffer
-import org.bitbucket.inkytonik.kiama.rewriting.Rewriter._
-import org.bitbucket.inkytonik.kiama.rewriting.Strategy
-import org.bitbucket.inkytonik.kiama.util.{ParsingREPL, Positions, Profiler}
 import scsc.syntax.LambdaSyntax._
 
 object Trees {
+  type Tree = ASTNode
   type Name = String
 
-  implicit class IV(e: Exp) {
+  implicit class AltImplicits(t: ASTNode) {
+    def show: String = LambdaPrettyPrinter.show(t).replace("  ", " ")
+  }
+
+  implicit class ExpImplicits(e: Exp) {
     def isValue: Boolean = e match {
       case Num(_) => true
       case Lam(_, _) => true
       case Var(_) => false
-      case App(_, _) => false
+      case Ctor(k, es) => es.forall(_.isValue)
       case Bin(_, _, _) => false
       case Neg(_) => false
       case Not(_) => false
+      case App(_, _) => false
       case Case(_, _) => false
       case Let(_, _, _) => false
       case Letrec(_, _, _) => false
-      case Ctor(k, es) => es.forall(_.isValue)
       case Residual(e) => true
+      case Assign(x, e) => false
+      case Seq(e1, e2) => false
+    }
+
+    def costZero: Boolean = e match {
+      case Num(_) => true
+      case Lam(_, _) => true
+      case Ctor0(_) => true
+      case Ctor(k, es) => es.forall(_.costZero)
+      case Var(x) => true
+      case _ => false
     }
   }
 
@@ -40,6 +52,37 @@ object Trees {
   case object OpMul extends Operator { override def toString = "*" }
   case object OpDiv extends Operator { override def toString = "/" }
   case object OpMod extends Operator { override def toString = "%" }
+
+  // object Ctor {
+  //   def apply(k: Name, es: List[Exp]): Exp = es.foldLeft(Ctor0(k): Exp) {
+  //     case (f, a) => App(f, a)
+  //   }
+  //   def unapply(e: Exp): Option[(Name, List[Exp])] = e match {
+  //     case Ctor0(k) => Some((k, Nil))
+  //     case App(Ctor(k, es), e) => Some((k, es :+ e))
+  //     case _ => None
+  //   }
+  // }
+
+  object Ctor {
+    def apply(k: Name, es: List[Exp]): Exp = es match {
+      case Nil => Ctor0(k)
+      case es => Ctor1(k, es)
+    }
+    def unapply(e: Exp): Option[(Name, List[Exp])] = e match {
+      case Ctor0(k) => Some((k, Nil))
+      case Ctor1(k, es) => Some((k, es))
+      case _ => None
+    }
+  }
+
+  val True = Ctor0("True")
+  val False = Ctor0("False")
+
+  def If(c: Exp, e1: Exp, e2: Exp) = {
+    Case(e1, Alt(PCtor("True", Nil), e1)::
+             Alt(PCtor("False", Nil), e2)::Nil)
+  }
 
   object Bin {
     def unapply(e: Exp): Option[(Operator, Exp, Exp)] = e match {
@@ -74,45 +117,5 @@ object Trees {
       case OpDiv => Div(e1, e2)
       case OpMod => Mod(e1, e2)
     }
-  }
-}
-object FreeVars {
-  import Trees._
-
-  def fv(t: Exp): Set[Name] = {
-    t match {
-      case o: Operator =>
-        Set()
-      case Num(_) =>
-        Set()
-      case Var(x) =>
-        Set(x)
-      case Lam(x, e) =>
-        fv(e) - x
-      case App(m, n) =>
-        fv(m) ++ fv(n)
-      case Bin(_, m, n) =>
-        fv(m) ++ fv(n)
-      case Not(m) =>
-        fv(m)
-      case Neg(m) =>
-        fv(m)
-      case Let(x, m, n) =>
-        fv(m) ++ (fv(n) - x)
-      case Letrec(x, m, n) =>
-        (fv(m) - x) ++ (fv(n) - x)
-      case Ctor(c, ms) =>
-        ms.flatMap { m => fv(m).toList }.toSet
-      case Case(e, alts) =>
-        fv(e) ++ alts.flatMap { case Alt(p, e) => fv(e) -- vars(p) }
-      case Residual(e) =>
-        fv(e)
-    }
-  }
-
-  def vars(p: Pat): Set[Name] = p match {
-    case PNum(_) => Set()
-    case PCtor(_, ps) => ps.flatMap { case p => vars(p).toList }.toSet
-    case PVar(x) => Set(x)
   }
 }

@@ -12,9 +12,24 @@ Root : Exp
   .
 
 Exp {paren}
-  = "letrec" Vid sp "=" Binary sp "in" sp Exp  {Letrec, right, 2}
-  | "let" Vid sp "=" Binary sp "in" sp Exp     {Let, right, 2}
-  | "case" Binary sp "of" sp Alt ++ "|"     {Case, none, 1}
+  = Exp9
+  .
+
+Exp9 : Exp
+  = Exp8 sp ";" Exp9  {Seq}
+  | Exp8
+  .
+
+Exp8 : Exp
+  = Vid sp ":=" Exp7  {Assign}
+  | Exp7
+  .
+
+Exp7 : Exp
+  = "letrec" Vid sp "=" Binary sp "in" Exp  {Letrec, right, 2}
+  | "let" Vid sp "=" Binary sp "in" Exp     {Let, right, 2}
+  | "var" Vid sp "=" Binary sp "in" Exp     {Letvar, right, 2}
+  | "case" Binary sp "of" Alt ++ "|"        {Case, none, 1}
   | Binary
   .
 
@@ -32,8 +47,9 @@ Binary : Exp
   | Binary sp "*" Binary             {Mul, left, 1}
   | Binary sp "/" Binary             {Div, left, 1}
   | Binary sp "%" Binary             {Mod, left, 1}
-  | '-' Apply                 {Neg}
-  | '!' Apply                 {Not}
+  | '-' Apply                        {Neg}
+  | '!' Apply                        {Not}
+  | Cid (sp Primary)+                  {Ctor1}
   | Apply
   .
 
@@ -43,21 +59,23 @@ Apply : Exp
   .
 
 Primary : Exp
-  = '(' Exp ')'
-  | Integer {Num, 1: Integer.parseInt: Int}
-  | Cid Primary* {Ctor}
-  | Vid {Var}
-  | '\\' Vid sp "->" Exp           {Lam}
-  | '«' Exp '»' {Residual}
+  = '(' Exp ")"
+  | Integer                       {Num, 1: Integer.parseInt: Int}
+  | Vid                          {Var}
+  | Cid                          {Ctor0}
+  | '\\' Vid sp "->" Exp            {Lam}
+  | "new" Cid (sp Primary)*        {New}
+  | '«' Exp "»"                     {Residual}
+  | '(' ')'                         {Unit}
   .
 
 Alt
-  = Pat "->" Exp
+  = Pat sp "->" Exp
   .
 
 Pat
-  = Cid sp Pat* {PCtor}
-  | Vid sp    {PVar}
+  = Cid (sp Pat)* {PCtor}
+  | Vid  {PVar}
   | Integer {PNum, 1: Integer.parseInt: Int}
   | '(' Pat ')'
   .
