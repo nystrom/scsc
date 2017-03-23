@@ -93,6 +93,7 @@ object Machine {
 
   // Here are the standard CEK continuations + a failure continuation
   sealed trait Cont extends Product
+
   case object Done extends Cont {
     override def toString = "∅"
   }
@@ -138,17 +139,19 @@ object Machine {
     override def toString = s"(case ☐ of ${alts.map(_.show).mkString(" | ")}) then $k"
   }
 
+  sealed trait RebuildCont extends Cont
+
   // Reificiation
-  case class RebuildLet(x: Name, e: Exp, ρ: Env, k: Cont) extends Cont {
+  case class RebuildLet(x: Name, e: Exp, ρ: Env, k: Cont) extends RebuildCont {
     override def toString = s"«let $x = ${e.show} in ☐» then $k"
   }
-  case class RebuildLetrec(x: Name, e: Exp, ρ: Env, k: Cont) extends Cont {
+  case class RebuildLetrec(x: Name, e: Exp, ρ: Env, k: Cont) extends RebuildCont {
     override def toString = s"«letrec $x = ${e.show} in ☐» then $k"
   }
-  case class RebuildCase(alts: List[Alt], altsPrime: List[Alt], ρ: Env, σOpt: Option[Store], k: Cont) extends Cont {
+  case class RebuildCase(alts: List[Alt], altsPrime: List[Alt], ρ: Env, σOpt: Option[Store], k: Cont) extends RebuildCont {
     override def toString = s"«case ☐ of ${(altsPrime.reverse ++ alts).map(_.show).mkString(" | ")}» then $k"
   }
-  case class RebuildAlt(e: Exp, p: Pat, alts: List[Alt], altsPrime: List[Alt], ρ: Env, k: Cont) extends Cont {
+  case class RebuildAlt(e: Exp, p: Pat, alts: List[Alt], altsPrime: List[Alt], ρ: Env, k: Cont) extends RebuildCont {
     override def toString = (alts, altsPrime) match {
       case (Nil, Nil) =>
         s"«case ${e.show} of $p -> ☐» then $k"
