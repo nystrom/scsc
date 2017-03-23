@@ -25,40 +25,119 @@ object HE {
   // We do this rather than splitting?
 
   // To convert to a term just reify the focus and run the machine to termination.
-  def toTerm(s: St): Option[Exp] = {
+  def toTerm(s: St): Option[(Exp, Int)] = {
     println("converting to term " + s)
     s match {
       case Σ(e, ρ, σ, Done) =>
         val u = unreify(e)
         println("--> " + u)
-        Some(u)
+        Some((u, 0))
       case Σ(e, ρ, σ, Fail(_)) =>
         None
       case Σ(e, ρ, σ, k) =>
-        toTerm(step(Σ(strongReify(e), ρ, σ, k)))
+        val s1 = step(Σ(strongReify(e), ρ, σ, k))
+        toTerm(s1) map {
+          case (u, n) => (u, n+1)
+        }
     }
+  }
+
+  type FoldResult = (Name, Exp, Exp, Exp)
+
+  def tryFold(s: St, target: St): Option[FoldResult] = {
+    (toTerm(s), toTerm(target)) match {
+      case (Some((e1, _)), Some((e2, _))) =>
+        tryFoldExp(e1, e2) match {
+          case Some(u) => return Some(u)
+          case None =>
+        }
+      case _ =>
+    }
+
+    target match {
+      case Σ(e, ρ, σ, Done) =>
+        tryFoldStVsExp(s, e)
+      case Σ(e, ρ, σ, Fail(_)) =>
+        None
+      case Σ(e, ρ, σ, k: RebuildCont) =>
+        tryFoldStVsExp(s, e) match {
+          case Some(u) =>
+            println("--> " + u)
+            Some(u)
+          case None =>
+            val target1 = step(Σ(strongReify(e), ρ, σ, k))
+            tryFold(s, target1)
+        }
+      case Σ(e, ρ, σ, k) =>
+        val target1 = step(Σ(strongReify(e), ρ, σ, k))
+        tryFold(s, target1)
+    }
+  }
+
+  def tryFoldStVsExp(s: St, target: Exp): Option[FoldResult] = {
+    s match {
+      case Σ(e, ρ, σ, Done) =>
+        tryFoldExp(e, target)
+      case Σ(e, ρ, σ, Fail(_)) =>
+        None
+      case Σ(e, ρ, σ, k: RebuildCont) =>
+        tryFoldExp(e, target) match {
+          case Some(u) =>
+            println(s"    ---> ${u}")
+            Some(u)
+          case None =>
+            val s1 = step(Σ(strongReify(e), ρ, σ, k))
+            tryFoldStVsExp(s1, target)
+        }
+      case Σ(e, ρ, σ, k) =>
+        val s1 = step(Σ(strongReify(e), ρ, σ, k))
+        tryFoldStVsExp(s1, target)
+    }
+  }
+
+  def tryFoldExp(e1: Exp, e2: Exp): Option[FoldResult] = {
+    val u1 = unreify(e1)
+    val u2 = unreify(e2)
+
+    // u1 match {
+    //   case Var(_) => return None
+    //   case v if v.isValue => return None
+    //   case _ =>
+    // }
+    //
+    // u2 match {
+    //   case Var(_) => return None
+    //   case v if v.isValue => return None
+    //   case _ =>
+    // }
+
+    println(s"TRY FOLD ${u1.show}")
+    println(s"      vs ${u2.show}")
+    MSG.msgTerms(u1, u2)
+  }
+
+  def size(e: Exp): Int = e match {
+    case App(e1, e2) => size(e1) + size(e2) + 1
+    case Bin(_, e1, e2) => size(e1) + size(e2) + 1
+    case Neg(e) => size(e) + 1
+    case Not(e) => size(e) + 1
+    case Ctor(k, es) => es.map(size(_)).sum + 1
+    case Let(x, e1, e2) => size(e1) + size(e2) + 1
+    case Letrec(x, e1, e2) => size(e1) + size(e2) + 1
+    case Case(e, alts) => size(e) + alts.map { case Alt(p, e) => size(e) }.sum + 1
+    case Lam(x, e) => size(e) + 1
+    case Var(_) => 1
+    case Num(v) => v.abs.toInt
+    case Residual(e) => size(e)
   }
 
   // Homeomorphic embedding code
   implicit class ExpHE(e1: Exp) {
-    def <<|(e2: Exp): Boolean = size(e1) <= size(e2) && he(e1, e2)
+    def <<|(e2: Exp): Boolean = {
+      size(e1) <= size(e2) && he(e1, e2)
+    }
 
     def he(e1: Exp, e2: Exp) = diving(e1, e2) || coupling(e1, e2)
-
-    def size(t: Exp): Int = t match {
-      case App(e1, e2) => size(e1) + size(e2) + 1
-      case Bin(_, e1, e2) => size(e1) + size(e2) + 1
-      case Neg(e) => size(e) + 1
-      case Not(e) => size(e) + 1
-      case Ctor(k, es) => es.map(size(_)).sum + 1
-      case Let(x, e1, e2) => size(e1) + size(e2) + 1
-      case Letrec(x, e1, e2) => size(e1) + size(e2) + 1
-      case Case(e, alts) => size(e) + alts.map { case Alt(p, e) => size(e) }.sum + 1
-      case Lam(x, e) => size(e) + 1
-      case Var(_) => 1
-      case Num(v) => math.abs(v)
-      case Residual(e) => size(e)
-    }
 
     def diving(t1: Exp, t2: Exp): Boolean = t2 match {
       case App(e1, e2) => he(t1, e1) || he(t1, e2)
@@ -93,7 +172,9 @@ object HE {
       // Treat numbers specially.
       // We compare numbers for equality when they're small.
       // Otherwise, we say just return true.
-      case (Num(k1), Num(k2)) => k1 == k2 || math.abs(k1) > 10 || math.abs(k2) > 10
+      // This ensures we eventually stop if the numbers grow without
+      // bound and nothing else changes.
+      case (Num(k1), Num(k2)) => k1 == k2 || k1.abs > 1000 || k2.abs > 1000
 
       case (e1, Residual(e2)) => coupling(e1, e2)
       case (Residual(e1), e2) => coupling(e1, e2)
@@ -110,15 +191,21 @@ object HE {
       // Otherwise, we might have too many false positives.
       //
       // FIXME: currently the whistle blows a bit too often.
-      // For instance with the logarithmic version of pow.
+      // For instance, with the logarithmic version of pow.
+      // Need to incorporate the environment too, perhaps.
       case (s1 @ Σ(e1, ρ1, σ1, k1), s2 @ Σ(e2, ρ2, σ2, k2)) if e1 == e2 && k1.getClass == k2.getClass =>
         (toTerm(s1), toTerm(s2)) match {
-          case (Some(t1), Some(t2)) =>
+          case (Some((t1, n1)), Some((t2, n2))) =>
             println("HE: comparing " + s1)
             println("           vs " + s2)
             println("HE:     terms " + t1.show)
             println("           vs " + t2.show)
-            t1 <<| t2
+            println("HE:     sizes " + size(t1))
+            println("           vs " + size(t2))
+            println("HE:     steps " + n1)
+            println("           vs " + n2)
+
+            n1 <= n2 && t1 <<| t2
           case (None, None) => true  // if both fail, blow the whistle!
           case _ => false
         }
@@ -142,33 +229,6 @@ object HE {
   // So, don't bother with the HE or anything like that.
   // This may actually work very well in practice because we won't PE code forever
 
-  implicit class Folder(s1: St) {
-    // Is s2 a rename of s1?
-    // If so, we generate a new function and call it.
-    def tryFold(s2: St): Option[St] = {
-      def unify(s1: St, s2: St): Option[List[(Name, Exp)]] = {
-        if (s1 == s2) Some(Nil)
-        else None
-      }
-
-      unify(s1, s2) map {
-        case subst =>
-          s2 match {
-            case Σ(e, ρ, σ, k) =>
-              val f = FreshVar()
-              val app = subst.foldLeft(Var(f): Exp) {
-                case (e, (x, v)) => App(e, v)
-              }
-              val lam = subst.foldRight(e: Exp) {
-                case ((x,v), lam) => Lam(x, lam)
-              }
-              // The rebuild should float out to the top
-              Σ(Residual(app), ρ, σ, RebuildLetrec(f, lam, ρ, k))
-          }
-      }
-    }
-  }
-
   // Continuation generalization.
   // We fold two states that have the same focus and different continuations.
   // (e, k1) fold (e, k2)
@@ -176,12 +236,4 @@ object HE {
   //       k2 = k2' ++ k
   // we generalize k1' and k2' to k', getting k' ++ k
   // then we restart in (e, k' ++ k)
-
-  def generalize(k1: Cont, k2: Cont): Cont = {
-    if (k1 eq k2) return k1
-    if (k1 == k2) return k1
-    (k1, k2) match {
-      case (k1, k2) => k1
-    }
-  }
 }

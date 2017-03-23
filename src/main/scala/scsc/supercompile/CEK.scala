@@ -111,20 +111,19 @@ object CEK {
     // This has the effect of floating the `let` outward, but also allowing
     // evaluation under the `let`.
     case Σ(v, ρ, σ, RebuildLet(x, e1, ρ1, Call(fun, ρ2, k))) if v.isValue && ! (fv(fun) contains x) =>
-    // println("rebuilding 3 " + Let(x, e1, v).show)
       Σ(v, ρ, σ, Call(fun, ρ2, RebuildLet(x, e1, ρ1, k)))
     case Σ(v, ρ, σ, RebuildLet(x, e1, ρ1, EvalArg(arg, ρ2, k))) if v.isValue && ! (fv(arg) contains x) =>
-    // println("rebuilding 4 " + Let(x, e1, v).show)
       Σ(v, ρ, σ, EvalArg(arg, ρ2, RebuildLet(x, e1, ρ1, k)))
     case Σ(v, ρ, σ, RebuildLet(x, e1, ρ1, EvalAlts(alts, ρ2, k))) if v.isValue && ! (fv(Case(Num(0), alts)) contains x) =>
-    // println("rebuilding 5 " + Let(x, e1, v).show)
       Σ(v, ρ, σ, EvalAlts(alts, ρ2, RebuildLet(x, e1, ρ1, k)))
     case Σ(v, ρ, σ, RebuildLet(x, e1, ρ1, OpRight(op, e2, ρ2, k))) if v.isValue && ! (fv(e2) contains x) =>
-    // println("rebuilding 6 " + Let(x, e1, v).show)
       Σ(v, ρ, σ, OpRight(op, e2, ρ2, RebuildLet(x, e1, ρ1, k)))
     case Σ(v, ρ, σ, RebuildLet(x, e1, ρ1, EvalOp(op, v1, ρ2, k))) if v.isValue && ! (fv(v1) contains x) =>
-    // println("rebuilding 7 " + Let(x, e1, v).show)
       Σ(v, ρ, σ, EvalOp(op, v1, ρ2, RebuildLet(x, e1, ρ1, k)))
+    case Σ(v, ρ, σ, RebuildLet(x, e1, ρ1, LetCont(y, e2, ρ2, k))) if v.isValue && ! (fv(e2) contains x) && x != y =>
+      Σ(v, ρ, σ, LetCont(y, e2, ρ2, RebuildLet(x, e1, ρ1, k)))
+    case Σ(v, ρ, σ, RebuildLet(x, e1, ρ1, LetrecCont(y, e2, ρ2, k))) if v.isValue && ! (fv(e2) contains x) && x != y =>
+      Σ(v, ρ, σ, LetrecCont(y, e2, ρ2, RebuildLet(x, e1, ρ1, k)))
 
     case Σ(v, ρ, σ, RebuildLetrec(x, e1, ρ1, Call(fun, ρ2, k))) if v.isValue && ! (fv(fun) contains x) =>
       Σ(v, ρ, σ, Call(fun, ρ2, RebuildLetrec(x, e1, ρ1, k)))
@@ -136,36 +135,28 @@ object CEK {
       Σ(v, ρ, σ, OpRight(op, e2, ρ2, RebuildLetrec(x, e1, ρ1, k)))
     case Σ(v, ρ, σ, RebuildLetrec(x, e1, ρ1, EvalOp(op, v1, ρ2, k))) if v.isValue && ! (fv(v1) contains x) =>
       Σ(v, ρ, σ, EvalOp(op, v1, ρ2, RebuildLetrec(x, e1, ρ1, k)))
+    case Σ(v, ρ, σ, RebuildLetrec(x, e1, ρ1, LetCont(y, e2, ρ2, k))) if v.isValue && ! (fv(e2) contains x) && x != y =>
+      Σ(v, ρ, σ, LetCont(y, e2, ρ2, RebuildLetrec(x, e1, ρ1, k)))
+    case Σ(v, ρ, σ, RebuildLet(x, e1, ρ1, LetrecCont(y, e2, ρ2, k))) if v.isValue && ! (fv(e2) contains x) && x != y =>
+      Σ(v, ρ, σ, LetrecCont(y, e2, ρ2, RebuildLetrec(x, e1, ρ1, k)))
 
 
-    // collapse redundant lets .. do this even if the focus is not a value!
-    // k (let x = e2 in let x = e1 in v)
-    // ->
-    // k (let x = e1 in v)
-    // case Σ(v, ρ, σ, RebuildLet(x1, e1, ρ1, RebuildLet(x2, e2, ρ2, k))) if x1 == x2 && e1.costZero =>
-    //   Σ(v, ρ, σ, RebuildLet(x1, e1, ρ2, k))
-
-    // For other cases, just reify the let _if needed_.
+    // Reify the let only if needed.
     // In particular, don't generate let x = x in e and don't generate let x = e1 in e2 if x is not free in e2
     // These are harmless except the first prevents use from easily copying and pasting the output into Haskell
     // (because Haskell's let is really letrec and let x = x is a black hole),
     // and the latter makes termination detection more difficult.
     case Σ(v, ρ, σ, RebuildLet(x, Let(y, e1, e2), ρ1, k)) if v.isValue =>
-    // println("rebuilding 8 " + Let(y, e1, Let(x, e2, v)).show)
       Σ(v, ρ, σ, RebuildLet(x, e2, ρ1, RebuildLet(y, e1, ρ1, k)))
 
     case Σ(v, ρ, σ, RebuildLet(x, e1, ρ1, k)) if v.isValue && (fv(v) contains x) && unreify(e1) != Var(x) =>
-    // println("reifying! " + Let(x, e1, v).show)
       Σ(reify(Let(x, e1, v)), ρ1, σ, k)
     case Σ(v, ρ, σ, RebuildLet(x, e1, ρ1, k)) if v.isValue =>
-    // println("eliminating! " + Let(x, e1, v).show)
-      // don't reify the let if we don't have to.
       Σ(v, ρ1, σ, k)
 
     case Σ(v, ρ, σ, RebuildLetrec(x, e1, ρ1, k)) if v.isValue && (fv(v) contains x) =>
       Σ(reify(Letrec(x, e1, v)), ρ1, σ, k)
     case Σ(v, ρ, σ, RebuildLetrec(x, e1, ρ1, k)) if v.isValue =>
-      // don't reify the letrec if we don't have to.
       Σ(v, ρ1, σ, k)
 
     ////////////////////////////////////////////////////////////////
@@ -449,17 +440,18 @@ object CEK {
   def eval(e: Exp, maxSteps: Int): Exp = {
     import HE._
 
+    var t = maxSteps
     var s = inject(e)
 
-    val hist: ListBuffer[St] = ListBuffer()
-    hist += s
+    // TODO:
+    // New termination strategy:
+    // Run for maxSteps. If we terminate, great.
+    // Otherwise, _restart_ and run with termination checking enabled.
 
-    var t = maxSteps
-
-    while (true) {
+    while (t > 0) {
       t -= 1
       println(s)
-      println("term " + toTerm(s).map(_.show).getOrElse("FAIL"))
+      // println("term " + toTerm(s).map(_.show).getOrElse("FAIL"))
 
       s match {
         // stop when we have a value with the empty continuation.
@@ -469,51 +461,90 @@ object CEK {
         case Σ(v, _, σ, Fail(s)) if v.isValue =>
           return Lam("error", v)
 
-        case s0 @ Σ(e, ρ, σ, k) if t == 0 =>
-          val s1 = step(s0)
+        case s0 @ Σ(e, ρ, σ, k) =>
+          s = step(s0)
+      }
+    }
 
-          println(s"aborting after $maxSteps...")
+    // Go again! Performing termination checking as we go.
+    t = maxSteps
+    s = inject(e)
 
-          toTerm(s1) match {
-            case Some(t1) =>
-              return t1
-            case None =>
-              return Lam("nontermination", e)
-          }
+    val hist: ListBuffer[St] = ListBuffer()
+    hist += s
+
+    while (true) {
+      t -= 1
+      println(s)
+      println("term " + toTerm(s).map { case (u, n) => s"${u.show} in $n steps" }.getOrElse("FAIL"))
+
+      s match {
+        // stop when we have a value with the empty continuation.
+        case Σ(v, _, σ, Done) if v.isValue =>
+          return v
+
+        case Σ(v, _, σ, Fail(s)) if v.isValue =>
+          return Lam("error", v)
+
+        // case s0 @ Σ(e, ρ, σ, k) if t == 0 =>
+        //   val s1 = step(s0)
+        //
+        //   println(s"aborting after $maxSteps...")
+        //
+        //   toTerm(s1) match {
+        //     case Some((t1, _)) =>
+        //       return t1
+        //     case None =>
+        //       return Lam("nontermination", e)
+        //   }
 
         case s0 @ Σ(focus, ρ, σ, k) =>
           val s1 = step(s0)
 
           s1 match {
-            case Σ(focus1 @ Var(x), ρ1, σ, k1) =>
+            case Σ(focus1 @ Var(_), ρ1, σ, k1) =>
               s = hist.foldRight(s1) {
-                case (prev, s_) if s1 == s_ => prev.tryFold(s1) match {
-                  case Some(s3) =>
-                    println(s"FOLD $prev")
-                    println(s" ==| $s1")
-                    println(s" ==> $s3")
-                    s3
-                  case None =>
-                    if (prev == s1 || prev <<| s1) {
-                      println(s"WHISTLE $prev")
-                      println(s"    <<| $s1")
-                      toTerm(s1) match {
-                        case Some(t1) =>
-                          return t1
-                        case None =>
-                          return Lam("error", focus1)
-                      }
+                case (prev, s_) if s1 == s_ =>
+                  // try to fold, just for debugging purposes now
+                  // tryFold(s1, prev) match {
+                  //   case Some((f, lam, app1, app2)) =>
+                  //     println(s"FOLD $prev")
+                  //     println(s"  lam = ${lam.show}")
+                  //     println(s"  app1 = ${app1.show}")
+                  //     println(s"  app2 = ${app2.show}")
+                  //   case None =>
+                  // }
+
+                  if (prev == s1 || prev <<| s1) {
+                    println(s"WHISTLE $prev")
+                    println(s"    <<| $s1")
+
+                    tryFold(s1, prev) match {
+                      case Some((f, lam, app1, app2)) =>
+                        println(s"FOLD $prev")
+                        println(s"  lam = ${lam.show}")
+                        println(s"  app1 = ${app1.show}")
+                        println(s"  app2 = ${app2.show}")
+                      case None =>
                     }
-                    else {
-                      // keep going
-                      s1
+
+                    toTerm(s1) match {
+                      case Some((t1, _)) =>
+                        return t1
+                      case None =>
+                        return Lam("error", focus1)
                     }
-                }
+                  }
+                  else {
+                    // keep going
+                    s1
+                  }
                 case (prev, s2) =>
                   s2
               }
 
               hist += s
+
             case s1 =>
               s = s1
           }

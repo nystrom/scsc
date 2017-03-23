@@ -100,9 +100,22 @@ object MSG {
         val app2 = vars1.foldLeft(Var(f): Exp) {
           case (e, x) => App(e, s2(x))
         }
+
+        val vars2 = fv(lam).toList
+
+        val vapp1 = vars2.foldLeft(app1: Exp) {
+          case (e, x) => App(e, Var(x))
+        }
+        val vapp2 = vars2.foldLeft(app2: Exp) {
+          case (e, x) => App(e, Var(x))
+        }
+        val vlam = vars2.foldRight(lam: Exp) {
+          case (x, lam) => Lam(x, lam)
+        }
+
         // Bind f to a new lambda that generalizes t1 and t2.
         // app1 and app2 are calls to f that should be equivalent to t1 and t2.
-        (f, lam, app1, app2)
+        (f, vlam, vapp1, vapp2)
     }
   }
 
@@ -114,9 +127,21 @@ object MSG {
     case (Var(a), Var(b)) if a == b => Some((Nil, emptySubst, emptySubst, Var(a)))
     case (Num(a), Num(b)) if a == b => Some((Nil, emptySubst, emptySubst, Num(a)))
     // FIXME
-    case (Lam(pa, a), Lam(pb, b)) if pa == pb && a == b => Some((Nil, emptySubst, emptySubst, Lam(pa, a)))
-    case (Let(pa, a1, a2), Let(pb, b1, b2)) if pa == pb && a1 == b1 && a2 == b2 => Some((Nil, emptySubst, emptySubst, Let(pa, a1, a2)))
-    // Eh...
+    case (Lam(ax, a), Lam(bx, b)) if ax == bx =>
+      for {
+        (vars, sa, sb, c) <- generalize(a, b)
+      } yield (vars, sa, sb, Lam(ax, c))
+    case (Let(ax, a1, a2), Let(bx, b1, b2)) if ax == bx && a1 == b1 =>
+      for {
+        (vars, sa, sb, c2) <- generalize(a2, b2)
+      } yield (vars, sa, sb, Let(ax, a1, c2))
+    case (Letrec(ax, a1, a2), Letrec(bx, b1, b2)) if ax == bx && a1 == b1 =>
+      for {
+        (vars, sa, sb, c2) <- generalize(a2, b2)
+        // TODO
+        // if ! fv(sa) contains ax
+        // if ! fv(sb) contains pa
+      } yield (vars, sa, sb, Letrec(ax, a1, c2))
     case (Ctor(ka, Nil), Ctor(kb, Nil)) if ka == kb =>
       Some((Nil, emptySubst, emptySubst, Ctor(ka, Nil)))
     case (Ctor(ka, a::as), Ctor(kb, b::bs)) if ka == kb =>
@@ -129,9 +154,29 @@ object MSG {
         (vars1, sl1, sl2, tl) <- generalize(l1, l2)
         (vars2, sr1, sr2, tr) <- generalize(r1, r2)
       } yield (vars1 ++ vars2, sl1 @@ sr1, sl2 @@ sr2, App(tl, tr))
+    case (Bin(op1, l1, r1), Bin(op2, l2, r2)) if op1 == op2 =>
+      for {
+        (vars1, sl1, sl2, tl) <- generalize(l1, l2)
+        (vars2, sr1, sr2, tr) <- generalize(r1, r2)
+      } yield (vars1 ++ vars2, sl1 @@ sr1, sl2 @@ sr2, Bin(op1, tl, tr))
+    case (Not(r1), Not(r2)) =>
+      for {
+        (vars2, sr1, sr2, tr) <- generalize(r1, r2)
+      } yield (vars2, sr1, sr2, Not(tr))
+    case (Neg(r1), Neg(r2)) =>
+      for {
+        (vars2, sr1, sr2, tr) <- generalize(r1, r2)
+      } yield (vars2, sr1, sr2, Neg(tr))
+    case (Case(r1, alts1), Case(r2, alts2)) if alts1 == alts2 =>
+      for {
+        (vars2, sr1, sr2, tr) <- generalize(r1, r2)
+      } yield (vars2, sr1, sr2, Case(tr, alts1))
+    case (t1, t2) if t1 == t2 =>
+      Some((Nil, emptySubst, emptySubst, t1))
     case (t1, t2) =>
       // head of the terms not equal. Introduce a new variable.
       val a = FreshVar()
       Some((a::Nil, singletonSubst(a, t1), singletonSubst(a, t2), Var(a)))
   }
+
 }
