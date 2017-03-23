@@ -60,7 +60,8 @@ Apply : Exp
 
 Primary : Exp
   = '(' Exp ")"
-  | Integer                       {Num, 1: Integer.parseInt: Int}
+  //| Integer                       {Num, 1: scala.math.BigInt$.MODULE$.apply: scala.math.BigInt}
+  | Integer                       {Num, 1: Long.parseLong: Long}
   | Vid                          {Var}
   | Cid                          {Ctor0}
   | '\\' Vid sp "->" Exp            {Lam}
@@ -76,7 +77,8 @@ Alt
 Pat
   = Cid (sp Pat)* {PCtor}
   | Vid  {PVar}
-  | Integer {PNum, 1: Integer.parseInt: Int}
+  //| Integer {PNum, 1: scala.math.BigInt$.MODULE$.apply: scala.math.BigInt}
+  | Integer                       {PNum, 1: Long.parseLong: Long}
   | '(' Pat ')'
   .
 
