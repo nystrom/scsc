@@ -44,6 +44,11 @@ object Examples {
   letrec length = (\xs -> case xs of Nil -> 0 | (Cons x ys) -> 1 + (length ys)) in length (Cons 7 (Cons 8 (Cons 9 Nil)))
   """
 
+  // 4
+  val length1c = """
+  letrec length = (\xs -> case xs of Nil -> 0 | (Cons x ys) -> 1 + (length ys)) in length (Cons a (Cons b (Cons c Nil)))
+  """
+
   // 0
   val length2 = """
   letrec length = (\xs -> case xs of Nil -> 0 | (Cons x xs) -> 1 + (length xs)) in length Nil
@@ -72,7 +77,12 @@ object Examples {
 
   // does not terminate
   val append5 = """
-  letrec append = (\xs -> \ys -> case xs of Nil -> ys | (Cons x xs) -> (Cons x (append xs ys))) in (append (append xs ys) zs)
+  letrec append = (\xs -> \ys -> case xs of Nil -> ys | (Cons z zs) -> (Cons z (append zs ys))) in (append as (append bs cs))
+  """
+
+  // does not terminate
+  val append6 = """
+  letrec append = (\xs -> \ys -> case xs of Nil -> ys | (Cons z zs) -> (Cons z (append zs ys))) in (append (append as bs) cs)
   """
 
   // [[(a * a * a)]]
@@ -94,4 +104,11 @@ object Examples {
   letrec pow = (\x -> (\n -> case n of 0 -> 1 | n -> case (n % 2) of 0 -> (let r = (pow x (n / 2)) in (r*r)) | 1 -> x * (pow x (n-1)))) in (pow a 3)
   """
 
+  val fact10 = """
+  letrec fact = \n -> case n of 0 -> 1 | m -> m * (fact (m-1)) in fact 10
+  """
+
+  val fib10 = """
+  letrec fib = \n -> case n of 0 -> 1 | 1 -> 1 | m -> (fib (m-1)) + (fib (m-2)) in fib(10)
+  """
 }
