@@ -32,8 +32,9 @@ object Trees {
       case Num(_) => true
       case Lam(_, _) => true
       case Ctor0(_) => true
-      case Ctor(k, es) => es.forall(_.costZero)
+      case Ctor1(k, es) => es.forall(_.costZero)
       case Var(x) => true
+      case Residual(e) => e.costZero
       case _ => false
     }
   }
