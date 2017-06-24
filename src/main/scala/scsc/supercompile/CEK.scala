@@ -120,10 +120,10 @@ object CEK {
       Σ(v, ρ, σ, OpRight(op, e2, ρ2, RebuildLet(x, e1, ρ1, k)))
     case Σ(v, ρ, σ, RebuildLet(x, e1, ρ1, EvalOp(op, v1, ρ2, k))) if v.isValue && ! (fv(v1) contains x) =>
       Σ(v, ρ, σ, EvalOp(op, v1, ρ2, RebuildLet(x, e1, ρ1, k)))
-    case Σ(v, ρ, σ, RebuildLet(x, e1, ρ1, LetCont(y, e2, ρ2, k))) if v.isValue && ! (fv(e2) contains x) && x != y =>
-      Σ(v, ρ, σ, LetCont(y, e2, ρ2, RebuildLet(x, e1, ρ1, k)))
-    case Σ(v, ρ, σ, RebuildLet(x, e1, ρ1, LetrecCont(y, e2, ρ2, k))) if v.isValue && ! (fv(e2) contains x) && x != y =>
-      Σ(v, ρ, σ, LetrecCont(y, e2, ρ2, RebuildLet(x, e1, ρ1, k)))
+    // case Σ(v, ρ, σ, RebuildLet(x, e1, ρ1, LetCont(y, e2, ρ2, k))) if v.isValue && ! (fv(e2) contains x) && x != y =>
+    //   Σ(v, ρ, σ, LetCont(y, e2, ρ2, RebuildLet(x, e1, ρ1, k)))
+    // case Σ(v, ρ, σ, RebuildLet(x, e1, ρ1, LetrecCont(y, e2, ρ2, k))) if v.isValue && ! (fv(e2) contains x) && x != y =>
+    //   Σ(v, ρ, σ, LetrecCont(y, e2, ρ2, RebuildLet(x, e1, ρ1, k)))
 
     case Σ(v, ρ, σ, RebuildLetrec(x, e1, ρ1, Call(fun, ρ2, k))) if v.isValue && ! (fv(fun) contains x) =>
       Σ(v, ρ, σ, Call(fun, ρ2, RebuildLetrec(x, e1, ρ1, k)))
@@ -135,10 +135,10 @@ object CEK {
       Σ(v, ρ, σ, OpRight(op, e2, ρ2, RebuildLetrec(x, e1, ρ1, k)))
     case Σ(v, ρ, σ, RebuildLetrec(x, e1, ρ1, EvalOp(op, v1, ρ2, k))) if v.isValue && ! (fv(v1) contains x) =>
       Σ(v, ρ, σ, EvalOp(op, v1, ρ2, RebuildLetrec(x, e1, ρ1, k)))
-    case Σ(v, ρ, σ, RebuildLetrec(x, e1, ρ1, LetCont(y, e2, ρ2, k))) if v.isValue && ! (fv(e2) contains x) && x != y =>
-      Σ(v, ρ, σ, LetCont(y, e2, ρ2, RebuildLetrec(x, e1, ρ1, k)))
-    case Σ(v, ρ, σ, RebuildLet(x, e1, ρ1, LetrecCont(y, e2, ρ2, k))) if v.isValue && ! (fv(e2) contains x) && x != y =>
-      Σ(v, ρ, σ, LetrecCont(y, e2, ρ2, RebuildLetrec(x, e1, ρ1, k)))
+    // case Σ(v, ρ, σ, RebuildLetrec(x, e1, ρ1, LetCont(y, e2, ρ2, k))) if v.isValue && ! (fv(e2) contains x) && x != y =>
+    //   Σ(v, ρ, σ, LetCont(y, e2, ρ2, RebuildLetrec(x, e1, ρ1, k)))
+    // case Σ(v, ρ, σ, RebuildLet(x, e1, ρ1, LetrecCont(y, e2, ρ2, k))) if v.isValue && ! (fv(e2) contains x) && x != y =>
+    //   Σ(v, ρ, σ, LetrecCont(y, e2, ρ2, RebuildLetrec(x, e1, ρ1, k)))
 
 
     // Reify the let only if needed.
