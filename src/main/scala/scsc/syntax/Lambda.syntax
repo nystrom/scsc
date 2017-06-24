@@ -67,7 +67,15 @@ Primary : Exp
   | '\\' Vid sp "->" Exp            {Lam}
   | "new" Cid (sp Primary)*        {New}
   | '«' Exp "»"                     {Residual}
-  | '(' ')'                         {Unit}
+  | Loc
+  .
+
+Loc : Exp
+  = '@' Integer         {1: Long.parseLong: Long}
+  .
+
+PLoc : Pat
+  = '@' Integer         {1: Long.parseLong: Long}
   .
 
 Alt
@@ -79,6 +87,7 @@ Pat
   | Vid  {PVar}
   //| Integer {PNum, 1: scala.math.BigInt$.MODULE$.apply: scala.math.BigInt}
   | Integer                       {PNum, 1: Long.parseLong: Long}
+  | PLoc
   | '(' Pat ')'
   .
 

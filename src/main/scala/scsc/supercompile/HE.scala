@@ -7,9 +7,9 @@ import scsc.syntax.FreeVars._
 
 // We start with a CEK machine for the lambda calculus.
 object HE {
-  import scsc.supercompile.Machine._
-  import scsc.supercompile.Residualization._
-  import scsc.supercompile.CEK._
+  import Machine._
+  import Residualization._
+  import CEK._
 
   // In SC / PE, we get stuck when focus is a Var!
   // Add continuations for Bin and for Case, etc.
@@ -128,6 +128,7 @@ object HE {
     case Lam(x, e) => size(e) + 1
     case Var(_) => 1
     case Num(v) => v.abs.toInt
+    case Loc(v) => 1
     case Residual(e) => size(e)
   }
 
@@ -151,6 +152,7 @@ object HE {
       case Lam(x, e) => he(t1, e)
       case Var(_) => false
       case Num(_) => false
+      case Loc(_) => false
       case Residual(e) => he(t1, e)
     }
 
@@ -175,6 +177,7 @@ object HE {
       // This ensures we eventually stop if the numbers grow without
       // bound and nothing else changes.
       case (Num(k1), Num(k2)) => k1 == k2 || k1.abs > 1000 || k2.abs > 1000
+      case (Loc(k1), Loc(k2)) => k1 == k2
 
       case (e1, Residual(e2)) => coupling(e1, e2)
       case (Residual(e1), e2) => coupling(e1, e2)

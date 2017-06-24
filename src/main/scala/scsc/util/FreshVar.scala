@@ -1,4 +1,4 @@
-package scsc.supercompile
+package scsc.util
 
 import org.bitbucket.inkytonik.kiama.util.Counter
 

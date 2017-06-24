@@ -14,8 +14,9 @@ object Trees {
     def isValue: Boolean = e match {
       case Num(_) => true
       case Lam(_, _) => true
-      case Var(_) => false
       case Ctor(k, es) => es.forall(_.isValue)
+      case Loc(_) => true
+      case Var(_) => false
       case Bin(_, _, _) => false
       case Neg(_) => false
       case Not(_) => false
@@ -23,9 +24,9 @@ object Trees {
       case Case(_, _) => false
       case Let(_, _, _) => false
       case Letrec(_, _, _) => false
-      case Residual(e) => true
       case Assign(x, e) => false
       case Seq(e1, e2) => false
+      case Residual(e) => true
     }
 
     def costZero: Boolean = e match {
@@ -33,6 +34,7 @@ object Trees {
       case Lam(_, _) => true
       case Ctor0(_) => true
       case Ctor1(k, es) => es.forall(_.costZero)
+      case Loc(_) => true
       case Var(x) => true
       case Residual(e) => e.costZero
       case _ => false
@@ -79,6 +81,7 @@ object Trees {
 
   val True = Ctor0("True")
   val False = Ctor0("False")
+  val Unit = Ctor0("Unit")
 
   def If(c: Exp, e1: Exp, e2: Exp) = {
     Case(e1, Alt(PCtor("True", Nil), e1)::
