@@ -2,7 +2,7 @@ scalaVersion := "2.12.0"
 
 name := "scsc"
 
-organization := "ch.usi.scsc"
+organization := "ch.usi.l3.scsc"
 
 version := "0.1"
 
