@@ -1,6 +1,7 @@
 package scsc.supercompile
 
 import com.typesafe.scalalogging._
+import scsc.util.FreshVar
 
 // Context reduction.
 // The goal of context reduction is to reduce the list of predicates to
