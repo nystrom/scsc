@@ -5,14 +5,14 @@ import scsc.js.Trees._
 object Machine {
 
   // The state of the CEK machine:
-  case class Σ(c: Node, e: Env, s: Store, k: Cont) {
+  case class Σ(c: Exp, e: Env, s: Store, k: Cont) {
     override def toString = s"Σ(e = ${c.show}, ρ = $e, σ = $s, k = $k)"
   }
 
   type St = Σ
 
   // Inject a term into the machine.
-  def inject(e: Node): St = Σ(e, ρ0, σ0, Done)
+  def inject(e: Exp): St = Σ(e, ρ0, σ0, Done)
 
   ////////////////////////////////////////////////////////////////
   // ENVIRONMENTS
@@ -28,8 +28,8 @@ object Machine {
 
   trait Env {
     def get(x: Name): Option[Closure]
-    def add(x: Name, v: Node, ρ: Env): Env
-    def addrec(x: Name, v: Node): Env
+    def add(x: Name, v: Exp, ρ: Env): Env
+    def addrec(x: Name, v: Exp): Env
   }
 
   case class MapEnv(table: Map[Name, Closure]) extends Env {
@@ -88,44 +88,56 @@ object Machine {
   ////////////////////////////////////////////////////////////////
 
   // Here are the standard CEK continuations + a failure continuation
-  sealed trait Cont extends Product
+  sealed trait Cont extends Product {
+    def next: Cont
+  }
 
   case object Done extends Cont {
     override def toString = "∅"
+    override def next = this
   }
 
-  case class EvalArg(arg: Exp, ρ: Env, k: Cont) extends Cont {
-    override def toString = s"☐ ${arg.show} then $k"
+  case class EvalArg(arg: Exp, ρ: Env, next: Cont) extends Cont {
+    override def toString = s"☐ ${arg.show} then $next"
   }
-  case class DoCall(funValue: Exp, ρ: Env, k: Cont) extends Cont {
-    override def toString = s"${funValue.show} ☐ then $k"
+  case class DoCall(funValue: Exp, ρ: Env, next: Cont) extends Cont {
+    override def toString = s"${funValue.show} ☐ then $next"
   }
   case class Fail(s: String) extends Cont {
     override def toString = s"FAIL($s)"
-  }
-
-  // Unary operators
-  case class UnaryCont(op: Operator, ρ: Env, k: Cont) extends Cont {
-    override def toString = s"$op ☐ then $k"
+    override def next = this
   }
 
   // Extensions:
-  // Binary operators.
-  case class OpRight(op: Operator, e2: Exp, ρ: Env, k: Cont) extends Cont {
-    override def toString = s"☐ $op ${e2.show} then $k"
+
+  // Unary operators
+  case class UnaryCont(op: Operator, ρ: Env, next: Cont) extends Cont {
+    override def toString = s"$op ☐ then $next"
   }
-  case class EvalOp(op: Operator, v1: Exp, ρ: Env, k: Cont) extends Cont {
-    override def toString = s"${v1.show} $op ☐ then $k"
+
+  // Binary operators.
+  case class OpRight(op: Operator, e2: Exp, ρ: Env, next: Cont) extends Cont {
+    override def toString = s"☐ $op ${e2.show} then $next"
+  }
+  case class EvalOp(op: Operator, v1: Exp, ρ: Env, next: Cont) extends Cont {
+    override def toString = s"${v1.show} $op ☐ then $next"
+  }
+
+  case class BindCont(x: Name, ρ: Env, next: Cont) extends Cont
+  case class BlockCont(ss: List[Exp], ρ: Env, next: Cont) extends Cont
+  case class BranchCont(t: Cont, f: Cont, next: Cont) extends Cont
+  case class LoopCont(label: Option[Name], cont: Cont, brk: Cont) extends Cont {
+    override def next = brk
   }
 
   // Constructors.
-  case class EvalCtorArgs(n: Name, argsToCompute: List[Exp], argsComputed: List[Exp], ρ: Env, k: Cont) extends Cont {
-    override def toString = s"($n ${argsComputed.map(_.show).reverse.mkString(" ")} ☐ ${argsToCompute.map(_.show).mkString(" ")}) then $k"
+  case class EvalCtorArgs(n: Name, argsToCompute: List[Exp], argsComputed: List[Exp], ρ: Env, next: Cont) extends Cont {
+    override def toString = s"($n ${argsComputed.map(_.show).reverse.mkString(" ")} ☐ ${argsToCompute.map(_.show).mkString(" ")}) then $next"
   }
 
   sealed trait RebuildCont extends Cont
 
-  case class RebuildLet(x: Name, v: Exp, ρ: Env, k: Cont) extends RebuildCont {
-    override def toString = s"[[ let $x = $v in ☐ ]] then $k"
+  case class RebuildLet(x: Name, v: Exp, ρ: Env, next: Cont) extends RebuildCont {
+    override def toString = s"[[ let $x = $v in ☐ ]] then $next"
   }
 }

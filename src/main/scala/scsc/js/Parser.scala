@@ -23,21 +23,21 @@ object Parser {
   lazy val errors = new ErrorManager()
   lazy val context = new Context(options, errors, Thread.currentThread.getContextClassLoader)
 
-  def fromString(input: String): Option[Exp] = {
+  def fromString(input: String): Option[Program] = {
     val source = Source.sourceFor("(input)", input)
     val parser = new JSParser(context.getEnv, source, errors)
     parser.parse match {
       case null => None
-      case n => Some(MakeTrees.make(n))
+      case n => MakeTrees.make(n)
     }
   }
 
-  def fromFile(path: String): Option[Exp] = {
+  def fromFile(path: String): Option[Program] = {
     val source = Source.sourceFor(path, new java.io.File(path))
     val parser = new JSParser(context.getEnv, source, errors)
     parser.parse match {
       case null => None
-      case n => Some(MakeTrees.make(n))
+      case n => MakeTrees.make(n)
     }
   }
 }

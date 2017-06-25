@@ -16,10 +16,23 @@ object MakeTrees {
     def toList = xs.asScala.toList
   }
 
-  def make(n: ir.Node): Exp = {
+  def make(n: ir.Node): Option[Program] = {
     val v = new TreeBuilder
     n.accept(v)
-    v.peek
+    v.peek flatMap {
+      case p: Program =>
+        v.pop
+        v.peek match {
+          case Some(_) =>
+            println("stack not empty")
+          case None =>
+            // ok
+        }
+        Some(p)
+      case _ =>
+        println("Program is not at top of stack")
+        None
+    }
   }
 
   // Default implementation of NodeOperatorVisitor.
@@ -29,6 +42,7 @@ object MakeTrees {
     var stack: List[Exp] = Nil
 
     def push(e: Exp): Unit = {
+      println(s"push $e")
       stack = e::stack
     }
 
@@ -36,19 +50,18 @@ object MakeTrees {
       stack match {
         case e::es =>
           stack = es
+          println(s"pop $e")
           e
         case Nil =>
           ???
       }
     }
 
-    def peek: Exp = {
-      stack match {
-        case e::es =>
-          e
-        case Nil =>
-          ???
-      }
+    def peek: Option[Exp] = stack.headOption
+
+    override def leaveDefault(n: ir.Node): ir.Node = {
+      println(s"unimplemented ${n.getClass.getName}")
+      n
     }
 
     // Unary leave - callback for leaving a unary +
@@ -65,46 +78,44 @@ object MakeTrees {
       n
     }
 
-
-
     // Unary leave - callback for leaving a ++ or -- operator
-     override def leaveDECINC(n: ir.UnaryNode): ir.Node = {
-       val e = pop
-       val op = n.tokenType match {
-         case TokenType.DECPREFIX =>
-           Prefix.--
-         case TokenType.INCPREFIX =>
-           Prefix.++
-         case TokenType.DECPOSTFIX =>
-           Postfix.--
-         case TokenType.INCPOSTFIX =>
-           Postfix.++
-         case _ =>
-           ???
-       }
-       push(IncDec(op, e))
-       n
+    override def leaveDECINC(n: ir.UnaryNode): ir.Node = {
+      val e = pop
+      val op = n.tokenType match {
+        case TokenType.DECPREFIX =>
+          Prefix.--
+        case TokenType.INCPREFIX =>
+          Prefix.++
+        case TokenType.DECPOSTFIX =>
+          Postfix.--
+        case TokenType.INCPOSTFIX =>
+          Postfix.++
+        case _ =>
+          ???
+      }
+      push(IncDec(op, e))
+      n
     }
 
     // Unary leave - callback for leaving a delete operator
-     override def leaveDELETE(n: ir.UnaryNode): ir.Node = {
-       val e = pop
-       push(Delete(e))
-       n
+    override def leaveDELETE(n: ir.UnaryNode): ir.Node = {
+      val e = pop
+      push(Delete(e))
+      n
     }
 
     // Unary leave - callback for leaving a new operator
-     override def leaveNEW(n: ir.UnaryNode): ir.Node = {
-       val e = pop
-       push(New(e))
-       n
+    override def leaveNEW(n: ir.UnaryNode): ir.Node = {
+      val e = pop
+      push(New(e))
+      n
     }
 
     // Unary leave - callback for leaving a ! operator
-     override def leaveNOT(n: ir.UnaryNode): ir.Node = {
-       val e = pop
-       push(Unary(Prefix.!, e))
-       n
+    override def leaveNOT(n: ir.UnaryNode): ir.Node = {
+      val e = pop
+      push(Unary(Prefix.!, e))
+      n
     }
 
     // Unary leave - callback for leaving a unary -
@@ -115,25 +126,25 @@ object MakeTrees {
     }
 
     // Unary leave - callback for leaving a typeof operator
-     override def leaveTYPEOF(n: ir.UnaryNode): ir.Node = {
-       val e = pop
-       push(Typeof(e))
-       n
+    override def leaveTYPEOF(n: ir.UnaryNode): ir.Node = {
+      val e = pop
+      push(Typeof(e))
+      n
     }
 
     // Unary leave - callback for leaving a void
-     override def leaveVOID(n: ir.UnaryNode): ir.Node = {
-       val e = pop
-       push(Void(e))
-       n
+    override def leaveVOID(n: ir.UnaryNode): ir.Node = {
+      val e = pop
+      push(Void(e))
+      n
     }
 
     // Binary leave - callback for leaving a + operator
-   override def leaveADD(n: ir.BinaryNode): ir.Node = {
-       val right = pop
-       val left = pop
-       push(Binary(Binary.+, left, right))
-       n
+    override def leaveADD(n: ir.BinaryNode): ir.Node = {
+      val right = pop
+      val left = pop
+      push(Binary(Binary.+, left, right))
+      n
     }
 
     // Binary leave - callback for leaving a {@literal &&} operator
@@ -460,28 +471,67 @@ object MakeTrees {
 
     // Callback for leaving a CallNode
     override def leaveCallNode(n: ir.CallNode): ir.Node = {
+      // If the node has an EvalArgs child, pop its children from the stack.
+      if (n.getEvalArgs != null) {
+        val evalThis = pop
+        val evalCode = pop
+        ()
+      }
       val es = ListBuffer.empty[Exp]
       for (s <- n.getArgs.toList)
         es += pop
       val f = pop
-      push(Call(f, es.toList.reverse))
+      if (n.isNew)
+        push(Call(f, es.toList.reverse))
+      else
+        push(NewCall(f, es.toList.reverse))
       n
     }
 
     // Callback for leaving a CaseNode
     override def leaveCaseNode(n: ir.CaseNode): ir.Node = {
-      val body = pop
-      val test = pop
-      push(Case(test, body))
+      if (n.getTest != null && n.getBody != null) {
+        val body = pop
+        val test = pop
+        push(Case(Some(test), body.asInstanceOf[Block]))
+      }
+      else if (n.getBody != null) {
+        val body = pop
+        push(Case(None, body.asInstanceOf[Block]))
+      }
+      else if (n.getTest != null) {
+        val test = pop
+        push(Case(Some(test), Block(Nil)))
+      }
+      else {
+        push(Case(None, Block(Nil)))
+      }
       n
     }
 
     // Callback for leaving a CatchNode
     override def leaveCatchNode(n: ir.CatchNode): ir.Node = {
-      val body = pop
-      val test = pop
-      val ex = pop
-      push((Catch(ex, test, body)))
+      if (n.getExceptionCondition != null) {
+        val body = pop
+        val test = pop
+        val ex = pop
+        ex match {
+          case Ident(x) =>
+            push((Catch(x, Some(test), body.asInstanceOf[Block])))
+          case _ =>
+            ???
+        }
+      }
+      else {
+        val body = pop
+        val ex = pop
+        ex match {
+          case Ident(x) =>
+            push((Catch(x, None, body.asInstanceOf[Block])))
+          case _ =>
+            ???
+        }
+      }
       n
     }
 
@@ -507,17 +557,31 @@ object MakeTrees {
     // Callback for leaving a BlockStatement
     override def leaveBlockStatement(n: ir.BlockStatement): ir.Node = {
       val e = pop
-      push(e)
+      e match {
+        case e: Block =>
+          push(e)
+        case _ =>
+          ???
+      }
       n
     }
 
     // Callback for leaving a ForNode
     override def leaveForNode(n: ir.ForNode): ir.Node = {
       val body = pop
-      val modify = pop
-      val test = pop
-      val init = pop
-      push(For(init, test, modify, body))
+      val modify = Option(n.getModify) map { _ => pop } getOrElse Empty()
+      val test = Option(n.getTest) map { _ => pop } getOrElse Bool(true)
+      val init = Option(n.getInit) map { _ => pop } getOrElse Empty()
+      if (n.isForIn) {
+        assert(n.getTest == null)
+        push(ForIn(init, modify, body))
+      }
+      else if (n.isForEach) {
+        push(ForEach(init, test, modify, body))
+      }
+      else {
+        push(For(init, test, modify, body))
+      }
       n
     }
 
@@ -536,14 +600,18 @@ object MakeTrees {
         }
       }
 
-      if (n.getIdent == null) {
-        Lambda(xs.toList.reverse, body)
+      if (n.isProgram) {
+        assert(xs.isEmpty)
+        push(Program(body))
+      }
+      else if (n.getIdent == null) {
+        push(Lambda(xs.toList.reverse, body))
       }
       else {
         val x = pop
         x match {
           case Ident(x) =>
-            FunDef(x, xs.toList.reverse, body)
+            push(FunDef(x, xs.toList.reverse, body))
           case _ =>
             ???
         }
@@ -574,7 +642,7 @@ object MakeTrees {
       else {
         val t = pop
         val c = pop
-        push(IfThen(c, t))
+        push(IfElse(c, t, Undefined()))
       }
       n
     }
@@ -639,38 +707,37 @@ object MakeTrees {
     // Callback for leaving an ObjectNode
     override def leaveObjectNode(n: ir.ObjectNode): ir.Node = {
       val es = ListBuffer.empty[Exp]
-      for (s <- n.getElements.toList)
-        es += pop
+      for (s <- n.getElements.toList) {
+        val p = pop
+        p match {
+          case p: Property =>
+            es += p
+          case _ =>
+            ???
+        }
+      }
       push(ObjectLit(es.toList.reverse))
       n
     }
 
     // Callback for leaving a PropertyNode
     override def leavePropertyNode(n: ir.PropertyNode): ir.Node = {
-      val v = pop
+      val setter = Option(n.getSetter) map { _ => pop }
+      val getter = Option(n.getGetter) map { _ => pop }
+      val v = Option(n.getValue) map { _ => pop }
       val k = pop
-      push(Property(k, v))
+      push(Property(k, v, getter, setter))
       n
     }
 
     override def leaveReturnNode(n: ir.ReturnNode): ir.Node = {
       if (n.isReturn) {
-        if (n.getExpression != null) {
-          val e = pop
-          push(Return(Some(e)))
-        }
-        else {
-          push(Return(None))
-        }
+        val e = Option(n.getExpression) map { _ => pop }
+        push(Return(e))
       }
       else if (n.isYield) {
-        if (n.getExpression != null) {
-          val e = pop
-          push(Yield(Some(e)))
-        }
-        else {
-          push(Yield(None))
-        }
+        val e = Option(n.getExpression) map { _ => pop }
+        push(Yield(e))
       }
       else {
         ???
@@ -797,14 +864,14 @@ object MakeTrees {
     // Callback for leaving a WhileNode
     override def leaveWhileNode(n: ir.WhileNode): ir.Node = {
       if (n.isDoWhile) {
-        val cond = pop
+        val test = pop
         val body = pop
-        push(DoWhile(body, cond))
+        push(DoWhile(body, test))
       }
       else {
         val body = pop
-        val cond = pop
-        push(While(cond, body))
+        val test = pop
+        push(While(test, body))
       }
       n
     }
@@ -812,8 +879,8 @@ object MakeTrees {
     // Callback for leaving a WithNode
     override def leaveWithNode(n: ir.WithNode): ir.Node = {
       val body = pop
-      val e = pop
-      push(With(e, body))
+      val exp = pop
+      push(With(exp, body))
       n
     }
   }

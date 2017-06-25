@@ -46,10 +46,12 @@ object TreeWalk {
         Break(label)
       case Call(f, args) =>
         Call(rewrite(f), rewrite(args))
+      case NewCall(f, args) =>
+        NewCall(rewrite(f), rewrite(args))
       case Case(test, body) =>
         Case(rewrite(test), rewrite(body))
       case Catch(ex, test, body) =>
-        Catch(rewrite(ex), rewrite(test), rewrite(body))
+        Catch(ex, rewrite(test), rewrite(body))
       case Continue(label) =>
         Continue(label)
       case Empty() =>
@@ -58,14 +60,18 @@ object TreeWalk {
         Eval(rewrite(e))
       case For(init, test, modify, body) =>
         For(rewrite(init), rewrite(test), rewrite(modify), rewrite(body))
+      case ForIn(init, modify, body) =>
+        ForIn(rewrite(init), rewrite(modify), rewrite(body))
+      case ForEach(init, test, modify, body) =>
+        ForEach(rewrite(init), rewrite(test), rewrite(modify), rewrite(body))
       case FunDef(name, params, body) =>
         FunDef(name, params, rewrite(body))
       case Lambda(params, body) =>
         Lambda(params, rewrite(body))
+      case Program(body) =>
+        Program(rewrite(body))
       case Ident(x) =>
         Ident(x)
-      case IfThen(test, pass) =>
-        IfThen(rewrite(test), rewrite(pass))
       case IfElse(test, pass, fail) =>
         IfElse(rewrite(test), rewrite(pass), rewrite(fail))
       case Index(a, i) =>
@@ -86,8 +92,8 @@ object TreeWalk {
         Undefined()
       case ObjectLit(es) =>
         ObjectLit(rewrite(es))
-      case Property(k, v) =>
-        Property(rewrite(k), rewrite(v))
+      case Property(k, v, getter, setter) =>
+        Property(rewrite(k), rewrite(v), rewrite(getter), rewrite(setter))
       case Return(e) =>
         Return(rewrite(e))
       case Yield(e) =>

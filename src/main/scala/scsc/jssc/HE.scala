@@ -23,7 +23,7 @@ object HE {
   // We do this rather than splitting?
 
   // To convert to a term just reify the focus and run the machine to termination.
-  def toTerm(s: St): Option[(Node, Int)] = {
+  def toTerm(s: St): Option[(Exp, Int)] = {
     println("converting to term " + s)
     s match {
       case Σ(e, ρ, σ, Done) =>
@@ -118,19 +118,22 @@ object HE {
   }
   */
 
-  def size(e: Node): Int = {
+  def size(e: Exp): Int = {
     import scsc.js.TreeWalk._
 
-    object Sizer {
+    object Sizer extends Rewriter {
       var size = 0
 
-      def rewrite(e: Exp) = e match {
+      override def rewrite(e: Exp) = e match {
         case Num(n) if n.abs < 100 =>
-          size += n.abs.toInt
+          size += n.abs.toInt + 1
+          e
         case Num(n) =>
           size += 101
+          e
         case e =>
           size += 1
+          super.rewrite(e)
       }
     }
 
@@ -144,7 +147,17 @@ object HE {
       size(e1) <= size(e2) && he(e1, e2)
     }
 
-    def he(e1: Exp, e2: Exp) = diving(e1, e2) || coupling(e1, e2)
+    def he(e1: Exp, e2: Exp): Boolean = diving(e1, e2) || coupling(e1, e2)
+
+    def he(e1: Option[Exp], e2: Option[Exp]): Boolean = (e1, e2) match {
+      case (Some(e1), Some(e2)) => he(e1, e2)
+      case (Some(e1), None) => false
+      case (None, Some(e2)) => false
+      case (None, None) => true
+    }
+
+    def he(e1: Exp, e2: Option[Exp]): Boolean = e2.exists(he(e1, _))
+    def he(e1: Exp, e2: List[Exp]): Boolean = e2.exists(he(e1, _))
 
     def diving(t1: Exp, t2: Exp): Boolean = {
       import scsc.js.TreeWalk._
@@ -152,7 +165,7 @@ object HE {
       object Diver extends Rewriter {
         var yes = false
 
-        override def rewrite(e: Exp) = e match {
+        override def rewrite(e: Exp): Exp = e match {
           case Break(_) | Continue(_) => e
           case Empty() => e
           case Ident(_) => e
@@ -172,56 +185,7 @@ object HE {
       Diver.yes
     }
 
-    def divingOld(t1: Exp, t2: Exp): Boolean = t2 match {
-      case Unary(_, e) => he(t1, e)
-      case IncDec(_, e) => he(t1, e)
-      case Delete(e) => he(t1, e)
-      case New(e) => he(t1, e)
-      case Typeof(e) => he(t1, e)
-      case Void(e) => he(t1, e)
-      case Assign(_, e1, e2) => he(t1, e1) || he(t1, e2)
-      case Binary(_, e1, e2) => he(t1, e1) || he(t1, e2)
-      case Access(e, x) => he(t1, e)
-      case Block(es) => es.exists(he(t1, _))
-      case Break(_) => false
-      case Continue(_) => false
-      case Call(e, es) => he(t1, e) || es.exists(he(t1, _))
-      case Case(e1, e2) => he(t1, e1) || he(t1, e2)
-      case Catch(e1, e2, e3) => he(t1, e1) || he(t1, e2) || he(t1, e3)
-      case Empty() => false
-      case Eval(e) => he(t1, e)
-      case For(e1, e2, e3, e4) => he(t1, e1) || he(t1, e2) || he(t1, e3) || he(t1, e4)
-      case FunDef(n, xs, e) => he(t1, e)
-      case Lambda(xs, e) => he(t1, e)
-      case Ident(_) => false
-      case Index(e1, e2) => he(t1, e1) || he(t1, e2)
-      case Label(_, e) => he(t1, e)
-      case ArrayLit(es) => es.exists(he(t1, _))
-      case ObjectLit(es) => es.exists(he(t1, _))
-      case Property(k, v) => he(t1, k) || he(t1, v)
-      case Return(Some(e)) => he(t1, e)
-      case Yield(Some(e)) => he(t1, e)
-      case Return(None) => false
-      case Yield(None) => false
-      case Switch(e, es) => he(t1, e) || es.exists(he(t1, _))
-      case Cond(e0, e1, e2) => he(t1, e0) || he(t1, e1) || he(t1, e2)
-      case Try(e0, es, Some(e2)) => he(t1, e0) || es.exists(he(t1, _)) || he(t1, e2)
-      case Try(e0, es, None) => he(t1, e0) || es.exists(he(t1, _))
-      case Throw(e) => he(t1, e)
-      case VarDef(x, Some(e)) => he(t1, e)
-      case VarDef(x, None) => false
-      case LetDef(x, Some(e)) => he(t1, e)
-      case LetDef(x, None) => false
-      case ConstDef(x, Some(e)) => he(t1, e)
-      case ConstDef(x, None) => false
-      case While(e1, e2) => he(t1, e1) || he(t2, e2)
-      case DoWhile(e1, e2) => he(t1, e1) || he(t2, e2)
-      case With(e1, e2) => he(t1, e1) || he(t2, e2)
-      case Residual(e) => he(t1, e)
-      case _ => false
-    }
-
-    def coupling(t1: Node, t2: Node): Boolean = (t1, t2) match {
+    def coupling(t1: Exp, t2: Exp): Boolean = (t1, t2) match {
       case (Unary(op1, a1), Unary(op2, a2)) => op1 == op2 && he(a1, a2)
       case (Binary(op1, f1, a1), Binary(op2, f2, a2)) => op1 == op2 && he(f1, f2) && he(a1, a2)
       case (Assign(op1, f1, a1), Assign(op2, f2, a2)) => op1 == op2 && he(f1, f2) && he(a1, a2)
@@ -236,7 +200,7 @@ object HE {
       case (Continue(_), Continue(_)) => true
       case (Call(e1, es1), Call(e2, es2)) => he(e1, e2) && (es1 zip es2).forall({ case (e1, e2) => he(e1, e2) })
       case (Case(f1, a1), Case(f2, a2)) => he(f1, f2) && he(a1, a2)
-      case (Catch(b1, c1, d1), Catch(b2, c2, d2)) => he(b1, b2) && he(c1, c2) && he(d1, d2)
+      case (Catch(b1, c1, d1), Catch(b2, c2, d2)) => b1 == b2 && he(c1, c2) && he(d1, d2)
       case (Empty(), Empty()) => true
       case (Eval(e1), Eval(e2)) => he(e1, e2)
       case (For(a1, b1, c1, d1), For(a2, b2, c2, d2)) => he(a1, a2) && he(b1, b2) && he(c1, c2) && he(d1, d2)
@@ -247,22 +211,18 @@ object HE {
       case (Label(x1, e1), Label(x2, e2)) => x1 == x2 && he(e1, e2)
       case (ArrayLit(ss1), ArrayLit(ss2)) => ss1.length == ss2.length && (ss1 zip ss2).forall({ case (e1, e2) => he(e1, e2) })
       case (ObjectLit(ss1), ObjectLit(ss2)) => ss1.length == ss2.length && (ss1 zip ss2).forall({ case (e1, e2) => he(e1, e2) })
-      case (Property(a1, i1), Property(a2, i2)) => he(a1, a2) && he(i1, i2)
-      case (Return(Some(e1)), Return(Some(e2))) => he(e1, e2)
-      case (Yield(Some(e1)), Yield(Some(e2))) => he(e1, e2)
-      case (Return(None), Return(None)) => true
-      case (Yield(None), Yield(None)) => true
+      case (Property(a1, i1, g1, s1), Property(a2, i2, g2, s2)) => he(a1, a2) && he(i1, i2) && he(g1, g2) && he(s1, s2)
+      case (Return(e1), Return(e2)) => he(e1, e2)
+      case (Yield(e1), Yield(e2)) => he(e1, e2)
       case (Switch(e1, es1), Switch(e2, es2)) => he(e1, e2) && (es1 zip es2).forall({ case (e1, e2) => he(e1, e2) })
       case (Cond(a1, b1, c1), Cond(a2, b2, c2)) => he(a1, a2) && he(b1, b2) && he(c1, c2)
+      case (IfElse(a1, b1, c1), IfElse(a2, b2, c2)) => he(a1, a2) && he(b1, b2) && he(c1, c2)
       case (Try(a1, es1, Some(c1)), Try(a2, es2, Some(c2))) => he(a1, a2) && (es1 zip es2).forall({ case (e1, e2) => he(e1, e2) }) && he(c1, c2)
       case (Try(a1, es1, None), Try(a2, es2, None)) => he(a1, a2) && (es1 zip es2).forall({ case (e1, e2) => he(e1, e2) })
       case (Throw(e1), Throw(e2)) => he(e1, e2)
-      case (VarDef(_, Some(e1)), VarDef(_, Some(e2))) => he(e1, e2)
-      case (VarDef(_, None), VarDef(_, None)) => true
-      case (LetDef(_, Some(e1)), LetDef(_, Some(e2))) => he(e1, e2)
-      case (LetDef(_, None), LetDef(_, None)) => true
-      case (ConstDef(_, Some(e1)), ConstDef(_, Some(e2))) => he(e1, e2)
-      case (ConstDef(_, None), ConstDef(_, None)) => true
+      case (VarDef(_, e1), VarDef(_, e2)) => he(e1, e2)
+      case (LetDef(_, e1), LetDef(_, e2)) => he(e1, e2)
+      case (ConstDef(_, e1), ConstDef(_, e2)) => he(e1, e2)
       case (While(a1, i1), While(a2, i2)) => he(a1, a2) && he(i1, i2)
       case (DoWhile(a1, i1), DoWhile(a2, i2)) => he(a1, a2) && he(i1, i2)
       case (With(a1, i1), With(a2, i2)) => he(a1, a2) && he(i1, i2)

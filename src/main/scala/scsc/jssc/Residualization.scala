@@ -12,15 +12,27 @@ object Residualization {
     case e @ StringLit(n) => e
     case e @ ArrayLit(es) if es.forall(e => e == reify(e)) => e
     case e @ ObjectLit(es) if es.forall(e => e == reify(e)) => e
-    case e @ Property(k, v) if k == reify(k) && v == reify(v) => e
+    case e @ Property(k, Some(v), None, None) if k == reify(k) && v == reify(v) => e
+    case e @ Property(k, None, None, None) if k == reify(k) => e
     case e @ Lambda(_, _) => unreify(e)
-    case     Residual(e) => reify(e)
+    case e @ Residual(e1) => reify(e1)
     case e => strongReify(e)
   }
 
   def strongReify(e: Exp): Exp = Residual(unreify(e))
 
-  def unreify(e: Exp): Exp = e
+  def unreify(e: Exp): Exp = {
+    import scsc.js.TreeWalk._
+
+    object Unreify extends Rewriter {
+      override def rewrite(e: Exp): Exp = e match {
+        case Residual(e) => e
+        case e => e
+      }
+    }
+
+    Unreify.rewrite(e)
+  }
 
   def strongReify(ρ: Env): Env = ρ match {
     case MapEnv(m) => MapEnv(m.map {

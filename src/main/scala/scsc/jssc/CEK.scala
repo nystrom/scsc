@@ -52,7 +52,146 @@ object CEK {
   // When we see Σ(Residual(e), ρ, k)
   // Lookup e as a constraint term in ρ. If we can determine its value, done!
 
+
   def step(s: St): St = s match {
+    ////////////////////////////////////////////////////////////////
+    // Programs and Eval.
+    ////////////////////////////////////////////////////////////////
+
+    case Σ(Program(s), ρ, σ, k) =>
+      Σ(s, ρ, σ, k)
+
+    case Σ(Eval(e), ρ, σ, k) =>
+      Σ(e, ρ, σ, k)
+
+    ////////////////////////////////////////////////////////////////
+    // Control-flow expressions.
+    ////////////////////////////////////////////////////////////////
+
+    // if e then s1 else s2
+    case Σ(IfElse(e, s1, s2), ρ, σ, k) =>
+      Σ(e, ρ, σ, BranchCont(BlockCont(s1::Nil, ρ, k), BlockCont(s2::Nil, ρ, k), k))
+
+    // e ? s1 : s2
+    case Σ(Cond(e, s1, s2), ρ, σ, k) =>
+      Σ(e, ρ, σ, BranchCont(BlockCont(s1::Nil, ρ, k), BlockCont(s2::Nil, ρ, k), k))
+
+    // x: do body while test
+    case Σ(Label(x, DoWhile(body, test)), ρ, σ, k) =>
+      val loop = LoopCont(Some(x), BlockCont(While(test, body)::Nil, ρ, k), k)
+      Σ(body, ρ, σ, loop)
+
+    case Σ(DoWhile(body, test), ρ, σ, k) =>
+      val loop = LoopCont(None, BlockCont(While(test, body)::Nil, ρ, k), k)
+      Σ(body, ρ, σ, loop)
+
+    case Σ(Label(x, While(test, body)), ρ, σ, k) =>
+      val loop = LoopCont(Some(x), BlockCont(While(test, body)::Nil, ρ, k), k)
+      Σ(test, ρ, σ, BranchCont(BlockCont(body::Nil, ρ, loop),
+                               BlockCont(Undefined()::Nil, ρ, k),
+                               k))
+
+    case Σ(While(test, body), ρ, σ, k) =>
+      val loop = LoopCont(None, BlockCont(While(test, body)::Nil, ρ, k), k)
+      Σ(test, ρ, σ, BranchCont(BlockCont(body::Nil, ρ, loop),
+                               BlockCont(Undefined()::Nil, ρ, k),
+                               k))
+
+    case Σ(Label(x, For(Empty(), test, iter, body)), ρ, σ, k) =>
+      val loop = LoopCont(Some(x), BlockCont(iter::For(Empty(), test, iter, body)::Nil, ρ, k), k)
+      Σ(test, ρ, σ, BranchCont(BlockCont(body::Nil, ρ, loop),
+                               BlockCont(Undefined()::Nil, ρ, k),
+                               k))
+
+    case Σ(For(Empty(), test, iter, body), ρ, σ, k) =>
+      val loop = LoopCont(None, BlockCont(iter::For(Empty(), test, iter, body)::Nil, ρ, k), k)
+      Σ(test, ρ, σ, BranchCont(BlockCont(body::Nil, ρ, loop),
+                               BlockCont(Undefined()::Nil, ρ, k),
+                               k))
+
+    case Σ(Label(x, For(init, test, iter, body)), ρ, σ, k) =>
+      Σ(init, ρ, σ, BlockCont(Label(x, For(Empty(), test, iter, body))::Nil, ρ, k))
+
+    case Σ(For(init, test, iter, body), ρ, σ, k) =>
+      Σ(init, ρ, σ, BlockCont(For(Empty(), test, iter, body)::Nil, ρ, k))
+
+    case Σ(Break(None), ρ, σ, LoopCont(label, kc, kb)) =>
+      Σ(Undefined(), ρ, σ, kb)
+
+    case Σ(Continue(None), ρ, σ, LoopCont(label, kc, kb)) =>
+      Σ(Undefined(), ρ, σ, kc)
+
+    case Σ(Break(Some(x)), ρ, σ, LoopCont(Some(y), kc, kb)) if x == y =>
+      Σ(Undefined(), ρ, σ, kb)
+
+    case Σ(Continue(Some(x)), ρ, σ, LoopCont(Some(y), kc, kb)) if x == y =>
+      Σ(Undefined(), ρ, σ, kc)
+
+    case Σ(Break(optLabel), ρ, σ, k) =>
+      Σ(Break(optLabel), ρ, σ, k.next)
+
+    case Σ(Continue(optLabel), ρ, σ, k) =>
+      Σ(Continue(optLabel), ρ, σ, k.next)
+
+    case Σ(v, ρ, σ, LoopCont(_, kc, kb)) if v.isValue =>
+      Σ(v, ρ, σ, kc)
+
+    case Σ(v, ρ, σ, BranchCont(kt, kf, k)) if v.isTrue =>
+      Σ(v, ρ, σ, kt)
+
+    case Σ(v, ρ, σ, BranchCont(kt, kf, k)) if v.isFalse =>
+      Σ(v, ρ, σ, kf)
+
+    ////////////////////////////////////////////////////////////////
+    // Exceptions.
+    ////////////////////////////////////////////////////////////////
+
+
+    ////////////////////////////////////////////////////////////////
+    // Blocks.
+    ////////////////////////////////////////////////////////////////
+
+    case Σ(Block(Nil), ρ, σ, k) =>
+      Σ(Undefined(), ρ, σ, k)
+
+    case Σ(Block(s::ss), ρ, σ, k) =>
+      Σ(s, ρ, σ, BlockCont(ss, ρ, k))
+
+    case Σ(v, ρ, σ, BlockCont(Nil, ρ1, k)) =>
+      Σ(v, ρ1, σ, k)
+
+    case Σ(v, ρ, σ, BlockCont(s::Nil, ρ1, k)) =>
+      Σ(s, ρ1, σ, k)
+
+    case Σ(v, ρ, σ, BlockCont(s::ss, ρ1, k)) =>
+      Σ(s, ρ1, σ, BlockCont(ss, ρ, k))
+
+    ////////////////////////////////////////////////////////////////
+    // Definitions.
+    ////////////////////////////////////////////////////////////////
+
+    // Definitions eval to undefined.
+    case Σ(FunDef(f, xs, body), ρ, σ, k) =>
+      Σ(Undefined(), ρ, σ, k)
+
+    case Σ(VarDef(x, None), ρ, σ, k) =>
+      Σ(Undefined(), ρ, σ, k)
+    case Σ(LetDef(x, None), ρ, σ, k) =>
+      Σ(Undefined(), ρ, σ, k)
+    case Σ(ConstDef(x, None), ρ, σ, k) =>
+      Σ(Undefined(), ρ, σ, k)
+
+    case Σ(VarDef(x, Some(e)), ρ, σ, k) =>
+      Σ(e, ρ, σ, BindCont(x, ρ, k))
+    case Σ(LetDef(x, Some(e)), ρ, σ, k) =>
+      Σ(e, ρ, σ, BindCont(x, ρ, k))
+    case Σ(ConstDef(x, Some(e)), ρ, σ, k) =>
+      Σ(e, ρ, σ, BindCont(x, ρ, k))
+
+    case Σ(v, ρ, σ, BindCont(x, ρ1, k)) if v.isValue =>
+      Σ(Undefined(), ρ1.add(x, v, ρ), σ, k)
+
+
     ////////////////////////////////////////////////////////////////
     // Variables. Just lookup the value. If not present, residualize.
     ////////////////////////////////////////////////////////////////
@@ -107,67 +246,9 @@ object CEK {
       Σ(e2, ρ1, σ, EvalOp(op, v, ρ1, k))
 
     case Σ(v2, ρ, σ, EvalOp(op, v1, ρ1, k)) if v2.isValue =>
-      (op, v1, v2) match {
-        // Perform some simple algebraic simplifications
-        case (Binary.+, Num(0), v) =>
-          Σ(v, ρ1, σ, k)
-        case (Binary.+, v, Num(0)) =>
-          Σ(v, ρ1, σ, k)
-        case (Binary.-, v, Num(0)) =>
-          Σ(v, ρ1, σ, k)
-        case (Binary.*, Num(1), v) =>
-          Σ(v, ρ1, σ, k)
-        case (Binary.*, v, Num(1)) =>
-          Σ(v, ρ1, σ, k)
-        case (Binary./, v, Num(1)) =>
-          Σ(v, ρ1, σ, k)
-
-        case (Binary.+, Num(n1), Num(n2)) => Σ(Num(n1 + n2), ρ1, σ, k)
-        case (Binary.-, Num(n1), Num(n2)) => Σ(Num(n1 - n2), ρ1, σ, k)
-        case (Binary.*, Num(n1), Num(n2)) => Σ(Num(n1 * n2), ρ1, σ, k)
-        case (Binary./, Num(n1), Num(0)) => Σ(v2, ρ, σ, Fail(s"div by 0"))
-        case (Binary.%, Num(n1), Num(0)) => Σ(v2, ρ, σ, Fail(s"mod by 0"))
-        case (Binary./, Num(n1), Num(n2)) => Σ(Num(n1 / n2), ρ1, σ, k)
-        case (Binary.%, Num(n1), Num(n2)) => Σ(Num(n1 % n2), ρ1, σ, k)
-
-        case (Binary.&, Num(n1), Num(n2)) => Σ(Num(n1.toLong & n2.toLong), ρ1, σ, k)
-        case (Binary.|, Num(n1), Num(n2)) => Σ(Num(n1.toLong | n2.toLong), ρ1, σ, k)
-        case (Binary.^, Num(n1), Num(n2)) => Σ(Num(n1.toLong ^ n2.toLong), ρ1, σ, k)
-        case (Binary.>>, Num(n1), Num(n2)) => Σ(Num(n1.toLong >> n2.toLong), ρ1, σ, k)
-        case (Binary.<<, Num(n1), Num(n2)) => Σ(Num(n1.toLong << n2.toLong), ρ1, σ, k)
-        case (Binary.>>>, Num(n1), Num(n2)) => Σ(Num(n1.toLong >>> n2.toLong), ρ1, σ, k)
-
-        case (Binary.<, Num(n1), Num(n2)) => Σ(Bool(n1 < n2), ρ1, σ, k)
-        case (Binary.<=, Num(n1), Num(n2)) => Σ(Bool(n1 < n2), ρ1, σ, k)
-        case (Binary.>=, Num(n1), Num(n2)) => Σ(Bool(n1 < n2), ρ1, σ, k)
-        case (Binary.>, Num(n1), Num(n2)) => Σ(Bool(n1 < n2), ρ1, σ, k)
-
-        case (Binary.&&, Bool(n1), Bool(n2)) => Σ(Bool(n1 && n2), ρ1, σ, k)
-        case (Binary.||, Bool(n1), Bool(n2)) => Σ(Bool(n1 || n2), ρ1, σ, k)
-
-        case (Binary.BIND, v1, v2) => Σ(Undefined(), ρ1, σ, k)
-        case (Binary.COMMALEFT, v1, v2) => Σ(Undefined(), ρ1, σ, k)
-        case (Binary.COMMARIGHT, v1, v2) => Σ(Undefined(), ρ1, σ, k)
-        case (Binary.IN, v1, v2) => Σ(Undefined(), ρ1, σ, k)
-        case (Binary.INSTANCEOF, v1, v2) => Σ(Undefined(), ρ1, σ, k)
-
-        case (op, v1 @ Residual(e1), v2 @ Residual(e2)) =>
-          Σ(reify(Binary(op, v1, v2)), ρ1, σ, k)
-        case (op, v1, v2 @ Residual(e2)) =>
-          Σ(reify(Binary(op, v1, v2)), ρ1, σ, k)
-        case (op, v1 @ Residual(e1), v2) =>
-          Σ(reify(Binary(op, v1, v2)), ρ1, σ, k)
-
-        // Equality operators should not work on residuals.
-        // So match after the above.
-        case (Binary.==, v1, v2) if v1 == v2 => Σ(Bool(v1 == v2), ρ1, σ, k)
-        case (Binary.!=, v1, v2) if v1 != v2 => Σ(Bool(v1 != v2), ρ1, σ, k)
-        case (Binary.===, v1, v2) if v1 == v2 => Σ(Bool(v1 == v2), ρ1, σ, k)
-        case (Binary.!==, v1, v2) if v1 != v2 => Σ(Bool(v1 != v2), ρ1, σ, k)
-
-        // Failure
-        case (op, v1: Exp, v2: Exp) =>
-          Σ(reify(Binary(op, v1, v2)), ρ1, σ, Fail(s"cannot apply operator $op"))
+      evalOp(op, v1, v2) match {
+        case Left((v, s)) => Σ(v, ρ1, σ, Fail(s))
+        case Right(v) => Σ(v, ρ1, σ, k)
       }
 
     ////////////////////////////////////////////////////////////////
@@ -205,6 +286,60 @@ object CEK {
 
     case s @ Σ(e, ρ, σ, k) =>
       Σ(e, ρ, σ, Fail(s"no step defined for $s"))
+  }
+
+  def evalOp(op: Operator, v1: Exp, v2: Exp): Either[(Exp, String), Exp] = (op, v1, v2) match {
+    // Perform some simple algebraic simplifications
+    case (Binary.+, Num(0), v) => Right(v)
+    case (Binary.+, v, Num(0)) => Right(v)
+    case (Binary.-, v, Num(0)) => Right(v)
+    case (Binary.*, Num(1), v) => Right(v)
+    case (Binary.*, v, Num(1)) => Right(v)
+    case (Binary./, v, Num(1)) => Right(v)
+
+    case (Binary.+, Num(n1), Num(n2)) => Right(Num(n1 + n2))
+    case (Binary.-, Num(n1), Num(n2)) => Right(Num(n1 - n2))
+    case (Binary.*, Num(n1), Num(n2)) => Right(Num(n1 * n2))
+    case (Binary./, Num(n1), Num(0)) => Left((v2, s"div by 0"))
+    case (Binary.%, Num(n1), Num(0)) => Left((v2, s"mod by 0"))
+    case (Binary./, Num(n1), Num(n2)) => Right(Num(n1 / n2))
+    case (Binary.%, Num(n1), Num(n2)) => Right(Num(n1 % n2))
+
+    case (Binary.&, Num(n1), Num(n2)) => Right(Num(n1.toLong & n2.toLong))
+    case (Binary.|, Num(n1), Num(n2)) => Right(Num(n1.toLong | n2.toLong))
+    case (Binary.^, Num(n1), Num(n2)) => Right(Num(n1.toLong ^ n2.toLong))
+    case (Binary.>>, Num(n1), Num(n2)) => Right(Num(n1.toLong >> n2.toLong))
+    case (Binary.<<, Num(n1), Num(n2)) => Right(Num(n1.toLong << n2.toLong))
+    case (Binary.>>>, Num(n1), Num(n2)) => Right(Num(n1.toLong >>> n2.toLong))
+
+    case (Binary.<, Num(n1), Num(n2)) => Right(Bool(n1 < n2))
+    case (Binary.<=, Num(n1), Num(n2)) => Right(Bool(n1 <= n2))
+    case (Binary.>=, Num(n1), Num(n2)) => Right(Bool(n1 >= n2))
+    case (Binary.>, Num(n1), Num(n2)) => Right(Bool(n1 > n2))
+
+    case (Binary.&&, Bool(n1), Bool(n2)) => Right(Bool(n1 && n2))
+    case (Binary.||, Bool(n1), Bool(n2)) => Right(Bool(n1 || n2))
+
+    case (Binary.BIND, v1, v2) => Left((Undefined(), "unimplemented"))
+    case (Binary.COMMALEFT, v1, v2) => Left((Undefined(), "unimplemented"))
+    case (Binary.COMMARIGHT, v1, v2) => Left((Undefined(), "unimplemented"))
+    case (Binary.IN, v1, v2) => Left((Undefined(), "unimplemented"))
+    case (Binary.INSTANCEOF, v1, v2) => Left((Undefined(), "unimplemented"))
+
+    case (op, v1 @ Residual(e1), v2 @ Residual(e2)) => Right(reify(Binary(op, v1, v2)))
+    case (op, v1, v2 @ Residual(e2)) => Right(reify(Binary(op, v1, v2)))
+    case (op, v1 @ Residual(e1), v2) => Right(reify(Binary(op, v1, v2)))
+
+    // Equality operators should not work on residuals.
+    // So match after the above.
+    case (Binary.==, v1, v2) => Right(Bool(v1 == v2))
+    case (Binary.!=, v1, v2) => Right(Bool(v1 != v2))
+    case (Binary.===, v1, v2) => Right(Bool(v1 == v2))
+    case (Binary.!==, v1, v2) => Right(Bool(v1 != v2))
+
+    // Failure
+    case (op, v1: Exp, v2: Exp) =>
+      Left((reify(Binary(op, v1, v2)), s"cannot apply operator $op"))
   }
 
   // Evaluator.
