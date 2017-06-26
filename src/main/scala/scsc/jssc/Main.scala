@@ -3,7 +3,7 @@ package scsc.jssc
 import org.bitbucket.inkytonik.kiama.util.{REPL, REPLConfig, Source, Console, Positions}
 import scsc.js.Trees._
 
-object SCSC extends REPL {
+object Main extends REPL {
   val banner = "Welcome to the Superconducting Supercompiler (JavaScript edition)!"
 
   object Posns extends Positions
@@ -27,7 +27,7 @@ object SCSC extends REPL {
   }
 
   def process(source: Source, e: Exp, config: REPLConfig) {
-    val result = CEK.eval(e, 0)
+    val result = CESK.eval(e, 100)
     config.output().emitln(result)
   }
 }

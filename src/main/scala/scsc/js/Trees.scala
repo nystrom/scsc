@@ -33,10 +33,6 @@ object Trees {
         case t @ Lambda(xs, e) =>
           vars ++= (fv(e) -- xs)
           t
-        case t @ FunDef(x, xs, e) =>
-          vars ++= (fv(e) -- xs)
-          defs += x
-          t
         case t @ LetDef(x, _) =>
           defs += x
           super.rewrite(t)
@@ -64,6 +60,12 @@ object Trees {
   case class Loc(address: Int) extends Exp
   case class Residual(e: Exp) extends Exp
 
+  import org.bitbucket.inkytonik.kiama.util.Counter
+
+  object FreshLoc extends Counter {
+    def apply(): Loc = Loc(next())
+  }
+
   type Name = String
 
   implicit class IV(e: Exp) {
@@ -76,6 +78,42 @@ object Trees {
       case Null() => true
       case Empty() => true
       case n => false
+    }
+
+    def isPure: Boolean = {
+      import scsc.js.TreeWalk._
+      object Purity extends Rewriter {
+        var pure = true
+
+        override def rewrite(e: Exp): Exp = e match {
+          case _: Call | _: NewCall =>
+            pure = false
+            e
+          case _: While | _: DoWhile | _: For | _: ForIn | _: ForEach =>
+            pure = false
+            e
+          case _: Assign | _: IncDec =>
+            pure = false
+            e
+          case _: Return | _: Yield | _: Throw | _: Catch | _: Try =>
+            pure = false
+            e
+          case _: VarDef | _: LetDef | _: ConstDef =>
+            pure = false
+            e
+          case _: Break | _: Continue =>
+            pure = false
+            e
+          case _: Delete =>
+            pure = false
+            e
+          case e if pure => super.rewrite(e)
+          case e => e
+        }
+      }
+
+      Purity.rewrite(e)
+      Purity.pure
     }
 
     def isRealValue: Boolean = e match {
@@ -137,21 +175,6 @@ object Trees {
     case object ++ extends Operator
   }
 
-  object Assign {
-    case object := extends Operator
-    case object += extends Operator
-    case object &= extends Operator
-    case object |= extends Operator
-    case object ^= extends Operator
-    case object /= extends Operator
-    case object %= extends Operator
-    case object *= extends Operator
-    case object >>= extends Operator
-    case object <<= extends Operator
-    case object >>>= extends Operator
-    case object -= extends Operator
-  }
-
   object Binary {
     case object + extends Operator
     case object && extends Operator
@@ -188,7 +211,7 @@ object Trees {
   case class New(e: Exp) extends Exp
   case class Typeof(e: Exp) extends Exp
   case class Void(e: Exp) extends Exp
-  case class Assign(op: Operator, left: Exp, right: Exp) extends Exp
+  case class Assign(op: Option[Operator], left: Exp, right: Exp) extends Exp
   case class Binary(op: Operator, left: Exp, right: Exp) extends Exp
   case class Access(base: Exp, prop: Name) extends Exp
   case class Block(es: List[Exp]) extends Exp
@@ -199,11 +222,9 @@ object Trees {
   case class Catch(ex: Name, test: Option[Exp], body: Exp) extends Exp
   case class Continue(label: Option[Name]) extends Exp
   case class Empty() extends Exp
-  case class Eval(e: Exp) extends Exp
   case class For(init: Exp, test: Exp, modify: Exp, body: Exp) extends Exp
   case class ForIn(init: Exp, modify: Exp, body: Exp) extends Exp
   case class ForEach(init: Exp, test: Exp, modify: Exp, body: Exp) extends Exp
-  case class FunDef(name: Name, params: List[Name], body: Exp) extends Exp
   case class Lambda(params: List[Name], body: Exp) extends Exp
   case class Program(body: Exp) extends Exp
   case class Ident(x: Name) extends Exp
@@ -224,9 +245,9 @@ object Trees {
   case class Cond(test: Exp, pass: Exp, fail: Exp) extends Exp
   case class Throw(e: Exp) extends Exp
   case class Try(e: Exp, catches: List[Exp], fin: Option[Exp]) extends Exp
-  case class VarDef(x: Name, init: Option[Exp]) extends Exp
-  case class LetDef(x: Name, init: Option[Exp]) extends Exp
-  case class ConstDef(x: Name, init: Option[Exp]) extends Exp
+  case class VarDef(x: Name, init: Exp) extends Exp
+  case class LetDef(x: Name, init: Exp) extends Exp
+  case class ConstDef(x: Name, init: Exp) extends Exp
   case class While(cond: Exp, body: Exp) extends Exp
   case class DoWhile(body: Exp, cond: Exp) extends Exp
   case class With(exp: Exp, body: Exp) extends Exp

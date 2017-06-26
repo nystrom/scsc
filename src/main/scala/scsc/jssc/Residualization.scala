@@ -5,6 +5,7 @@ import scsc.js.Trees._
 
 object Residualization {
   import Machine._
+  import Continuations._
 
   def reify(e: Exp): Exp = e match {
     case e @ Num(n) => e
@@ -19,41 +20,42 @@ object Residualization {
     case e => strongReify(e)
   }
 
-  def strongReify(e: Exp): Exp = Residual(unreify(e))
-
   def unreify(e: Exp): Exp = {
     import scsc.js.TreeWalk._
 
     object Unreify extends Rewriter {
       override def rewrite(e: Exp): Exp = e match {
-        case Residual(e) => e
-        case e => e
+        case Residual(e) => super.rewrite(e)
+        case e => super.rewrite(e)
       }
     }
 
     Unreify.rewrite(e)
   }
 
-  def strongReify(ρ: Env): Env = ρ match {
-    case MapEnv(m) => MapEnv(m.map {
-      case (x, Closure(e, ρ)) => (x, Closure(strongReify(e), strongReify(ρ)))
-    })
-    case SelfEnv => SelfEnv
+  def strongReify(e: Exp): Exp = Residual(unreify(e))
+
+  def strongReifyEnv(ρ: Env): Env = ρ
+
+  def strongReifyStore(σ: Store): Store = σ map {
+    case (loc, Closure(v, ρ)) => (loc, Closure(strongReify(v), strongReifyEnv(ρ)))
   }
 
   def strongReify(s: St): St = s match {
     case Σ(focus, ρ, σ, k) =>
-      val vars = fv(focus)
-      // val vars = focus match { case Var(x) => Set(x) ; case _ => Set() }
-      val k1 = vars.toList.foldLeft(k) {
-        case (k, x) =>
-          ρ.get(x) match {
-            case Some(Closure(v, ρ)) =>
-              RebuildLet(x, unreify(v), ρ, k)
-            case None =>
-              k
+      val vars: Set[Name] = fv(focus)
+      val k1 = vars.toList match {
+        case Nil => k
+        case vars =>
+          val vals = vars map {
+            x =>
+              ρ.get(x) match {
+                case Some(v) => unreify(v)
+                case None => Undefined()
+              }
           }
+          RebuildLet(vars, vals, ρ)::k
       }
-      Σ(strongReify(focus), strongReify(ρ), σ, k1)
+      Σ(strongReify(focus), strongReifyEnv(ρ), strongReifyStore(σ), k1)
   }
 }

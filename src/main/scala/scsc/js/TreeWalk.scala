@@ -56,16 +56,12 @@ object TreeWalk {
         Continue(label)
       case Empty() =>
         Empty()
-      case Eval(e) =>
-        Eval(rewrite(e))
       case For(init, test, modify, body) =>
         For(rewrite(init), rewrite(test), rewrite(modify), rewrite(body))
       case ForIn(init, modify, body) =>
         ForIn(rewrite(init), rewrite(modify), rewrite(body))
       case ForEach(init, test, modify, body) =>
         ForEach(rewrite(init), rewrite(test), rewrite(modify), rewrite(body))
-      case FunDef(name, params, body) =>
-        FunDef(name, params, rewrite(body))
       case Lambda(params, body) =>
         Lambda(params, rewrite(body))
       case Program(body) =>

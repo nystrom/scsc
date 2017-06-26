@@ -7,7 +7,8 @@ import scsc.js.Trees._
 object HE {
   import Machine._
   import Residualization._
-  import CEK._
+  import CESK._
+  import Continuations._
 
   // In SC / PE, we get stuck when focus is a Var!
   // Add continuations for Bin and for Case, etc.
@@ -26,11 +27,11 @@ object HE {
   def toTerm(s: St): Option[(Exp, Int)] = {
     println("converting to term " + s)
     s match {
-      case Σ(e, ρ, σ, Done) =>
+      case Σ(e, ρ, σ, Nil) =>
         val u = unreify(e)
         println("--> " + u)
         Some((u, 0))
-      case Σ(e, ρ, σ, Fail(_)) =>
+      case Σ(e, ρ, σ, Fail(_)::k) =>
         None
       case Σ(e, ρ, σ, k) =>
         val s1 = step(Σ(strongReify(e), ρ, σ, k))
@@ -170,9 +171,10 @@ object HE {
           case Empty() => e
           case Ident(_) => e
           case Return(None) | Yield(None) => e
-          case LetDef(_, None) | ConstDef(_, None) | VarDef(_, None) => e
+          case e if yes => e
           case e =>
-            if (yes || he(t1, e)) {
+            if (coupling(t1, e)) {
+              yes = true
               e
             }
             else {
@@ -202,9 +204,7 @@ object HE {
       case (Case(f1, a1), Case(f2, a2)) => he(f1, f2) && he(a1, a2)
       case (Catch(b1, c1, d1), Catch(b2, c2, d2)) => b1 == b2 && he(c1, c2) && he(d1, d2)
       case (Empty(), Empty()) => true
-      case (Eval(e1), Eval(e2)) => he(e1, e2)
       case (For(a1, b1, c1, d1), For(a2, b2, c2, d2)) => he(a1, a2) && he(b1, b2) && he(c1, c2) && he(d1, d2)
-      case (FunDef(n1, xs1, e1), FunDef(n2, xs2, e2)) => n1 == n2 && he(e1, e2)
       case (Lambda(xs1, e1), Lambda(xs2, e2)) => he(e1, e2)
       case (Ident(_), Ident(_)) => true
       case (Index(a1, i1), Index(a2, i2)) => he(a1, a2) && he(i1, i2)

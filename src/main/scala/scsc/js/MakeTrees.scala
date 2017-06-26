@@ -53,6 +53,7 @@ object MakeTrees {
           println(s"pop $e")
           e
         case Nil =>
+          println(s"stack empty")
           ???
       }
     }
@@ -107,7 +108,14 @@ object MakeTrees {
     // Unary leave - callback for leaving a new operator
     override def leaveNEW(n: ir.UnaryNode): ir.Node = {
       val e = pop
-      push(New(e))
+      e match {
+        case NewCall(f, args) =>
+          push(e)
+        case Call(f, args) =>
+          push(NewCall(f, args))
+        case _ =>
+          ???
+      }
       n
     }
 
@@ -159,7 +167,7 @@ object MakeTrees {
     override def leaveASSIGN(n: ir.BinaryNode): ir.Node = {
       val right = pop
       val left = pop
-      push(Assign(Assign.:=, left, right))
+      push(Assign(None, left, right))
       n
     }
 
@@ -167,7 +175,7 @@ object MakeTrees {
     override def leaveASSIGN_ADD(n: ir.BinaryNode): ir.Node = {
       val right = pop
       val left = pop
-      push(Assign(Assign.+=, left, right))
+      push(Assign(Some(Binary.+), left, right))
       n
     }
 
@@ -175,7 +183,7 @@ object MakeTrees {
     override def leaveASSIGN_BIT_AND(n: ir.BinaryNode): ir.Node = {
       val right = pop
       val left = pop
-      push(Assign(Assign.&=, left, right))
+      push(Assign(Some(Binary.&), left, right))
       n
     }
 
@@ -183,7 +191,7 @@ object MakeTrees {
     override def leaveASSIGN_BIT_OR(n: ir.BinaryNode): ir.Node = {
       val right = pop
       val left = pop
-      push(Assign(Assign.|=, left, right))
+      push(Assign(Some(Binary.|), left, right))
       n
     }
 
@@ -191,7 +199,7 @@ object MakeTrees {
     override def leaveASSIGN_BIT_XOR(n: ir.BinaryNode): ir.Node = {
       val right = pop
       val left = pop
-      push(Assign(Assign.^=, left, right))
+      push(Assign(Some(Binary.^), left, right))
       n
     }
 
@@ -199,7 +207,7 @@ object MakeTrees {
     override def leaveASSIGN_DIV(n: ir.BinaryNode): ir.Node = {
       val right = pop
       val left = pop
-      push(Assign(Assign./=, left, right))
+      push(Assign(Some(Binary./), left, right))
       n
     }
 
@@ -207,7 +215,7 @@ object MakeTrees {
     override def leaveASSIGN_MOD(n: ir.BinaryNode): ir.Node = {
       val right = pop
       val left = pop
-      push(Assign(Assign.%=, left, right))
+      push(Assign(Some(Binary.%), left, right))
       n
     }
 
@@ -215,7 +223,7 @@ object MakeTrees {
     override def leaveASSIGN_MUL(n: ir.BinaryNode): ir.Node = {
       val right = pop
       val left = pop
-      push(Assign(Assign.*=, left, right))
+      push(Assign(Some(Binary.*), left, right))
       n
     }
 
@@ -223,7 +231,7 @@ object MakeTrees {
     override def leaveASSIGN_SAR(n: ir.BinaryNode): ir.Node = {
       val right = pop
       val left = pop
-      push(Assign(Assign.>>=, left, right))
+      push(Assign(Some(Binary.>>), left, right))
       n
     }
 
@@ -231,7 +239,7 @@ object MakeTrees {
     override def leaveASSIGN_SHL(n: ir.BinaryNode): ir.Node = {
       val right = pop
       val left = pop
-      push(Assign(Assign.<<=, left, right))
+      push(Assign(Some(Binary.<<), left, right))
       n
     }
 
@@ -239,7 +247,7 @@ object MakeTrees {
     override def leaveASSIGN_SHR(n: ir.BinaryNode): ir.Node = {
       val right = pop
       val left = pop
-      push(Assign(Assign.>>>=, left, right))
+      push(Assign(Some(Binary.>>>), left, right))
       n
     }
 
@@ -247,7 +255,7 @@ object MakeTrees {
     override def leaveASSIGN_SUB(n: ir.BinaryNode): ir.Node = {
       val right = pop
       val left = pop
-      push(Assign(Assign.-=, left, right))
+      push(Assign(Some(Binary.-), left, right))
       n
     }
 
@@ -482,9 +490,9 @@ object MakeTrees {
         es += pop
       val f = pop
       if (n.isNew)
-        push(Call(f, es.toList.reverse))
-      else
         push(NewCall(f, es.toList.reverse))
+      else
+        push(Call(f, es.toList.reverse))
       n
     }
 
@@ -550,7 +558,7 @@ object MakeTrees {
     // Callback for leaving an ExpressionStatement
     override def leaveExpressionStatement(n: ir.ExpressionStatement): ir.Node = {
       val e = pop
-      push(Eval(e))
+      push(e)
       n
     }
 
@@ -591,13 +599,7 @@ object MakeTrees {
 
       val xs = ListBuffer.empty[Name]
       for (s <- n.getParameters.toList) {
-        val x = pop
-        x match {
-          case Ident(x) =>
-            xs += x
-          case _ =>
-            ???
-        }
+        xs += s.getName
       }
 
       if (n.isProgram) {
@@ -605,16 +607,12 @@ object MakeTrees {
         push(Program(body))
       }
       else if (n.getIdent == null) {
-        push(Lambda(xs.toList.reverse, body))
+        push(Lambda(xs.toList, body))
       }
       else {
-        val x = pop
-        x match {
-          case Ident(x) =>
-            push(FunDef(x, xs.toList.reverse, body))
-          case _ =>
-            ???
-        }
+        val x = n.getIdent.getName
+        // Return a lambda even though we know the name.
+        push(Lambda(xs.toList, body))
       }
       n
     }
@@ -834,16 +832,10 @@ object MakeTrees {
 
     // Callback for leaving a VarNode
     override def leaveVarNode(n: ir.VarNode): ir.Node = {
-      val e = {
-        if (n.getInit != null) {
-          val v = pop
-          Some(v)
-        }
-        else {
-          None
-        }
-      }
+      // For some reason, the name is on top of the stack and the initializer is below it
+      // rather than the other way around.
       val x = pop
+      val e = Option(n.getInit) map { _ => pop } getOrElse Undefined()
       x match {
         case Ident(x) =>
           if (n.isLet) {
