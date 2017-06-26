@@ -34,6 +34,8 @@ object Continuations {
 
   case class CallFrame(ρ: Env) extends ContAction
   case class ReturnFrame() extends ContAction
+  case class ThrowFrame() extends ContAction
+  case class TryFrame(cs: List[Exp], fin: Option[Exp], ρ: Env) extends ContAction
 
   // Residualization:
   // For each reduction continuation, i.e., the ones that "Do" something,

@@ -425,13 +425,20 @@ object CESK {
     ////////////////////////////////////////////////////////////////
     // Variables. Just lookup the value. If not present, residualize.
     ////////////////////////////////////////////////////////////////
-    case Σ(Ident(x), ρ, σ, k) => ρ.get(x) match {
-      case Some(v) =>
-        Σ(v, ρ, σ, Load(ρ)::k)
-      case None =>
-        println(s"variable $x not found... residualizing")
-        Σ(reify(Ident(x)), ρ, σ, k)
-    }
+    case Σ(Ident(x), ρ, σ, k) =>
+      ρ.get(x) match {
+        case Some(v) =>
+          Σ(v, ρ, σ, Load(ρ)::k)
+        case None =>
+          // The special global name "undefined" evaluates to "undefined".
+          if (x == "undefined") {
+            Σ(Undefined(), ρ, σ, k)
+          }
+          else {
+            println(s"variable $x not found... residualizing")
+            Σ(reify(Ident(x)), ρ, σ, k)
+          }
+      }
 
     case Σ(loc: Loc, ρ, σ, Load(ρ1)::k) =>
       σ.get(loc) match {
@@ -554,16 +561,41 @@ object CESK {
     // Return. Pop the continuations until we hit the caller.
     ////////////////////////////////////////////////////////////////
     case Σ(v, ρ, σ, ReturnFrame()::CallFrame(ρ1)::k) if v.isValue =>
-       Σ(v, ρ1, σ, k)
+      Σ(v, ρ1, σ, k)
+
+    // If we hit a finally block, run the block, then continue returning.
+    case Σ(v, ρ, σ, ReturnFrame()::TryFrame(cs, Some(e), ρ1)::k) if v.isValue =>
+      Σ(e, ρ, σ, BlockCont(v::Nil, Nil, ρ)::ReturnFrame()::k)
+
+    case Σ(v, ρ, σ, ReturnFrame()::(a: RebuildCont)::k) if v.isValue =>
+      Σ(v, ρ, σ, a::BlockCont(v::Nil, Nil, ρ)::ReturnFrame()::k)
 
     case Σ(v, ρ, σ, ReturnFrame()::_::k) if v.isValue =>
-       Σ(v, ρ, σ, k)
+      Σ(v, ρ, σ, ReturnFrame()::k)
 
     case Σ(Return(Some(e)), ρ, σ, k) =>
       Σ(e, ρ, σ, ReturnFrame()::k)
 
     case Σ(Return(None), ρ, σ, k) =>
       Σ(Undefined(), ρ, σ, ReturnFrame()::k)
+
+    ////////////////////////////////////////////////////////////////
+    // Throw. Pop the continuations until we hit the caller.
+    ////////////////////////////////////////////////////////////////
+    case Σ(v, ρ, σ, ThrowFrame()::TryFrame(Nil, Some(f), ρ1)::k) if v.isValue =>
+      Σ(f, ρ1, σ, BlockCont(v::Nil, Nil, ρ)::ThrowFrame()::k)
+
+    case Σ(v, ρ, σ, ThrowFrame()::TryFrame(cs, f, ρ1)::k) if v.isValue =>
+      Σ(v, ρ1, σ, ThrowFrame()::k)
+
+    case Σ(v, ρ, σ, ThrowFrame()::_::k) if v.isValue =>
+      Σ(v, ρ, σ, ThrowFrame()::k)
+
+    case Σ(Throw(e), ρ, σ, k) =>
+      Σ(e, ρ, σ, ThrowFrame()::k)
+
+    case Σ(Try(e, cs, f), ρ, σ, k) =>
+      Σ(e, ρ, σ, TryFrame(cs, f, ρ)::k)
 
     // If we run off the end of the function body, act like we returned normally.
     case Σ(v, ρ, σ, CallFrame(ρ1)::k) if v.isValue =>
@@ -580,37 +612,90 @@ object CESK {
       Σ(e, ρ, σ, Fail(s"no step defined for $s")::k)
   }
 
+  object CvtPrim {
+    def unapply(e: Exp) = e match {
+      case e: Undefined => Some(e)
+      case e: Null => Some(e)
+      case e: Bool => Some(e)
+      case e: Num => Some(e)
+      case e: StringLit => Some(e)
+      // TODO: call toString and valueOf methods if they exist.
+      // case e: ObjectLit => Some(e)
+      // case e: ArrayLit => Some(e)
+      case _ => None
+    }
+  }
+
+  object CvtBool {
+    def unapply(e: Exp): Option[Boolean] = e match {
+      case Bool(v) => Some(v)
+      case Undefined() => Some(false)
+      case Null() => Some(false)
+      case Num(v) => Some(v != 0 && ! v.isNaN)
+      case StringLit(v) => Some(v != "")
+      case ObjectLit(_) => Some(true)
+      case ArrayLit(_) => Some(true)
+      case v => None
+    }
+  }
+
+  object CvtNum {
+    def unapply(e: Exp): Option[Double] = e match {
+      case Num(v) => Some(v)
+      case Undefined() => Some(Double.NaN)
+      case Null() => Some(0)
+      case Bool(false) => Some(0)
+      case Bool(true) => Some(1)
+      case v => None
+    }
+  }
+
+  object CvtString {
+    def unapply(e: Exp) = e match {
+      case StringLit(v) => Some(v)
+      case ObjectLit(es) => Some(es.map(_.show).mkString("{", ",", "}"))
+      case ArrayLit(es) => Some(es.map(_.show).mkString("[", ",", "]"))
+      case e => Some(e.show)
+    }
+  }
+
   // Fix this! This is too simple and doesn't handle coercions corretctly.
   // Let's look at the spec.
   def evalOp(op: Operator, v1: Exp, v2: Exp): Either[(Exp, String), Exp] = (op, v1, v2) match {
-    case (Binary.+, Num(n1), Num(n2)) => Right(Num(n1 + n2))
-    case (Binary.-, Num(n1), Num(n2)) => Right(Num(n1 - n2))
-    case (Binary.*, Num(n1), Num(n2)) => Right(Num(n1 * n2))
-    case (Binary./, Num(n1), Num(0)) => Left((v2, s"div by 0"))
-    case (Binary.%, Num(n1), Num(0)) => Left((v2, s"mod by 0"))
-    case (Binary./, Num(n1), Num(n2)) => Right(Num(n1 / n2))
-    case (Binary.%, Num(n1), Num(n2)) => Right(Num(n1 % n2))
+    case (Binary.+, CvtNum(n1), CvtNum(n2)) => Right(Num(n1 + n2))
+    case (Binary.-, CvtNum(n1), CvtNum(n2)) => Right(Num(n1 - n2))
+    case (Binary.*, CvtNum(n1), CvtNum(n2)) => Right(Num(n1 * n2))
+    case (Binary./, CvtNum(n1), CvtNum(0)) => Left((v2, s"div by 0"))
+    case (Binary.%, CvtNum(n1), CvtNum(0)) => Left((v2, s"mod by 0"))
+    case (Binary./, CvtNum(n1), CvtNum(n2)) => Right(Num(n1 / n2))
+    case (Binary.%, CvtNum(n1), CvtNum(n2)) => Right(Num(n1 % n2))
 
-    case (Binary.+, StringLit(n1), StringLit(n2)) => Right(StringLit(n1 + n2))
-    case (Binary.+, StringLit(n1), Num(n2)) => Right(StringLit(n1 + n2.toString))
-    case (Binary.+, StringLit(n1), Bool(n2)) => Right(StringLit(n1 + n2.toString))
-    case (Binary.+, StringLit(n1), Null()) => Right(StringLit(n1 + "null"))
-    case (Binary.+, StringLit(n1), Undefined()) => Right(StringLit(n1 + "undefined"))
+    case (Binary.+, CvtString(n1), CvtString(n2)) => Right(StringLit(n1 + n2))
 
-    case (Binary.&, Num(n1), Num(n2)) => Right(Num(n1.toLong & n2.toLong))
-    case (Binary.|, Num(n1), Num(n2)) => Right(Num(n1.toLong | n2.toLong))
-    case (Binary.^, Num(n1), Num(n2)) => Right(Num(n1.toLong ^ n2.toLong))
-    case (Binary.>>, Num(n1), Num(n2)) => Right(Num(n1.toLong >> n2.toLong))
-    case (Binary.<<, Num(n1), Num(n2)) => Right(Num(n1.toLong << n2.toLong))
-    case (Binary.>>>, Num(n1), Num(n2)) => Right(Num(n1.toLong >>> n2.toLong))
+    case (Binary.&, CvtNum(n1), CvtNum(n2)) => Right(Num(n1.toLong & n2.toLong))
+    case (Binary.|, CvtNum(n1), CvtNum(n2)) => Right(Num(n1.toLong | n2.toLong))
+    case (Binary.^, CvtNum(n1), CvtNum(n2)) => Right(Num(n1.toLong ^ n2.toLong))
+    case (Binary.>>, CvtNum(n1), CvtNum(n2)) => Right(Num(n1.toLong >> n2.toLong))
+    case (Binary.<<, CvtNum(n1), CvtNum(n2)) => Right(Num(n1.toLong << n2.toLong))
+    case (Binary.>>>, CvtNum(n1), CvtNum(n2)) => Right(Num(n1.toLong >>> n2.toLong))
 
-    case (Binary.<, Num(n1), Num(n2)) => Right(Bool(n1 < n2))
-    case (Binary.<=, Num(n1), Num(n2)) => Right(Bool(n1 <= n2))
-    case (Binary.>=, Num(n1), Num(n2)) => Right(Bool(n1 >= n2))
-    case (Binary.>, Num(n1), Num(n2)) => Right(Bool(n1 > n2))
+    case (Binary.<, CvtPrim(StringLit(n1)), CvtPrim(StringLit(n2))) => Right(Bool(n1 < n2))
+    case (Binary.<=, CvtPrim(StringLit(n1)), CvtPrim(StringLit(n2))) => Right(Bool(n1 <= n2))
+    case (Binary.>, CvtPrim(StringLit(n1)), CvtPrim(StringLit(n2))) => Right(Bool(n1 > n2))
+    case (Binary.>=, CvtPrim(StringLit(n1)), CvtPrim(StringLit(n2))) => Right(Bool(n1 >= n2))
 
-    case (Binary.&&, Bool(n1), Bool(n2)) => Right(Bool(n1 && n2))
-    case (Binary.||, Bool(n1), Bool(n2)) => Right(Bool(n1 || n2))
+    case (Binary.<, CvtPrim(Num(n1)), CvtPrim(Num(n2))) if n1.isNaN || n2.isNaN => Right(Undefined())
+    case (Binary.<=, CvtPrim(Num(n1)), CvtPrim(Num(n2))) if n1.isNaN || n2.isNaN => Right(Undefined())
+    case (Binary.>, CvtPrim(Num(n1)), CvtPrim(Num(n2))) if n1.isNaN || n2.isNaN => Right(Undefined())
+    case (Binary.>=, CvtPrim(Num(n1)), CvtPrim(Num(n2))) if n1.isNaN || n2.isNaN => Right(Undefined())
+
+    case (Binary.<, CvtPrim(Num(n1)), CvtPrim(Num(n2))) => Right(Bool(n1 < n2))
+    case (Binary.<=, CvtPrim(Num(n1)), CvtPrim(Num(n2))) => Right(Bool(n1 <= n2))
+    case (Binary.>, CvtPrim(Num(n1)), CvtPrim(Num(n2))) => Right(Bool(n1 > n2))
+    case (Binary.>=, CvtPrim(Num(n1)), CvtPrim(Num(n2))) => Right(Bool(n1 >= n2))
+
+    case (Binary.&&, CvtBool(n1), CvtBool(n2)) => Right(Bool(n1 && n2))
+    case (Binary.||, CvtBool(n1), CvtBool(n2)) => Right(Bool(n1 || n2))
 
     case (Binary.BIND, v1, v2) => Left((Undefined(), "unimplemented"))
     case (Binary.COMMALEFT, v1, v2) => Left((Undefined(), "unimplemented"))
@@ -624,10 +709,43 @@ object CESK {
 
     // Equality operators should not work on residuals.
     // So match after the above.
-    case (Binary.==, v1, v2) => Right(Bool(v1 == v2))
-    case (Binary.!=, v1, v2) => Right(Bool(v1 != v2))
-    case (Binary.===, v1, v2) => Right(Bool(v1 == v2))
-    case (Binary.!==, v1, v2) => Right(Bool(v1 != v2))
+
+    case (Binary.!=, v1, v2) => evalOp(Binary.==, v1, v2) match {
+      case Right(Bool(v)) => Right(Bool(!v))
+      case Right(Residual(Binary(Binary.==, v1, v2))) => Right(Residual(Binary(Binary.!=, v1, v2)))
+      case r => r
+    }
+
+    case (Binary.!==, v1, v2) => evalOp(Binary.===, v1, v2) match {
+      case Right(Bool(v)) => Right(Bool(!v))
+      case Right(Residual(Binary(Binary.===, v1, v2))) => Right(Residual(Binary(Binary.!==, v1, v2)))
+      case r => r
+    }
+
+    case (Binary.==, Null(), Undefined()) => Right(Bool(true))
+    case (Binary.==, Undefined(), Null()) => Right(Bool(true))
+    case (Binary.==, Num(n1), v2 @ CvtNum(n2)) if v2.isInstanceOf[StringLit] => Right(Bool(n1 == n2))
+    case (Binary.==, v1 @ CvtNum(n1), Num(n2)) if v1.isInstanceOf[StringLit] => Right(Bool(n1 == n2))
+    case (Binary.==, Num(n1), v2 @ CvtNum(n2)) if v2.isInstanceOf[Bool] => Right(Bool(n1 == n2))
+    case (Binary.==, v1 @ CvtNum(n1), Num(n2)) if v1.isInstanceOf[Bool] => Right(Bool(n1 == n2))
+
+    // We don't handle object literals, so just reify.
+    case (Binary.==, v1 @ Loc(n1), v2) => Right(reify(Binary(op, v1, v2)))
+    case (Binary.==, v1, v2 @ Loc(n2)) => Right(reify(Binary(op, v1, v2)))
+
+    case (Binary.==, v1, v2) => evalOp(Binary.===, v1, v2) match {
+      case Right(Bool(v)) => Right(Bool(v))
+      case Right(Residual(Binary(Binary.===, v1, v2))) => Right(Residual(Binary(Binary.==, v1, v2)))
+      case r => r
+    }
+
+    case (Binary.===, Undefined(), Undefined()) => Right(Bool(true))
+    case (Binary.===, Null(), Null()) => Right(Bool(true))
+    case (Binary.===, Num(n1), Num(n2)) => Right(Bool(n1 == n2))
+    case (Binary.===, StringLit(n1), StringLit(n2)) => Right(Bool(n1 == n2))
+    case (Binary.===, Bool(n1), Bool(n2)) => Right(Bool(n1 == n2))
+    case (Binary.===, Loc(n1), Loc(n2)) => Right(Bool(n1 == n2)) // same object
+    case (Binary.===, v1, v2) => Right(Bool(false)) // all other cases should be false (residuals are handled above)
 
     // Failure
     case (op, v1: Exp, v2: Exp) =>
