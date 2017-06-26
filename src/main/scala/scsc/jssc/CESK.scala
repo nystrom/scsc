@@ -319,27 +319,48 @@ object CESK {
     // Then run the initializer, assigning to the location.
     // The DoAssign continuation should leave the initializer in the focus,
     // but we should evaluate to undefined, so add block continuation for that.
+    case Σ(VarDef(x, fun @ Lambda(xs, e)), ρ, σ, k) =>
+      ρ.get(x) match {
+        case Some(loc) =>
+          // Evaluate under the lambda.
+          val args = xs map {
+            case x => Residual(Ident(x))
+          }
+          Σ(Undefined(), ρ, σ, DoCall(fun, args, ρ)::WrapLambda(xs, ρ)::DoAssign(None, loc, ρ)::RebuildVarDef(x, ρ)::BlockCont(Undefined()::Nil, Nil, ρ)::k)
+        case None =>
+          Σ(e, ρ, σ, Fail(s"variable $x not found")::k)
+      }
     case Σ(VarDef(x, e), ρ, σ, k) =>
       ρ.get(x) match {
         case Some(loc) =>
-          Σ(e, ρ, σ, Load(ρ)::DoAssign(None, loc, ρ)::BlockCont(Undefined()::Nil, Nil, ρ)::k)
+          Σ(e, ρ, σ, Load(ρ)::DoAssign(None, loc, ρ)::RebuildVarDef(x, ρ)::BlockCont(Undefined()::Nil, Nil, ρ)::k)
         case None =>
           Σ(e, ρ, σ, Fail(s"variable $x not found")::k)
       }
     case Σ(LetDef(x, e), ρ, σ, k) =>
       ρ.get(x) match {
         case Some(loc) =>
-          Σ(e, ρ, σ, Load(ρ)::DoAssign(None, loc, ρ)::BlockCont(Undefined()::Nil, Nil, ρ)::k)
+          Σ(e, ρ, σ, Load(ρ)::DoAssign(None, loc, ρ)::RebuildLetDef(x, ρ)::BlockCont(Undefined()::Nil, Nil, ρ)::k)
         case None =>
           Σ(e, ρ, σ, Fail(s"variable $x not found")::k)
       }
     case Σ(ConstDef(x, e), ρ, σ, k) =>
       ρ.get(x) match {
         case Some(loc) =>
-          Σ(e, ρ, σ, Load(ρ)::DoAssign(None, loc, ρ)::BlockCont(Undefined()::Nil, Nil, ρ)::k)
+          Σ(e, ρ, σ, Load(ρ)::DoAssign(None, loc, ρ)::RebuildConstDef(x, ρ)::BlockCont(Undefined()::Nil, Nil, ρ)::k)
         case None =>
           Σ(e, ρ, σ, Fail(s"variable $x not found")::k)
       }
+
+    case Σ(v, ρ, σ, WrapLambda(xs, ρ1)::k) if v.isValue =>
+      Σ(Lambda(xs, unreify(v)), ρ1, σ, k)
+
+    case Σ(v, ρ, σ, RebuildVarDef(x, ρ1)::k) if v.isValue =>
+      Σ(reify(VarDef(x, v)), ρ1, σ, k)
+    case Σ(v, ρ, σ, RebuildLetDef(x, ρ1)::k) if v.isValue =>
+      Σ(reify(LetDef(x, v)), ρ1, σ, k)
+    case Σ(v, ρ, σ, RebuildConstDef(x, ρ1)::k) if v.isValue =>
+      Σ(reify(ConstDef(x, v)), ρ1, σ, k)
 
     ////////////////////////////////////////////////////////////////
     // Assignment.
@@ -493,7 +514,6 @@ object CESK {
     case Σ(v, ρ, σ, EvalMoreArgs(fun, Nil, done, ρ1)::k) if v.isValue =>
       Σ(Empty(), ρ1, σ, DoCall(fun, done :+ v, ρ1)::k)
 
-    // Eliminate sharing of the argument by building a let for the argument.
     case Σ(_, ρ, σ, DoCall(Lambda(xs, e), args, ρ1)::k) =>
       // println("rebuilding 10 " + Let(x, arg, e).show)
       val locs = xs map { _ => FreshLoc() }
@@ -513,14 +533,15 @@ object CESK {
       }
       Σ(e, ρ2, σ1, CallFrame(ρ1)::k)  // use ρ1 in the call frame.. this is the env we pop to.
 
-    // The function is not a lambda. Residualize the call. Clear the store. This is too conservative!
+    // The function is not a lambda. Residualize the call. Clear the store since we have no idea what the function
+    // will do to the store.
     case Σ(_, ρ, σ, DoCall(fun, args, ρ1)::k) =>
       Σ(reify(Call(fun, args)), ρ1, σ0, k)
 
     // Wrap v in a let.
     case Σ(v, ρ, σ, RebuildLet(xs, args, ρ1)::k) if v.isValue =>
       val ss = (xs zip args) collect {
-        case (x, e) if (fv(v) contains x) => VarDef(x, e)
+        case (x, e) if (fv(v) contains x) => LetDef(x, e)
       }
       if (ss.nonEmpty) {
         Σ(reify(Block(ss :+ v)), ρ1, σ, k)
@@ -559,15 +580,9 @@ object CESK {
       Σ(e, ρ, σ, Fail(s"no step defined for $s")::k)
   }
 
+  // Fix this! This is too simple and doesn't handle coercions corretctly.
+  // Let's look at the spec.
   def evalOp(op: Operator, v1: Exp, v2: Exp): Either[(Exp, String), Exp] = (op, v1, v2) match {
-    // Perform some simple algebraic simplifications
-    case (Binary.+, Num(0), v) => Right(v)
-    case (Binary.+, v, Num(0)) => Right(v)
-    case (Binary.-, v, Num(0)) => Right(v)
-    case (Binary.*, Num(1), v) => Right(v)
-    case (Binary.*, v, Num(1)) => Right(v)
-    case (Binary./, v, Num(1)) => Right(v)
-
     case (Binary.+, Num(n1), Num(n2)) => Right(Num(n1 + n2))
     case (Binary.-, Num(n1), Num(n2)) => Right(Num(n1 - n2))
     case (Binary.*, Num(n1), Num(n2)) => Right(Num(n1 * n2))
@@ -575,6 +590,12 @@ object CESK {
     case (Binary.%, Num(n1), Num(0)) => Left((v2, s"mod by 0"))
     case (Binary./, Num(n1), Num(n2)) => Right(Num(n1 / n2))
     case (Binary.%, Num(n1), Num(n2)) => Right(Num(n1 % n2))
+
+    case (Binary.+, StringLit(n1), StringLit(n2)) => Right(StringLit(n1 + n2))
+    case (Binary.+, StringLit(n1), Num(n2)) => Right(StringLit(n1 + n2.toString))
+    case (Binary.+, StringLit(n1), Bool(n2)) => Right(StringLit(n1 + n2.toString))
+    case (Binary.+, StringLit(n1), Null()) => Right(StringLit(n1 + "null"))
+    case (Binary.+, StringLit(n1), Undefined()) => Right(StringLit(n1 + "undefined"))
 
     case (Binary.&, Num(n1), Num(n2)) => Right(Num(n1.toLong & n2.toLong))
     case (Binary.|, Num(n1), Num(n2)) => Right(Num(n1.toLong | n2.toLong))

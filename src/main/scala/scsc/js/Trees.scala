@@ -72,11 +72,11 @@ object Trees {
     def isTrue = e.isRealValue && ! e.isFalse
 
     def isFalse: Boolean = e match {
+      case StringLit("") => true
       case Bool(false) => true
       case Num(0) => true
       case Undefined() => true
       case Null() => true
-      case Empty() => true
       case n => false
     }
 
@@ -117,6 +117,7 @@ object Trees {
     }
 
     def isRealValue: Boolean = e match {
+      case StringLit(_) => true
       case Bool(_) => true
       case Num(_) => true
       case Undefined() => true
@@ -132,6 +133,7 @@ object Trees {
     }
 
     def isValue: Boolean = e match {
+      case StringLit(_) => true
       case Bool(_) => true
       case Num(_) => true
       case Undefined() => true

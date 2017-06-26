@@ -61,9 +61,23 @@ object Continuations {
     override def toString = s"${v1.show} $op ☐"
   }
 
-  case class BlockCont(todo: List[Exp], done: List[Exp], ρ: Env) extends ContAction
-  case class BranchCont(ifTrue: Cont, ifFalse: Cont, ifResidual: Cont) extends ContAction
-  case class LoopCont(label: Option[Name], cont: Cont) extends ContAction
+  case class BlockCont(todo: List[Exp], done: List[Exp], ρ: Env) extends ContAction {
+    override def toString = (done, todo) match {
+      case (Nil, Nil) => s"{ ☐ }"
+      case (done, Nil) => s"{ ${done.map(_.show).mkString(", ")}; ☐ }"
+      case (Nil, todo) => s"{ ☐, ${todo.map(_.show).mkString("; ")} }"
+      case (done, todo) => s"{ ${done.map(_.show).mkString("; ")}; ☐; ${todo.map(_.show).mkString("; ")} }"
+    }
+  }
+  case class BranchCont(ifTrue: Cont, ifFalse: Cont, ifResidual: Cont) extends ContAction {
+    override def toString = s"if (☐) { $ifTrue } else { $ifFalse } [$ifResidual]"
+  }
+  case class LoopCont(label: Option[Name], cont: Cont) extends ContAction {
+    override def toString = label match {
+      case Some(label) => s"$label: loop { $cont }"
+      case None => s"loop { $cont }"
+    }
+  }
 
   // Assignment.
   case class EvalAssignRhs(op: Option[Operator], rhs: Exp, ρ: Env) extends ContAction
@@ -79,6 +93,10 @@ object Continuations {
     override def toString = s"[[ let $xs = $vs in ☐ ]]"
   }
 
+  case class RebuildVarDef(x: Name, ρ: Env) extends RebuildCont
+  case class RebuildLetDef(x: Name, ρ: Env) extends RebuildCont
+  case class RebuildConstDef(x: Name, ρ: Env) extends RebuildCont
+
   case class RebuildCondTest(s1: Exp, s2: Exp, ρ: Env) extends RebuildCont
   case class RebuildCondTrue(test: Exp, s2: Exp, σAfterTest: Store, ρ: Env) extends RebuildCont
   case class RebuildCondFalse(test: Exp, s1: Exp, σAfterS1: Store, ρ: Env) extends RebuildCont
@@ -92,5 +110,7 @@ object Continuations {
   case class RebuildForTest(test: Exp, iter: Exp, body: Exp, ρ: Env) extends RebuildCont
   case class RebuildForBody(test1: Exp, test: Exp, iter: Exp, body: Exp, ρ: Env) extends RebuildCont
   case class RebuildForIter(body1: Exp, test1: Exp, test: Exp, iter: Exp, body: Exp, ρ: Env) extends RebuildCont
+
+  case class WrapLambda(xs: List[Name], ρ: Env) extends ContAction
 
 }
