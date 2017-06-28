@@ -1,11 +1,10 @@
-# From CESK to supercompilation and beyond
+# From abstract machines to supercompilation and beyond
 
-[This is a sketch of a submission to be made to POPL'18]
+Supercompilation is a partial evaluation technique
+primarily used today for program optimization in functional languages. Supercompilation extends traditional partial evaluation by recognizing repeated computations and generalizing to ensure the partial evaluator terminates. We describe a recipe for translating an abstract machine model into a supercompiler. We start with Felleisen's CEK model, extending the model with _residual values_. We then describe extending the recipe to handle mutable state. We demonstrate the approach by implementing a supercompiler for JavaScript and show its optimization potential on the JSBench suite.
 
-A CESK machine is an abstract machine consisting of four components: control, environment, state, and [k]ontinuation.
-We describe a recipe for translating any CESK model into a supercompiler. We start with translating a CEK model, and extend to CESK. We then extend the supercompiler to support a further enhancement, distillation. We realize this theoretical model with an implementation of a supercompiler for JavaScript.
 
-This paper also includes the first description of distillation using a non-process tree model.
+The JavaScript partial evaluator first desugars into LambdaS5, which is considerably simpler. We then implement a PE for LambdaS5.
 
 ## CEK and CESK machines
 
@@ -16,6 +15,22 @@ A CEK machine consists of three components: control, environment, and continuati
 Supercompilation is a partial evaluation technique that operates on process trees. At its simplest, supercompilation evaluates programs as much as possible at compile time. This is called _driving_ in the supercompilation literature. When evaluation cannot proceed from a given program state, the state is _split_ and evaluation is performed recursively. The supercompiler (conservatively) identifies states from which continued driving and splitting will not terminate and _generalizes_. This has the effect of making the process tree finite, allowing the algorithm to terminate. From the process tree, a program is extracted that implements the original program hopefully more efficiently.
 
 Supercompilation has received a lot of attention in the functional programming literature because it subsumes common optimizations like deforestation. It is not yet in mainstream use in any functional language because of the following practical considerations: (1) supercompilation has a large compile time compared to traditional optimization, and (2) supercompilation can generate exponentially large code. Attempts to address these issues have been made in other work [taming-code-explosion], but not yet applied to a functional language such as Haskell.
+
+Our aim in the paper is to try to present a form of supercompilation using a simpler (at least for us) abstraction than process trees, namely abstract machines. Using a simpler model, we believe supercompilation can be more easily explained and more easily adapted to other programming languages for which such a model exists. 
+
+This work follows in the spirit of [abstracting-abstract-machines].
+
+We first describe how an abstract machine, namely a CEK machine, can be transformed into a simple partial evaluator by introducing _residual values_.
+Performing a computation step on a residual value results in another residual value. We then describe how we can implement generalization on top of the CEK machine, yielding a supercompiler.
+
+Adding state to a CEK machine yields a CESK machine. We show our approach can be extended to a CESK machine, describing supercompilation for a simple imperative language.
+
+Finally, we extend a JavaScript interpreter, implemented in a CESK style to support supercompilation for JavaScript programs.
+
+JavaScript is a notoriously difficult language to implement, with a complex semantics for even the simplest operations. However, one advantage of implementing a partial evaluator versus a interpreter is that the difficult cases can be residualized: that is, rather than implement the precise semantics for some language features, they can be ignored and left in the residual program.
+
+Our JS implementation uses some of the desugarings from Lambda JS [lambda-js].
+
 
 ## CEK machines
 
@@ -186,13 +201,182 @@ To residualize a state to a term, we simply evaluate the term on the CEK machine
 Need to prove a theorem that replacing an expression by its residualization
 at each step will terminate in a finite number of steps. This gives us an algorithm for computing an expression from a state.
 
-## Partial evaluation with termination to supercompilation
+Proof. In a finite number of steps, the continuation shrinks.
+If the focus is a residual. Either the continuation stays the same
+size and the focus changes to another residual.
+Or the continuation shrinks.
+The focus never changes back the same residual.
+Heap lookups are never performed since variables are initialized immediately.
+
+## Partial evaluation with termination 
 
 Different termination whistle (less ad hoc). Then introduce generalization.
 
-## From supercompilation to distillation
+## Adding generalization
 
-Different generalization.
+Residualize the state.
+Perform HE on the terms.
+
+## Adding state
+
+CESK machine for IMP
+    
+    e ::= v | x | e op e
+        | while (e) e | if (e) then e else e
+        | var x = e; e | x = e | e; e
+        | v
+    v ::= n | true | false | loc
+
+The main point to notice is that var allocates a location and adds x to the scope.
+
+Technically for this language we don't need locations, we can just use names, but modelling locations explicitly makes it easier to extend with heap data structures.
+ 
+
+    (e1; e2, rho, sigma, k)
+    -->
+    (e1, rho, sigma, (then e2 rho)::k)
+    
+    (v, rho, sigma, (then e2 rho')::k)
+    -->
+    (e2, rho', sigma, k)
+    
+    (while (e1) e2, rho, sigma, k)
+    -->
+    (if (e1) (e2; while (e1) e2), rho, sigma, k)
+
+    (if (e0) then e1 else e2, rho, sigma, k)
+    -->
+    (e0, rho, sigma, (branch e1 e2 rho)::k)
+    
+    (true/false, rho, sigma, (branch e1 e2 rho')::k)
+    -->
+    (e1/e2, rho', sigma, k)
+        
+    (var x = e1; e2, rho, sigma, k)
+    -->
+    (x = e1, rho', sigma', (then e2 rho')::k) 
+        rho' = rho[x := loc], loc fresh
+        sigma' = sigma[loc := false]
+
+    (x = e, rho, sigma, k)
+    -->
+    (rho(x), rho, sigma, (eval-rhs e rho)::k)
+
+    (v, rho, sigma, (eval-rhs e rho')::k)
+    -->
+    (e, rho', sigma, (assign v rho)::k)
+
+    (v, rho, sigma, (assign loc rho')::k)
+    -->
+    (v, rho', sigma[loc := v], k)
+
+    (x, rho, sigma, k)
+    -->
+    (sigma(rho(x)), rho, sigma, k)
+
+    (e1 op e2, rho, sigma, k)
+    -->
+    (e1, rho, sigma, (eval-right op e2 rho)::k)
+    
+    (v1, rho, sigma, (eval-right op e2 rho')::k)
+    -->
+    (e2, rho', sigma, (eval-op op v1 rho')::k)
+    
+    (v2, rho, sigma, (eval-op op v1 rho')::k)
+    -->
+    (v1 `op` v2, rho', sigma, k)
+    
+`op` is defined to do the arithmetic operation as usual.
+
+Extending with residual values:
+
+    v ::= ... | [[e]]
+    
+We add the following rules:
+
+    ([[e1]], rho, sigma, (then e2 rho')::k)
+    -->
+    (e2, rho', sigma, (make-; e1 rho')::k)
+    
+    (v2, rho, sigma, (make-; e1 rho')::k)
+    -->
+    ([[e1; v2]], rho', sigma, k)
+
+Handling if is more complicated. If the condition is a residual,
+we evaluate the true branch but with a continuation that evaluates the false branch then rebuilds the if.
+We save the store sigma in the continuation so we can evaluate both branches
+in the same store.
+
+    ([[e]], rho, sigma, (branch e1 e2 rho')::k)
+    -->
+    (e1, rho', sigma, (eval-false-then-make-if e e2 sigma rho')::k)
+
+After the true branch is evaluated, we evaluate the false branch,
+with a continuation that rebuilds the if.
+We save the store again, this time for the state after the true branch.
+
+    (v1, rho, sigma, (eval-false-then-make-if e0 e2 sigma' rho')::k)
+    -->
+    (e2, rho', sigma', (make-if e0 v1 sigma rho')::k)
+
+Now we've evaluated both the true and false branches.
+We recreate the if.
+
+    (v2, rho, sigma, (make-if e0 e1 sigma' rho')::k)
+    -->
+    ([[if e0 then e1 else v2]], rho', sigma'', k)
+        where sigma'' = merge(sigma, sigma')
+    
+We merge the stores that result after the two branches.
+We describe store merging later.
+
+Assignment is extended to handle residual values:
+
+    (v, rho, sigma, (assign [[e]] rho')::k)
+    -->
+    ([[e = v]], rho', sigma', k)
+        where sigma' = sanitize(rho', sigma')  # remove anything accessible from rho', which was the environment of e
+
+If a variable x is not in rho, or its location is not in sigma,
+we residualize the variable.
+
+    (x, rho, sigma, k)
+    -->
+    ([[x]], rho, sigma, k)
+
+This rule allows computation on open expressions.
+If a variable is not found in the environment or in the store, we just residualize it.
+
+Then for binary expressions:
+
+    (v2, rho, sigma, (eval-op op v1 rho')::k)
+    -->
+    ([[v1 op v2]], rho', sigma, k)
+        where v1 or v2 is a residual
+        
+        
+One catch is that after residualizing a variable `x`, we must ensure
+its declaration is in the residual.
+To ensure that, we add the following rule:
+
+    ()
+
+## Proof of correctness
+
+Can do this proof for CEK. For CESK too, if we can state the theorem correctly.
+
+    if s1 -->* s2 in the original machine
+    and s1 -->* s2' in the new machine
+        where we arbitrarily add an x --> [[x]] transition
+    then
+    s2' -->* s2 in the original machine
+    
+Proof by bisimulation.???
+
+## Extending IMP with arrays
+
+## Generalizing with state
+
 
 ## OLD OLD OLD
 
@@ -283,7 +467,7 @@ Splitting. Splitting we do for configurations where we can't make progress. `if`
 
 For Luis: write a CESK-style evaluator for JS.
 Extend to be a partial evaluator.
-Extend the PE to handle termination and generalization in a nice way. The distillation.
+Extend the PE to handle termination and generalization in a nice way. Then distillation.
 Extend the PE with splitting. Supercompilation!
 Extend the PE with generalization.
 
