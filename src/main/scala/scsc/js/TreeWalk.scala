@@ -38,8 +38,6 @@ object TreeWalk {
         Assign(op, rewrite(left), rewrite(right))
       case Binary(op, left, right) =>
         Binary(op, rewrite(left), rewrite(right))
-      case Access(base, prop) =>
-        Access(rewrite(base), prop)
       case Block(es) =>
         Block(rewrite(es))
       case Break(label) =>
@@ -56,24 +54,26 @@ object TreeWalk {
         Continue(label)
       case Empty() =>
         Empty()
-      case For(init, test, modify, body) =>
-        For(rewrite(init), rewrite(test), rewrite(modify), rewrite(body))
-      case ForIn(init, modify, body) =>
-        ForIn(rewrite(init), rewrite(modify), rewrite(body))
-      case ForEach(init, test, modify, body) =>
-        ForEach(rewrite(init), rewrite(test), rewrite(modify), rewrite(body))
+      case For(label, init, test, modify, body) =>
+        For(label, rewrite(init), rewrite(test), rewrite(modify), rewrite(body))
+      case ForIn(label, init, modify, body) =>
+        ForIn(label, rewrite(init), rewrite(modify), rewrite(body))
+      case ForEach(label, init, test, modify, body) =>
+        ForEach(label, rewrite(init), rewrite(test), rewrite(modify), rewrite(body))
       case Lambda(params, body) =>
         Lambda(params, rewrite(body))
       case Program(body) =>
         Program(rewrite(body))
       case Ident(x) =>
         Ident(x)
+      case LocalAddr(x) =>
+        LocalAddr(x)
       case IfElse(test, pass, fail) =>
         IfElse(rewrite(test), rewrite(pass), rewrite(fail))
       case Index(a, i) =>
         Index(rewrite(a), rewrite(i))
-      case Label(label, body) =>
-        Label(label, rewrite(body))
+      case IndexAddr(a, i) =>
+        IndexAddr(rewrite(a), rewrite(i))
       case ArrayLit(es) =>
         ArrayLit(rewrite(es))
       case Bool(v) =>
@@ -108,10 +108,10 @@ object TreeWalk {
         LetDef(x, rewrite(init))
       case ConstDef(x, init) =>
         ConstDef(x, rewrite(init))
-      case While(cond, body) =>
-        While(rewrite(cond), rewrite(body))
-      case DoWhile(body, cond) =>
-        DoWhile(rewrite(body), rewrite(cond))
+      case While(label, cond, body) =>
+        While(label, rewrite(cond), rewrite(body))
+      case DoWhile(label, body, cond) =>
+        DoWhile(label, rewrite(body), rewrite(cond))
       case With(exp, body) =>
         With(rewrite(exp), rewrite(body))
     }

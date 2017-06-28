@@ -53,14 +53,50 @@ object CESK {
   // When we see Σ(Residual(e), ρ, k)
   // Lookup e as a constraint term in ρ. If we can determine its value, done!
 
+  object Value {
+    def unapply(e: Exp) = e match {
+      case v if v.isValue => Some(v)
+      case _ => None
+    }
+  }
 
+  object HeapValue {
+    def unapply(e: Exp) = e match {
+      case v if v.isHeapValue => Some(v)
+      case _ => None
+    }
+  }
+
+  object ValueOrResidual {
+    def unapply(e: Exp) = e match {
+      case v if v.isValueOrResidual => Some(v)
+      case _ => None
+    }
+  }
+
+  object NormalForm {
+    def unapply(e: Exp) = e match {
+      case v if v.isNormalForm => Some(v)
+      case _ => None
+    }
+  }
+
+  // Statements evaluate to Empty or a residual
+  // Expressions evaluate to a value or a residual.
+  // Expressions (e.g., names and property accesses) may evaluate to a memory location.
   def step(s: St): St = s match {
+    // Done!
+    case s @ Σ(NormalForm(_), _, _, Nil) => s
+
+    // Fail fast
+    case s @ Σ(_, _, _, Fail(_)::k) => s
+
     ////////////////////////////////////////////////////////////////
-    // Programs and Eval.
+    // Programs.
     ////////////////////////////////////////////////////////////////
 
     case Σ(Program(s), ρ, σ, k) =>
-      Σ(s, ρ, σ, Load(ρ)::k)
+      Σ(s, ρ, σ, k)
 
     ////////////////////////////////////////////////////////////////
     // Conditionals
@@ -69,51 +105,51 @@ object CESK {
 
     // if e then s1 else s2
     case Σ(IfElse(e, s1, s2), ρ, σ, k) =>
-      Σ(e, ρ, σ, Load(ρ)::
-                 BranchCont(BlockCont(s1::Nil, Nil, ρ)::Nil,
+      Σ(e, ρ, σ, BranchCont(BlockCont(s1::Nil, Nil, ρ)::Nil,
                             BlockCont(s2::Nil, Nil, ρ)::Nil,
                             RebuildIfElseTest(s1, s2, ρ)::Nil)::k)
 
     // e ? s1 : s2
     case Σ(Cond(e, s1, s2), ρ, σ, k) =>
-      Σ(e, ρ, σ, Load(ρ)::
-                 BranchCont(BlockCont(s1::Nil, Nil, ρ)::Nil,
+      Σ(e, ρ, σ, BranchCont(BlockCont(s1::Nil, Nil, ρ)::Nil,
                             BlockCont(s2::Nil, Nil, ρ)::Nil,
                             RebuildCondTest(s1, s2, ρ)::Nil)::k)
 
-    case Σ(v, ρ, σ, BranchCont(kt, kf, kr)::k) if v.isTrue =>
+    case Σ(v @ CvtBool(true), ρ, σ, BranchCont(kt, kf, kr)::k) =>
       Σ(v, ρ, σ, kt ++ k)
 
-    case Σ(v, ρ, σ, BranchCont(kt, kf, kr)::k) if v.isFalse =>
+    case Σ(v @ CvtBool(false), ρ, σ, BranchCont(kt, kf, kr)::k) =>
       Σ(v, ρ, σ, kf ++ k)
 
-    case Σ(Residual(e), ρ, σ, BranchCont(kt, kf, kr)::k) =>
+    // Neither true nor false, so residualize
+    case Σ(ValueOrResidual(e), ρ, σ, BranchCont(kt, kf, kr)::k) =>
       Σ(Residual(e), ρ, σ, kr ++ k)
+
 
     // Rebuilding ? : and if-else nodes.
     // The logic is duplicated.
 
     // Evaluate the test to a (residual) value.
     // Save the store and eval the true branch.
-    case Σ(test, ρ, σ, RebuildCondTest(s1, s2, ρ1)::k) if test.isValue =>
-      Σ(s1, ρ1, σ, Load(ρ1)::RebuildCondTrue(test, s2, σ, ρ)::k)
+    case Σ(ValueOrResidual(test), ρ, σ, RebuildCondTest(s1, s2, ρ1)::k) =>
+      Σ(s1, ρ1, σ, RebuildCondTrue(test, s2, σ, ρ)::k)
 
     // Save the evaluated true branch and the store after the true branch.
     // Restore the post-test store and evaluate the false branch.
-    case Σ(s1, ρ, σ, RebuildCondTrue(test, s2, σ1, ρ1)::k) if s1.isValue =>
-      Σ(s2, ρ1, σ1, Load(ρ1)::RebuildCondFalse(test, s1, σ, ρ)::k)
+    case Σ(ValueOrResidual(s1), ρ, σ, RebuildCondTrue(test, s2, σ1, ρ1)::k) =>
+      Σ(s2, ρ1, σ1, RebuildCondFalse(test, s1, σ, ρ)::k)
 
     // Rebuild and merge the post-true and post-false stores.
-    case Σ(s2, ρ, σ, RebuildCondFalse(test, s1, σ1, ρ1)::k) if s2.isValue =>
+    case Σ(ValueOrResidual(s2), ρ, σ, RebuildCondFalse(test, s1, σ1, ρ1)::k) =>
       Σ(reify(Cond(test, s1, s2)), ρ1, mergeStores(σ1, σ), k)
 
-    case Σ(test, ρ, σ, RebuildIfElseTest(s1, s2, ρ1)::k) if test.isValue =>
-      Σ(s1, ρ1, σ, Load(ρ1)::RebuildIfElseTrue(test, s2, σ, ρ)::k)
+    case Σ(ValueOrResidual(test), ρ, σ, RebuildIfElseTest(s1, s2, ρ1)::k) =>
+      Σ(s1, ρ1, σ, RebuildIfElseTrue(test, s2, σ, ρ)::k)
 
-    case Σ(s1, ρ, σ, RebuildIfElseTrue(test, s2, σ1, ρ1)::k) if s1.isValue =>
-      Σ(s2, ρ1, σ1, Load(ρ1)::RebuildIfElseFalse(test, s1, σ, ρ)::k)
+    case Σ(ValueOrResidual(s1), ρ, σ, RebuildIfElseTrue(test, s2, σ1, ρ1)::k) =>
+      Σ(s2, ρ1, σ1, RebuildIfElseFalse(test, s1, σ, ρ)::k)
 
-    case Σ(s2, ρ, σ, RebuildIfElseFalse(test, s1, σ1, ρ1)::k) if s2.isValue =>
+    case Σ(ValueOrResidual(s2), ρ, σ, RebuildIfElseFalse(test, s1, σ1, ρ1)::k) =>
       Σ(reify(IfElse(test, s1, s2)), ρ1, mergeStores(σ1, σ), k)
 
     // the problem, in general, is that the loop condition evaluates to something in the current store.
@@ -123,54 +159,27 @@ object CESK {
     ////////////////////////////////////////////////////////////////
     // Loops.
     // This is very much complicated by break and continue.
-    // Otherwise we could just desugar everything into IfElse and While.
+    // Otherwise we could just desugar everything into IfElse,
+    // unrolling the loop and letting generlization handle
+    // termination detection and rebuilding the loop.
     ////////////////////////////////////////////////////////////////
 
+    case Σ(For(label, Empty(), test, iter, body), ρ, σ, k) =>
+      Σ(test, ρ, σ, BranchCont(
+                      BlockCont(body::Nil, Nil, ρ)::ContinueFrame(label)::BlockCont(iter::For(label, Empty(), test, iter, body)::Nil, Nil, ρ)::BreakFrame(label)::Nil,
+                      BlockCont(Undefined()::Nil, Nil, ρ)::Nil,
+                      RebuildForTest(label, test, iter, body, ρ)::Nil)::k)
+
+    case Σ(For(label, init, test, iter, body), ρ, σ, k) =>
+      Σ(Block(init::For(label, Empty(), test, iter, body)::Nil), ρ, σ, k)
+
     // do body while test
-    case Σ(Label(x, DoWhile(body, test)), ρ, σ, k) =>
-      val loop = LoopCont(Some(x), BlockCont(While(test, body)::Nil, Nil, ρ)::Nil)
-      Σ(body, ρ, σ, Load(ρ)::loop::k)
+    case Σ(DoWhile(label, body, test), ρ, σ, k) =>
+      Σ(body, ρ, σ, ContinueFrame(label)::BlockCont(While(label, test, body)::Nil, Nil, ρ)::BreakFrame(label)::k)
 
-    case Σ(DoWhile(body, test), ρ, σ, k) =>
-      val loop = LoopCont(None, BlockCont(While(test, body)::Nil, Nil, ρ)::Nil)
-      Σ(body, ρ, σ, Load(ρ)::loop::k)
-
-    // while test body
-    case Σ(Label(x, While(test, body)), ρ, σ, k) =>
-      val loop = LoopCont(Some(x), BlockCont(While(test, body)::Nil, Nil, ρ)::Nil)
-      Σ(test, ρ, σ, Load(ρ)::BranchCont(BlockCont(body::Nil, Nil, ρ)::loop::Nil,
-                               BlockCont(Undefined()::Nil, Nil, ρ)::Nil,
-                               RebuildWhileTest(test, body, ρ)::Nil)::k)
-
-    case Σ(While(test, body), ρ, σ, k) =>
-      val loop = LoopCont(None, BlockCont(While(test, body)::Nil, Nil, ρ)::Nil)
-      Σ(test, ρ, σ, Load(ρ)::BranchCont(BlockCont(body::Nil, Nil, ρ)::loop::Nil,
-                               BlockCont(Undefined()::Nil, Nil, ρ)::Nil,
-                               RebuildWhileTest(test, body, ρ)::Nil)::k)
-
-    // for (; test; init) body
-    case Σ(Label(x, For(Empty(), test, iter, body)), ρ, σ, k) =>
-      val loop = LoopCont(Some(x), BlockCont(iter::For(Empty(), test, iter, body)::Nil, Nil, ρ)::Nil)
-      Σ(test, ρ, σ, Load(ρ)::BranchCont(BlockCont(body::Nil, Nil, ρ)::loop::Nil,
-                               BlockCont(Undefined()::Nil, Nil, ρ)::Nil,
-                               RebuildForTest(test, iter, body, ρ)::Nil)::k)
-
-    case Σ(For(Empty(), test, iter, body), ρ, σ, k) =>
-      val loop = LoopCont(None, BlockCont(iter::For(Empty(), test, iter, body)::Nil, Nil, ρ)::Nil)
-      Σ(test, ρ, σ, Load(ρ)::BranchCont(BlockCont(body::Nil, Nil, ρ)::loop::Nil,
-                               BlockCont(Undefined()::Nil, Nil, ρ)::Nil,
-                               RebuildForTest(test, iter, body, ρ)::Nil)::k)
-
-    // for (init; test; init) body
-    case Σ(Label(x, For(init, test, iter, body)), ρ, σ, k) =>
-      Σ(init, ρ, σ, Load(ρ)::BlockCont(Label(x, For(Empty(), test, iter, body))::Nil, Nil, ρ)::k)
-
-    case Σ(For(init, test, iter, body), ρ, σ, k) =>
-      Σ(init, ρ, σ, Load(ρ)::BlockCont(For(Empty(), test, iter, body)::Nil, Nil, ρ)::k)
-
-    // if we're done evaluating the loop body, run the continue continuation
-    case Σ(v, ρ, σ, LoopCont(_, kc)::k) if v.isValue =>
-      Σ(v, ρ, σ, kc)
+    // just desugar into a for loop
+    case Σ(While(label, test, body), ρ, σ, k) =>
+      Σ(For(label, Empty(), test, Empty(), body), ρ, σ, k)
 
     // Residualizing loops.
     // PE the test.
@@ -186,42 +195,37 @@ object CESK {
 
     // The loop condition test should be a residual value.
     // the continuation stores the original (non-partially-evaluated) loop test and body
-    case Σ(test, ρ, σ, RebuildWhileTest(test0, body0, ρ1)::k) if test.isValue =>
-      Σ(body0, ρ1, σ, Load(ρ)::RebuildWhileBody(test, test0, body0, ρ)::k)
+    case Σ(ValueOrResidual(test), ρ, σ, RebuildForTest(label0, test0, iter0, body0, ρ1)::k) =>
+      Σ(body0, ρ1, σ, RebuildForBody(label0, test, test0, iter0, body0, ρ)::k)
+
+    case Σ(ValueOrResidual(body1), ρ, σ, RebuildForBody(label0, test1, test0, iter0, body0, ρ1)::k) =>
+      Σ(iter0, ρ, σ, RebuildForIter(label0, body1, test1, test0, iter0, body0, ρ1)::k)
 
     // Discard the store.
-    case Σ(body1, ρ, σ, RebuildWhileBody(test1, test0, body0, ρ1)::k) if body1.isValue =>
-      Σ(reify(IfElse(test1, Block(body1::While(test0, body0)::Nil), Undefined())),
+    case Σ(ValueOrResidual(iter1), ρ, σ, RebuildForIter(label, body1, test1, test0, Empty(), body0, ρ1)::k) =>
+      Σ(reify(IfElse(test1, Block(body1::iter1::While(label, test0, body0)::Nil), Undefined())),
         ρ1, σ0, k)
 
-    case Σ(test, ρ, σ, RebuildForTest(test0, iter0, body0, ρ1)::k) if test.isValue =>
-      Σ(body0, ρ1, σ, Load(ρ)::RebuildForBody(test, test0, iter0, body0, ρ)::k)
-
-    case Σ(body1, ρ, σ, RebuildForBody(test1, test0, iter0, body0, ρ1)::k) if body1.isValue =>
-      Σ(iter0, ρ, σ, Load(ρ)::RebuildForIter(body1, test1, test0, iter0, body0, ρ1)::k)
-
-    // Discard the store.
-    case Σ(iter1, ρ, σ, RebuildForIter(body1, test1, test0, iter0, body0, ρ1)::k) if iter1.isValue =>
-      Σ(reify(IfElse(test1, Block(body1::iter1::For(Empty(), test0, iter0, body0)::Nil), Undefined())),
+    case Σ(ValueOrResidual(iter1), ρ, σ, RebuildForIter(label, body1, test1, test0, iter0, body0, ρ1)::k) =>
+      Σ(reify(IfElse(test1, Block(body1::iter1::For(label, Empty(), test0, iter0, body0)::Nil), Undefined())),
         ρ1, σ0, k)
 
     // Break and continue.
 
     // when break hits a loop cont, run the break continuation
-    case Σ(Break(None), ρ, σ, LoopCont(label, kc)::k) =>
+    case Σ(Break(None), ρ, σ, BreakFrame(_)::k) =>
       Σ(Undefined(), ρ, σ, k)
 
-    case Σ(Break(Some(x)), ρ, σ, LoopCont(Some(y), kc)::k) if x == y =>
+    case Σ(Break(Some(x)), ρ, σ, BreakFrame(Some(y))::k) if x == y =>
       Σ(Undefined(), ρ, σ, k)
 
     // when continue hits a loop cont, run the continue continuation
-    case Σ(Continue(None), ρ, σ, LoopCont(label, kc)::k) =>
-      Σ(Undefined(), ρ, σ, kc ++ k)
+    case Σ(Continue(None), ρ, σ, ContinueFrame(_)::k) =>
+      Σ(Undefined(), ρ, σ, k)
 
-    case Σ(Continue(Some(x)), ρ, σ, LoopCont(Some(y), kc)::k) if x == y =>
-      Σ(Undefined(), ρ, σ, kc ++ k)
+    case Σ(Continue(Some(x)), ρ, σ, ContinueFrame(Some(y))::k) if x == y =>
+      Σ(Undefined(), ρ, σ, k)
 
-    // propagate break to the outer continuation
     case Σ(Break(optLabel), ρ, σ, _::k) =>
       Σ(Break(optLabel), ρ, σ, k)
 
@@ -229,38 +233,13 @@ object CESK {
     case Σ(Continue(optLabel), ρ, σ, _::k) =>
       Σ(Continue(optLabel), ρ, σ, k)
 
+    // discard useless break and continue frames
+    case Σ(NormalForm(v), ρ, σ, BreakFrame(_)::k) =>
+      Σ(v, ρ, σ, k)
 
-    ////////////////////////////////////////////////////////////////
-    // Exceptions.
-    ////////////////////////////////////////////////////////////////
-
-    // case Σ(Try(e, cs, None), ρ, σ, k) =>
-    //   Σ(e, ρ1, σ, CatchCont(cs, ρ)::k)
-    //
-    // case Σ(Try(e, Nil, Some(fin)), ρ, σ, k) =>
-    //   Σ(e, ρ1, σ, FinallyCont(fin, ρ)::k)
-    //
-    // case Σ(Try(e, cs, Some(fin)), ρ, σ, k) =>
-    //   Σ(e, ρ1, σ, CatchCont(cs, ρ, FinallyCont(fin, ρ)::k))
-    //
-    // case Σ(Throw(e), ρ, σ, k) =>
-    //   Σ(e, ρ, σ, ThrowCont(ρ)::k)
-    //
-    // case Σ(v, ρ, σ, ThrowCont(_, CatchCont(cs, ρ1)::k)) if v.isValue =>
-    //   Σ(v, ρ1, σ, ThrowCont(ρ1, k.next))
-    //
-    // case Σ(v, ρ, σ, ThrowCont(_, FinallyCont(fin, ρ1)::k)) if v.isValue =>
-    //   Σ(fin, ρ1, σ, BlockCont(v::Nil, ThrowCont(ρ1)::k))
-    //
-    // case Σ(v, ρ, σ, ThrowCont(ρ1)::k) if v.isValue =>
-    //   Σ(v, ρ1, σ, ThrowCont(ρ1, k.next))
-    //
-    // // not throwing an exception ... so skip the catches
-    // case Σ(v, ρ, σ, CatchCont(cs, ρ1)::k) if v.isValue =>
-    //   Σ(v, ρ1, σ, k)
-    //
-    // case Σ(v, ρ, σ, FinallyCont(fin, ρ1)::k) if v.isValue =>
-    //   Σ(fin, ρ1, σ, BlockCont(v::Nil, ρ1)::k)
+    // discard useless break frames
+    case Σ(NormalForm(v), ρ, σ, ContinueFrame(_)::k) =>
+      Σ(v, ρ, σ, k)
 
     ////////////////////////////////////////////////////////////////
     // Blocks.
@@ -291,23 +270,23 @@ object CESK {
       val σ1 = (bindings zip locs).foldLeft(σ) {
         case (σ, ((x, e), loc)) => σ + (loc -> Closure(Undefined(), ρ1))
       }
-      Σ(s, ρ1, σ1, Load(ρ1)::BlockCont(ss, Nil, ρ1)::k)
+      Σ(s, ρ1, σ1, BlockCont(ss, Nil, ρ1)::k)
 
     // If we don't have to save any residual for the block, just eval to the value.
-    case Σ(v, ρ, σ, BlockCont(Nil, Nil, ρ1)::k) if v.isValue =>
+    case Σ(NormalForm(v), ρ, σ, BlockCont(Nil, Nil, ρ1)::k) =>
       Σ(v, ρ1, σ, k)
 
     // If we have to save the block, append the value to the residual.
-    case Σ(v, ρ, σ, BlockCont(Nil, done, ρ1)::k) if v.isValue =>
+    case Σ(NormalForm(v), ρ, σ, BlockCont(Nil, done, ρ1)::k) =>
       Σ(reify(Block(done :+ v)), ρ1, σ, k)
 
     // Append non-value residuals to block residual.
     case Σ(Residual(e), ρ, σ, BlockCont(s::ss, done, ρ1)::k) if ! e.isPure =>
-      Σ(s, ρ1, σ, Load(ρ)::BlockCont(ss, done :+ e, ρ1)::k)
+      Σ(s, ρ1, σ, BlockCont(ss, done :+ e, ρ1)::k)
 
     // Ignore non-residual values if there's more to do in the block.
-    case Σ(v, ρ, σ, BlockCont(s::ss, done, ρ1)::k) if v.isValue =>
-      Σ(s, ρ1, σ, Load(ρ)::BlockCont(ss, done, ρ1)::k)
+    case Σ(NormalForm(v), ρ, σ, BlockCont(s::ss, done, ρ1)::k) =>
+      Σ(s, ρ1, σ, BlockCont(ss, done, ρ1)::k)
 
     ////////////////////////////////////////////////////////////////
     // Definitions.
@@ -319,47 +298,33 @@ object CESK {
     // Then run the initializer, assigning to the location.
     // The DoAssign continuation should leave the initializer in the focus,
     // but we should evaluate to undefined, so add block continuation for that.
-    case Σ(VarDef(x, fun @ Lambda(xs, e)), ρ, σ, k) =>
-      ρ.get(x) match {
-        case Some(loc) =>
-          // Evaluate under the lambda.
-          val args = xs map {
-            case x => Residual(Ident(x))
-          }
-          Σ(Undefined(), ρ, σ, DoCall(fun, args, ρ)::WrapLambda(xs, ρ)::DoAssign(None, loc, ρ)::RebuildVarDef(x, ρ)::BlockCont(Undefined()::Nil, Nil, ρ)::k)
-        case None =>
-          Σ(e, ρ, σ, Fail(s"variable $x not found")::k)
-      }
     case Σ(VarDef(x, e), ρ, σ, k) =>
       ρ.get(x) match {
         case Some(loc) =>
-          Σ(e, ρ, σ, Load(ρ)::DoAssign(None, loc, ρ)::RebuildVarDef(x, ρ)::BlockCont(Undefined()::Nil, Nil, ρ)::k)
+          Σ(e, ρ, σ, DoAssign(None, loc, ρ)::RebuildVarDef(x, ρ)::BlockCont(Undefined()::Nil, Nil, ρ)::k)
         case None =>
           Σ(e, ρ, σ, Fail(s"variable $x not found")::k)
       }
     case Σ(LetDef(x, e), ρ, σ, k) =>
       ρ.get(x) match {
         case Some(loc) =>
-          Σ(e, ρ, σ, Load(ρ)::DoAssign(None, loc, ρ)::RebuildLetDef(x, ρ)::BlockCont(Undefined()::Nil, Nil, ρ)::k)
+          Σ(e, ρ, σ, DoAssign(None, loc, ρ)::RebuildLetDef(x, ρ)::BlockCont(Undefined()::Nil, Nil, ρ)::k)
         case None =>
           Σ(e, ρ, σ, Fail(s"variable $x not found")::k)
       }
     case Σ(ConstDef(x, e), ρ, σ, k) =>
       ρ.get(x) match {
         case Some(loc) =>
-          Σ(e, ρ, σ, Load(ρ)::DoAssign(None, loc, ρ)::RebuildConstDef(x, ρ)::BlockCont(Undefined()::Nil, Nil, ρ)::k)
+          Σ(e, ρ, σ, DoAssign(None, loc, ρ)::RebuildConstDef(x, ρ)::BlockCont(Undefined()::Nil, Nil, ρ)::k)
         case None =>
           Σ(e, ρ, σ, Fail(s"variable $x not found")::k)
       }
 
-    case Σ(v, ρ, σ, WrapLambda(xs, ρ1)::k) if v.isValue =>
-      Σ(Lambda(xs, unreify(v)), ρ1, σ, k)
-
-    case Σ(v, ρ, σ, RebuildVarDef(x, ρ1)::k) if v.isValue =>
+    case Σ(ValueOrResidual(v), ρ, σ, RebuildVarDef(x, ρ1)::k) =>
       Σ(reify(VarDef(x, v)), ρ1, σ, k)
-    case Σ(v, ρ, σ, RebuildLetDef(x, ρ1)::k) if v.isValue =>
+    case Σ(ValueOrResidual(v), ρ, σ, RebuildLetDef(x, ρ1)::k) =>
       Σ(reify(LetDef(x, v)), ρ1, σ, k)
-    case Σ(v, ρ, σ, RebuildConstDef(x, ρ1)::k) if v.isValue =>
+    case Σ(ValueOrResidual(v), ρ, σ, RebuildConstDef(x, ρ1)::k) =>
       Σ(reify(ConstDef(x, v)), ρ1, σ, k)
 
     ////////////////////////////////////////////////////////////////
@@ -369,24 +334,26 @@ object CESK {
     case Σ(Assign(op, lhs, rhs), ρ, σ, k) =>
       Σ(lhs, ρ, σ, EvalAssignRhs(op, rhs, ρ)::k)
 
-    case Σ(lhs: Loc, ρ, σ, EvalAssignRhs(op, rhs, ρ1)::k) if lhs.isValue =>
-      Σ(rhs, ρ1, σ, Load(ρ1)::DoAssign(op, lhs, ρ)::k)
+    case Σ(lhs: Loc, ρ, σ, EvalAssignRhs(op, rhs, ρ1)::k) =>
+      Σ(rhs, ρ1, σ, DoAssign(op, lhs, ρ)::k)
 
-    case Σ(lhs: Loc, ρ, σ, EvalAssignRhs(op, rhs, ρ1)::k) if lhs.isValue =>
-      Σ(rhs, ρ1, σ, Load(ρ1)::DoAssign(op, lhs, ρ)::k)
+    case Σ(NormalForm(lhs), ρ, σ, EvalAssignRhs(op, rhs, ρ1)::k) =>
+      Σ(rhs, ρ1, σ, RebuildAssign(op, lhs, ρ)::k)
 
-    case Σ(rhs, ρ, σ, DoAssign(None, lhs, ρ1)::k) if rhs.isValue =>
+    case Σ(ValueOrResidual(rhs), ρ, σ, RebuildAssign(op, lhs, ρ1)::k) =>
+      // Normal assignment... the result is the rhs value
+      Σ(reify(Assign(op, lhs, rhs)), ρ1, σ, k)
+
+    case Σ(ValueOrResidual(rhs), ρ, σ, DoAssign(None, lhs, ρ1)::k) =>
       // Normal assignment... the result is the rhs value
       Σ(rhs, ρ1, σ.assign(lhs, rhs, ρ), k)
 
-    case Σ(rhs, ρ, σ, DoAssign(Some(op), lhs, ρ1)::k) if rhs.isValue =>
+    case Σ(ValueOrResidual(rhs), ρ, σ, DoAssign(Some(op), lhs, ρ1)::k) =>
       val right = rhs
       σ.get(lhs) match {
         case Some(Closure(left, _)) =>
-          evalOp(op, left, right) match {
-            case Left((v, s)) => Σ(v, ρ1, σ, Fail(s)::k)
-            case Right(v) => Σ(v, ρ1, σ.assign(lhs, v, ρ), k)
-          }
+          val v = Eval.evalOp(op, left, right)
+          Σ(v, ρ1, σ.assign(lhs, v, ρ), k)
         case None =>
           // can store lookups fail?
           Σ(rhs, ρ1, σ, Fail(s"could not find value at location $lhs")::k)
@@ -405,30 +372,29 @@ object CESK {
             case Postfix.-- => Binary.-
             case _ => ???
           }
-          evalOp(binOp, oldValue, Num(1)) match {
-            case Left((v, s)) =>
-              Σ(v, ρ1, σ, Fail(s)::k)
-            case Right(newValue) =>
-              val v = op match {
-                case Prefix.++ => newValue
-                case Prefix.-- => newValue
-                case Postfix.++ => oldValue
-                case Postfix.-- => oldValue
-                case _ => ???
-              }
-              Σ(v, ρ2, σ.assign(loc, newValue, ρ), k)
+          val newValue = Eval.evalOp(binOp, oldValue, Num(1))
+          val v = op match {
+            case Prefix.++ => newValue
+            case Prefix.-- => newValue
+            case Postfix.++ => oldValue
+            case Postfix.-- => oldValue
+            case _ => ???
           }
+          Σ(v, ρ2, σ.assign(loc, newValue, ρ), k)
         case None =>
           Σ(loc, ρ, σ, Fail(s"could not load location $loc")::k)
       }
 
+    case Σ(ValueOrResidual(e), ρ, σ, DoIncDec(op, ρ1)::k) =>
+      Σ(reify(IncDec(op, e)), ρ1, σ, k)
+
     ////////////////////////////////////////////////////////////////
     // Variables. Just lookup the value. If not present, residualize.
     ////////////////////////////////////////////////////////////////
-    case Σ(Ident(x), ρ, σ, k) =>
+    case Σ(LocalAddr(x), ρ, σ, k) =>
       ρ.get(x) match {
         case Some(v) =>
-          Σ(v, ρ, σ, Load(ρ)::k)
+          Σ(v, ρ, σ, k)
         case None =>
           // The special global name "undefined" evaluates to "undefined".
           if (x == "undefined") {
@@ -440,7 +406,13 @@ object CESK {
           }
       }
 
-    case Σ(loc: Loc, ρ, σ, Load(ρ1)::k) =>
+    case Σ(Ident(x), ρ, σ, k) =>
+      Σ(LocalAddr(x), ρ, σ, LoadCont(ρ)::k)
+
+    case Σ(Index(a, i), ρ, σ, k) =>
+      Σ(a, ρ, σ, EvalPropertyNameForGet(i, ρ)::k)
+
+    case Σ(loc: Loc, ρ, σ, LoadCont(ρ1)::k) =>
       σ.get(loc) match {
         case Some(Closure(v, ρ2)) =>
           Σ(v, ρ2, σ, k)
@@ -448,56 +420,110 @@ object CESK {
           Σ(loc, ρ, σ, Fail(s"could not load location $loc")::k)
       }
 
-    case Σ(v, ρ, σ, Load(ρ1)::k) if v.isValue =>
-      Σ(v, ρ1, σ, k)
+    case Σ(Undefined(), ρ, σ, LoadCont(ρ1)::k) =>
+      Σ(Undefined(), ρ1, σ, k)
+
+    case Σ(ValueOrResidual(e), ρ, σ, LoadCont(ρ1)::k) =>
+      Σ(reify(e), ρ1, σ, k)
+
+    ////////////////////////////////////////////////////////////////
+    // Special unary operators.
+    ////////////////////////////////////////////////////////////////
+
+    case Σ(Typeof(e), ρ, σ, k) =>
+      // void e just discards the value
+      Σ(e, ρ, σ, DoTypeof(ρ)::k)
+
+    case Σ(Num(v), ρ, σ, DoTypeof(ρ1)::k) =>
+      Σ(StringLit("number"), ρ1, σ, k)
+    case Σ(Bool(v), ρ, σ, DoTypeof(ρ1)::k) =>
+      Σ(StringLit("boolean"), ρ1, σ, k)
+    case Σ(StringLit(v), ρ, σ, DoTypeof(ρ1)::k) =>
+      Σ(StringLit("string"), ρ1, σ, k)
+    case Σ(Undefined(), ρ, σ, DoTypeof(ρ1)::k) =>
+      Σ(StringLit("undefined"), ρ1, σ, k)
+    case Σ(Null(), ρ, σ, DoTypeof(ρ1)::k) =>
+      Σ(StringLit("null"), ρ1, σ, k)
+    case Σ(loc: Loc, ρ, σ, DoTypeof(ρ1)::k) =>
+      σ.get(loc) match {
+        case Some(Closure(ObjectLit(_), _)) =>
+          Σ(StringLit("object"), ρ1, σ, k)
+        case Some(Closure(Lambda(_, _), _)) =>
+          Σ(StringLit("function"), ρ1, σ, k)
+        case Some(Closure(v, ρ2)) =>
+          Σ(v, ρ2, σ, DoTypeof(ρ1)::k)
+        case None =>
+          Σ(StringLit("undefined"), ρ1, σ, k)
+      }
+    case Σ(Residual(e), ρ, σ, DoTypeof(ρ1)::k) =>
+      Σ(reify(Typeof(e)), ρ1, σ, k)
+
+    case Σ(Void(Residual(e)), ρ, σ, k) if e.isPure =>
+      // void e just discards the value
+      Σ(Undefined(), ρ, σ, k)
+
+    case Σ(Void(Residual(e)), ρ, σ, k) =>
+      // void e just discards the value
+      Σ(reify(Void(e)), ρ, σ, k)
+
+    case Σ(Void(e), ρ, σ, k) =>
+      // void e just discards the value
+      Σ(e, ρ, σ, BlockCont(Undefined()::Nil, Nil, ρ)::k)
 
     ////////////////////////////////////////////////////////////////
     // Unary operators.
     ////////////////////////////////////////////////////////////////
 
     case Σ(Unary(op, e), ρ, σ, k) =>
-      Σ(e, ρ, σ, Load(ρ)::DoUnaryOp(op, ρ)::k)
+      Σ(e, ρ, σ, DoUnaryOp(op, ρ)::k)
 
-    case Σ(Bool(v), ρ, σ, DoUnaryOp(Prefix.!, ρ1)::k) =>
+    case Σ(CvtBool(v), ρ, σ, DoUnaryOp(Prefix.!, ρ1)::k) =>
       Σ(Bool(!v), ρ1, σ, k)
 
-    case Σ(Num(v), ρ, σ, DoUnaryOp(Prefix.~, ρ1)::k) =>
+    case Σ(CvtNum(v), ρ, σ, DoUnaryOp(Prefix.~, ρ1)::k) =>
       Σ(Num(~v.toLong), ρ1, σ, k)
 
-    case Σ(Num(v), ρ, σ, DoUnaryOp(Prefix.+, ρ1)::k) =>
+    case Σ(CvtNum(v), ρ, σ, DoUnaryOp(Prefix.+, ρ1)::k) =>
       Σ(Num(+v), ρ1, σ, k)
 
-    case Σ(Num(v), ρ, σ, DoUnaryOp(Prefix.-, ρ1)::k) =>
+    case Σ(CvtNum(v), ρ, σ, DoUnaryOp(Prefix.-, ρ1)::k) =>
       Σ(Num(-v), ρ1, σ, k)
+
+    case Σ(ValueOrResidual(v), ρ, σ, DoUnaryOp(op, ρ1)::k) =>
+      Σ(reify(Unary(op, v)), ρ1, σ, k)
 
     ////////////////////////////////////////////////////////////////
     // Binary operators.
     ////////////////////////////////////////////////////////////////
 
-    // For other binary operations, evaluate the first argument,
-    // with a continuation that evaluates the second argument.
+    case Σ(Binary(Binary.IN, e1, e2), ρ, σ, k) =>
+      // not exactly right
+      Σ(Binary(Binary.!==, Index(e1, e2), Undefined()), ρ, σ, k)
+
+    case Σ(Binary(Binary.INSTANCEOF, e1, e2), ρ, σ, k) =>
+      // not exactly right, but good enough for now
+      Σ(Binary(Binary.==, Typeof(e1), e2), ρ, σ, k)
+
+    // Eval the left operand.
     case Σ(Binary(op, e1, e2), ρ, σ, k) =>
-      Σ(e1, ρ, σ, Load(ρ)::EvalBinaryOpRight(op, e2, ρ)::k)
+      Σ(e1, ρ, σ, EvalBinaryOpRight(op, e2, ρ)::k)
 
     // Short-circuit && and ||
-    // FIXME: coercions
-    case Σ(v @ Bool(false), ρ, σ, EvalBinaryOpRight(Binary.&&, e2, ρ1)::k) =>
+    case Σ(v @ CvtBool(false), ρ, σ, EvalBinaryOpRight(Binary.&&, e2, ρ1)::k) =>
       Σ(v, ρ1, σ, k)
 
-    case Σ(v @ Bool(true), ρ, σ, EvalBinaryOpRight(Binary.||, e2, ρ1)::k) =>
+    case Σ(v @ CvtBool(true), ρ, σ, EvalBinaryOpRight(Binary.||, e2, ρ1)::k) =>
       Σ(v, ρ1, σ, k)
 
     // If we have a value and we need to evaluate the second argument
     // of a binary operator, switch the focus to the second argument
     // with a continuation that performs the operation.
-    case Σ(v, ρ, σ, EvalBinaryOpRight(op, e2, ρ1)::k) if v.isValue =>
-      Σ(e2, ρ1, σ, Load(ρ1)::DoBinaryOp(op, v, ρ1)::k)
+    case Σ(ValueOrResidual(v), ρ, σ, EvalBinaryOpRight(op, e2, ρ1)::k) =>
+      Σ(e2, ρ1, σ, DoBinaryOp(op, v, ρ1)::k)
 
-    case Σ(v2, ρ, σ, DoBinaryOp(op, v1, ρ1)::k) if v2.isValue =>
-      evalOp(op, v1, v2) match {
-        case Left((v, s)) => Σ(v, ρ1, σ, Fail(s)::k)
-        case Right(v) => Σ(v, ρ1, σ, k)
-      }
+    case Σ(ValueOrResidual(v2), ρ, σ, DoBinaryOp(op, v1, ρ1)::k) =>
+      val v = Eval.evalOp(op, v1, v2)
+      Σ(v, ρ1, σ, k)
 
     ////////////////////////////////////////////////////////////////
     // Calls and lambda.
@@ -507,18 +533,18 @@ object CESK {
     ////////////////////////////////////////////////////////////////
 
     case Σ(Call(fun, args), ρ, σ, k) =>
-      Σ(fun, ρ, σ, Load(ρ)::EvalArgs(args, ρ)::k)
+      Σ(fun, ρ, σ, LoadCont(ρ)::EvalArgs(args, ρ)::k)
 
-    case Σ(fun, ρ, σ, EvalArgs(Nil, ρ1)::k) if fun.isValue =>
+    case Σ(NormalForm(fun), ρ, σ, EvalArgs(Nil, ρ1)::k) =>
       Σ(Empty(), ρ1, σ, DoCall(fun, Nil, ρ1)::k)
 
-    case Σ(fun, ρ, σ, EvalArgs(arg::args, ρ1)::k) if fun.isValue =>
-      Σ(arg, ρ1, σ, Load(ρ1)::EvalMoreArgs(fun, args, Nil, ρ1)::k)
+    case Σ(NormalForm(fun), ρ, σ, EvalArgs(arg::args, ρ1)::k) =>
+      Σ(arg, ρ1, σ, EvalMoreArgs(fun, args, Nil, ρ1)::k)
 
-    case Σ(v, ρ, σ, EvalMoreArgs(fun, arg::args, done, ρ1)::k) if v.isValue =>
-      Σ(arg, ρ1, σ, Load(ρ1)::EvalMoreArgs(fun, args, done :+ v, ρ1)::k)
+    case Σ(ValueOrResidual(v), ρ, σ, EvalMoreArgs(fun, arg::args, done, ρ1)::k) =>
+      Σ(arg, ρ1, σ, EvalMoreArgs(fun, args, done :+ v, ρ1)::k)
 
-    case Σ(v, ρ, σ, EvalMoreArgs(fun, Nil, done, ρ1)::k) if v.isValue =>
+    case Σ(ValueOrResidual(v), ρ, σ, EvalMoreArgs(fun, Nil, done, ρ1)::k) =>
       Σ(Empty(), ρ1, σ, DoCall(fun, done :+ v, ρ1)::k)
 
     case Σ(_, ρ, σ, DoCall(Lambda(xs, e), args, ρ1)::k) =>
@@ -545,8 +571,12 @@ object CESK {
     case Σ(_, ρ, σ, DoCall(fun, args, ρ1)::k) =>
       Σ(reify(Call(fun, args)), ρ1, σ0, k)
 
+    // If we run off the end of the function body, act like we returned normally.
+    case Σ(ValueOrResidual(v), ρ, σ, CallFrame(ρ1)::k) =>
+      Σ(v, ρ1, σ, k)
+
     // Wrap v in a let.
-    case Σ(v, ρ, σ, RebuildLet(xs, args, ρ1)::k) if v.isValue =>
+    case Σ(NormalForm(v), ρ, σ, RebuildLet(xs, args, ρ1)::k) =>
       val ss = (xs zip args) collect {
         case (x, e) if (fv(v) contains x) => LetDef(x, e)
       }
@@ -560,17 +590,17 @@ object CESK {
     ////////////////////////////////////////////////////////////////
     // Return. Pop the continuations until we hit the caller.
     ////////////////////////////////////////////////////////////////
-    case Σ(v, ρ, σ, ReturnFrame()::CallFrame(ρ1)::k) if v.isValue =>
+    case Σ(ValueOrResidual(v), ρ, σ, ReturnFrame()::CallFrame(ρ1)::k) =>
       Σ(v, ρ1, σ, k)
 
     // If we hit a finally block, run the block, then continue returning.
-    case Σ(v, ρ, σ, ReturnFrame()::TryFrame(cs, Some(e), ρ1)::k) if v.isValue =>
+    case Σ(ValueOrResidual(v), ρ, σ, ReturnFrame()::TryFrame(cs, Some(e), ρ1)::k) =>
       Σ(e, ρ, σ, BlockCont(v::Nil, Nil, ρ)::ReturnFrame()::k)
 
-    case Σ(v, ρ, σ, ReturnFrame()::(a: RebuildCont)::k) if v.isValue =>
+    case Σ(ValueOrResidual(v), ρ, σ, ReturnFrame()::(a: RebuildCont)::k) =>
       Σ(v, ρ, σ, a::BlockCont(v::Nil, Nil, ρ)::ReturnFrame()::k)
 
-    case Σ(v, ρ, σ, ReturnFrame()::_::k) if v.isValue =>
+    case Σ(ValueOrResidual(v), ρ, σ, ReturnFrame()::_::k) =>
       Σ(v, ρ, σ, ReturnFrame()::k)
 
     case Σ(Return(Some(e)), ρ, σ, k) =>
@@ -582,13 +612,13 @@ object CESK {
     ////////////////////////////////////////////////////////////////
     // Throw. Pop the continuations until we hit the caller.
     ////////////////////////////////////////////////////////////////
-    case Σ(v, ρ, σ, ThrowFrame()::TryFrame(Nil, Some(f), ρ1)::k) if v.isValue =>
+    case Σ(ValueOrResidual(v), ρ, σ, ThrowFrame()::TryFrame(Nil, Some(f), ρ1)::k) =>
       Σ(f, ρ1, σ, BlockCont(v::Nil, Nil, ρ)::ThrowFrame()::k)
 
-    case Σ(v, ρ, σ, ThrowFrame()::TryFrame(cs, f, ρ1)::k) if v.isValue =>
+    case Σ(ValueOrResidual(v), ρ, σ, ThrowFrame()::TryFrame(cs, f, ρ1)::k) =>
       Σ(v, ρ1, σ, ThrowFrame()::k)
 
-    case Σ(v, ρ, σ, ThrowFrame()::_::k) if v.isValue =>
+    case Σ(ValueOrResidual(v), ρ, σ, ThrowFrame()::_::k) =>
       Σ(v, ρ, σ, ThrowFrame()::k)
 
     case Σ(Throw(e), ρ, σ, k) =>
@@ -597,159 +627,188 @@ object CESK {
     case Σ(Try(e, cs, f), ρ, σ, k) =>
       Σ(e, ρ, σ, TryFrame(cs, f, ρ)::k)
 
-    // If we run off the end of the function body, act like we returned normally.
-    case Σ(v, ρ, σ, CallFrame(ρ1)::k) if v.isValue =>
-      Σ(v, ρ1, σ, k)
 
     ////////////////////////////////////////////////////////////////
-    // Infrastructure cases.
+    // Objects and arrays.
     ////////////////////////////////////////////////////////////////
 
-    case s @ Σ(_, _, σ, Nil) => s
-    case s @ Σ(_, _, σ, Fail(_)::k) => s
+    case Σ(New(e), ρ, σ, k) =>
+      Σ(e, ρ, σ, DoNew(ρ)::k)
+
+    // clone the object at the given location
+    case Σ(loc: Loc, ρ, σ, DoNew(ρ1)::k) =>
+      σ.get(loc) match {
+        case Some(Closure(v, ρ)) =>
+          val loc2 = FreshLoc()
+          val σ1 = σ.assign(loc2, v, ρ)
+          Σ(loc2, ρ1, σ1, k)
+        case None =>
+          Σ(Undefined(), ρ1, σ, k)
+      }
+
+    case Σ(Delete(IndexAddr(a, i)), ρ, σ, k) =>
+      Σ(a, ρ, σ, EvalPropertyNameForDel(i, ρ)::k)
+
+    case Σ(ValueOrResidual(a), ρ, σ, EvalPropertyNameForDel(i, ρ1)::k) =>
+      Σ(i, ρ1, σ, DoDeleteProperty(a, ρ1)::k)
+
+    case Σ(Value(i), ρ, σ, DoDeleteProperty(loc: Loc, ρ1)::k) =>
+      σ.get(loc) match {
+        case Some(Closure(ObjectLit(properties), ρ2)) =>
+          val v = properties collectFirst {
+            case Property(k, v: Loc, g, s) if Eval.evalOp(Binary.==, k, i) == Bool(true) => v
+          }
+          v match {
+            case Some(v) =>
+              val removed = properties filter {
+                case Property(k, v: Loc, g, s) if Eval.evalOp(Binary.==, k, i) == Bool(true) => false
+                case _ => true
+              }
+              Σ(loc, ρ1, σ.assign(loc, ObjectLit(removed), ρ2), k)
+            case None =>
+              // The field isn't there anyway.
+              Σ(loc, ρ1, σ, k)
+          }
+        case Some(Closure(v, ρ2)) =>
+          Σ(loc, ρ1, σ, k)
+        case None =>
+          Σ(loc, ρ, σ, Fail(s"could not load location $loc")::k)
+      }
+
+    case Σ(ValueOrResidual(i), ρ, σ, DoDeleteProperty(ValueOrResidual(a), ρ1)::k) =>
+      Σ(reify(Delete(IndexAddr(a, i))), ρ1, σ, k)
+
+    case Σ(IndexAddr(a, i), ρ, σ, k) =>
+      Σ(a, ρ, σ, EvalPropertyNameForSet(i, ρ)::k)
+
+    case Σ(ValueOrResidual(a), ρ, σ, EvalPropertyNameForSet(i, ρ1)::k) =>
+      Σ(i, ρ1, σ, GetPropertyAddressOrCreate(a, ρ1)::k)
+
+    case Σ(Value(i), ρ, σ, GetPropertyAddressOrCreate(loc: Loc, ρ1)::k) =>
+      σ.get(loc) match {
+        case Some(Closure(ObjectLit(properties), ρ2)) =>
+          val v = properties collectFirst {
+            case Property(k, v: Loc, g, s) if Eval.evalOp(Binary.==, k, i) == Bool(true) => v
+          }
+          v match {
+            case Some(v) =>
+              Σ(v, ρ2, σ, k)
+            case None =>
+              // FIXME: maybe the property key is reified?
+              // I don't think this can happen, though.
+
+              // The field is missing.
+              // Create it.
+              val fieldLoc = FreshLoc()
+              val σ1 = σ.assign(loc, ObjectLit(properties :+ Property(i, fieldLoc, None, None)), ρ2)
+              val σ2 = σ1.assign(fieldLoc, Undefined(), ρ2)
+              Σ(fieldLoc, ρ1, σ2, k)
+          }
+        case Some(Closure(v, ρ2)) =>
+          Σ(Undefined(), ρ1, σ, k)
+        case None =>
+          Σ(loc, ρ, σ, Fail(s"could not load location $loc")::k)
+      }
+
+    case Σ(ValueOrResidual(a), ρ, σ, EvalPropertyNameForGet(i, ρ1)::k) =>
+      Σ(i, ρ1, σ, GetProperty(a, ρ1)::k)
+
+    // restrict the property to values to ensure == during property lookup works correctly
+    // otherwise, a[f()] will result in undefined rather than a reified access
+    case Σ(Value(i), ρ, σ, GetProperty(loc: Loc, ρ1)::k) =>
+      σ.get(loc) match {
+        case Some(Closure(ObjectLit(properties), ρ2)) =>
+          val v = properties collectFirst {
+            case Property(k, v: Loc, g, s) if Eval.evalOp(Binary.==, k, i) == Bool(true) => v
+          }
+          v match {
+            case Some(v) =>
+              Σ(v, ρ2, σ, LoadCont(ρ1)::k)
+            case None =>
+              Σ(Undefined(), ρ1, σ, k)
+          }
+        case Some(Closure(v, ρ2)) =>
+          Σ(Undefined(), ρ1, σ, k)
+        case None =>
+          Σ(loc, ρ, σ, Fail(s"could not load location $loc")::k)
+      }
+
+    case Σ(ValueOrResidual(i), ρ, σ, GetProperty(ValueOrResidual(a), ρ1)::k) =>
+      Σ(reify(Index(a, i)), ρ1, σ, k)
+
+    // Create an empty object
+    case Σ(ObjectLit(Nil), ρ, σ, k) =>
+      val loc = FreshLoc()
+      Σ(loc, ρ, σ.assign(loc, ObjectLit(Nil), ρ), k)
+
+    // Initialize a non-empty object.
+    case Σ(ObjectLit(e::es), ρ, σ, k) =>
+      val loc = FreshLoc()
+      Σ(e, ρ, σ, InitObject(loc, es, Nil, ρ)::k)
+
+    // Done with all properties, put the object in the store.
+    case Σ(v @ Property(ValueOrResidual(vk), ValueOrResidual(vv), _, _), ρ, σ, InitObject(loc, Nil, vs, ρ1)::k) =>
+      val vs2 = vs :+ v
+      // copy the properties to the heap
+      val locs = vs2 map { _ => FreshLoc() }
+      val zipped = locs zip vs2
+      val props = zipped map {
+        case (loc, Property(vk, vv, g, s)) =>
+          Property(vk, loc, g, s)
+        case (loc, v) =>
+          v
+      }
+      val σ1 = zipped.foldLeft(σ) {
+        case (σ, (loc, Property(_, vv, _, _))) =>
+          σ.assign(loc, vv, ρ1)
+      }
+      Σ(loc, ρ1, σ1.assign(loc, ObjectLit(props), ρ1), k)
+
+    // Done with a property, go to the next one.
+    case Σ(v @ Property(ValueOrResidual(vk), ValueOrResidual(vv), _, _), ρ, σ, InitObject(loc, e::es, vs, ρ1)::k) =>
+      Σ(e, ρ1, σ, InitObject(loc, es, vs :+ v, ρ1)::k)
+
+    // evaluate a property
+    case Σ(Property(ValueOrResidual(x), e, _, _), ρ, σ, k) if ! e.isValue =>
+      Σ(e, ρ, σ, WrapProperty(x, ρ)::k)
+
+    case Σ(Property(ek, ev, _, _), ρ, σ, k) =>
+      Σ(ek, ρ, σ, EvalPropertyValue(ev, ρ)::k)
+
+    case Σ(ValueOrResidual(vv), ρ, σ, WrapProperty(vk, ρ1)::k) =>
+      Σ(Property(vk, vv, None, None), ρ1, σ, k)
+
+    case Σ(ValueOrResidual(vk), ρ, σ, EvalPropertyValue(ev, ρ1)::k) =>
+      Σ(ev, ρ1, σ, WrapProperty(vk, ρ1)::k)
+
+    // Put a lambda in the heap.
+    case Σ(f @ Lambda(xs, e), ρ, σ, k) =>
+      val loc = FreshLoc()
+      Σ(loc, ρ, σ.assign(loc, f, ρ), k)
+
+    // Array literals desugar to objects
+    case Σ(ArrayLit(es), ρ, σ, k) =>
+      val ps = es.zipWithIndex.map {
+        case (e, i) => Property(StringLit(i.toString), e, None, None)
+      }
+      val ps2 = ps :+ Property(StringLit("length"), Num(es.length), None, None)
+      Σ(ObjectLit(ps), ρ, σ, k)
+      // Σ(ObjectLit(Property(StringLit("__proto__"), Prim("Array"))::ps), ρ, σ, k)
+
+    ////////////////////////////////////////////////////////////////
+    // Other cases.
+    ////////////////////////////////////////////////////////////////
+
+    // Don't implement with.
+    case Σ(With(exp, body), ρ, σ, k) =>
+      Σ(reify(With(exp, body)), ρ, σ, k)
+
+    ////////////////////////////////////////////////////////////////
+    // Catch all.
+    ////////////////////////////////////////////////////////////////
 
     case s @ Σ(e, ρ, σ, k) =>
       Σ(e, ρ, σ, Fail(s"no step defined for $s")::k)
-  }
-
-  object CvtPrim {
-    def unapply(e: Exp) = e match {
-      case e: Undefined => Some(e)
-      case e: Null => Some(e)
-      case e: Bool => Some(e)
-      case e: Num => Some(e)
-      case e: StringLit => Some(e)
-      // TODO: call toString and valueOf methods if they exist.
-      // case e: ObjectLit => Some(e)
-      // case e: ArrayLit => Some(e)
-      case _ => None
-    }
-  }
-
-  object CvtBool {
-    def unapply(e: Exp): Option[Boolean] = e match {
-      case Bool(v) => Some(v)
-      case Undefined() => Some(false)
-      case Null() => Some(false)
-      case Num(v) => Some(v != 0 && ! v.isNaN)
-      case StringLit(v) => Some(v != "")
-      case ObjectLit(_) => Some(true)
-      case ArrayLit(_) => Some(true)
-      case v => None
-    }
-  }
-
-  object CvtNum {
-    def unapply(e: Exp): Option[Double] = e match {
-      case Num(v) => Some(v)
-      case Undefined() => Some(Double.NaN)
-      case Null() => Some(0)
-      case Bool(false) => Some(0)
-      case Bool(true) => Some(1)
-      case v => None
-    }
-  }
-
-  object CvtString {
-    def unapply(e: Exp) = e match {
-      case StringLit(v) => Some(v)
-      case ObjectLit(es) => Some(es.map(_.show).mkString("{", ",", "}"))
-      case ArrayLit(es) => Some(es.map(_.show).mkString("[", ",", "]"))
-      case e => Some(e.show)
-    }
-  }
-
-  // Fix this! This is too simple and doesn't handle coercions corretctly.
-  // Let's look at the spec.
-  def evalOp(op: Operator, v1: Exp, v2: Exp): Either[(Exp, String), Exp] = (op, v1, v2) match {
-    case (Binary.+, CvtNum(n1), CvtNum(n2)) => Right(Num(n1 + n2))
-    case (Binary.-, CvtNum(n1), CvtNum(n2)) => Right(Num(n1 - n2))
-    case (Binary.*, CvtNum(n1), CvtNum(n2)) => Right(Num(n1 * n2))
-    case (Binary./, CvtNum(n1), CvtNum(0)) => Left((v2, s"div by 0"))
-    case (Binary.%, CvtNum(n1), CvtNum(0)) => Left((v2, s"mod by 0"))
-    case (Binary./, CvtNum(n1), CvtNum(n2)) => Right(Num(n1 / n2))
-    case (Binary.%, CvtNum(n1), CvtNum(n2)) => Right(Num(n1 % n2))
-
-    case (Binary.+, CvtString(n1), CvtString(n2)) => Right(StringLit(n1 + n2))
-
-    case (Binary.&, CvtNum(n1), CvtNum(n2)) => Right(Num(n1.toLong & n2.toLong))
-    case (Binary.|, CvtNum(n1), CvtNum(n2)) => Right(Num(n1.toLong | n2.toLong))
-    case (Binary.^, CvtNum(n1), CvtNum(n2)) => Right(Num(n1.toLong ^ n2.toLong))
-    case (Binary.>>, CvtNum(n1), CvtNum(n2)) => Right(Num(n1.toLong >> n2.toLong))
-    case (Binary.<<, CvtNum(n1), CvtNum(n2)) => Right(Num(n1.toLong << n2.toLong))
-    case (Binary.>>>, CvtNum(n1), CvtNum(n2)) => Right(Num(n1.toLong >>> n2.toLong))
-
-    case (Binary.<, CvtPrim(StringLit(n1)), CvtPrim(StringLit(n2))) => Right(Bool(n1 < n2))
-    case (Binary.<=, CvtPrim(StringLit(n1)), CvtPrim(StringLit(n2))) => Right(Bool(n1 <= n2))
-    case (Binary.>, CvtPrim(StringLit(n1)), CvtPrim(StringLit(n2))) => Right(Bool(n1 > n2))
-    case (Binary.>=, CvtPrim(StringLit(n1)), CvtPrim(StringLit(n2))) => Right(Bool(n1 >= n2))
-
-    case (Binary.<, CvtPrim(Num(n1)), CvtPrim(Num(n2))) if n1.isNaN || n2.isNaN => Right(Undefined())
-    case (Binary.<=, CvtPrim(Num(n1)), CvtPrim(Num(n2))) if n1.isNaN || n2.isNaN => Right(Undefined())
-    case (Binary.>, CvtPrim(Num(n1)), CvtPrim(Num(n2))) if n1.isNaN || n2.isNaN => Right(Undefined())
-    case (Binary.>=, CvtPrim(Num(n1)), CvtPrim(Num(n2))) if n1.isNaN || n2.isNaN => Right(Undefined())
-
-    case (Binary.<, CvtPrim(Num(n1)), CvtPrim(Num(n2))) => Right(Bool(n1 < n2))
-    case (Binary.<=, CvtPrim(Num(n1)), CvtPrim(Num(n2))) => Right(Bool(n1 <= n2))
-    case (Binary.>, CvtPrim(Num(n1)), CvtPrim(Num(n2))) => Right(Bool(n1 > n2))
-    case (Binary.>=, CvtPrim(Num(n1)), CvtPrim(Num(n2))) => Right(Bool(n1 >= n2))
-
-    case (Binary.&&, CvtBool(n1), CvtBool(n2)) => Right(Bool(n1 && n2))
-    case (Binary.||, CvtBool(n1), CvtBool(n2)) => Right(Bool(n1 || n2))
-
-    case (Binary.BIND, v1, v2) => Left((Undefined(), "unimplemented"))
-    case (Binary.COMMALEFT, v1, v2) => Left((Undefined(), "unimplemented"))
-    case (Binary.COMMARIGHT, v1, v2) => Left((Undefined(), "unimplemented"))
-    case (Binary.IN, v1, v2) => Left((Undefined(), "unimplemented"))
-    case (Binary.INSTANCEOF, v1, v2) => Left((Undefined(), "unimplemented"))
-
-    case (op, v1 @ Residual(e1), v2 @ Residual(e2)) => Right(reify(Binary(op, v1, v2)))
-    case (op, v1, v2 @ Residual(e2)) => Right(reify(Binary(op, v1, v2)))
-    case (op, v1 @ Residual(e1), v2) => Right(reify(Binary(op, v1, v2)))
-
-    // Equality operators should not work on residuals.
-    // So match after the above.
-
-    case (Binary.!=, v1, v2) => evalOp(Binary.==, v1, v2) match {
-      case Right(Bool(v)) => Right(Bool(!v))
-      case Right(Residual(Binary(Binary.==, v1, v2))) => Right(Residual(Binary(Binary.!=, v1, v2)))
-      case r => r
-    }
-
-    case (Binary.!==, v1, v2) => evalOp(Binary.===, v1, v2) match {
-      case Right(Bool(v)) => Right(Bool(!v))
-      case Right(Residual(Binary(Binary.===, v1, v2))) => Right(Residual(Binary(Binary.!==, v1, v2)))
-      case r => r
-    }
-
-    case (Binary.==, Null(), Undefined()) => Right(Bool(true))
-    case (Binary.==, Undefined(), Null()) => Right(Bool(true))
-    case (Binary.==, Num(n1), v2 @ CvtNum(n2)) if v2.isInstanceOf[StringLit] => Right(Bool(n1 == n2))
-    case (Binary.==, v1 @ CvtNum(n1), Num(n2)) if v1.isInstanceOf[StringLit] => Right(Bool(n1 == n2))
-    case (Binary.==, Num(n1), v2 @ CvtNum(n2)) if v2.isInstanceOf[Bool] => Right(Bool(n1 == n2))
-    case (Binary.==, v1 @ CvtNum(n1), Num(n2)) if v1.isInstanceOf[Bool] => Right(Bool(n1 == n2))
-
-    // We don't handle object literals, so just reify.
-    case (Binary.==, v1 @ Loc(n1), v2) => Right(reify(Binary(op, v1, v2)))
-    case (Binary.==, v1, v2 @ Loc(n2)) => Right(reify(Binary(op, v1, v2)))
-
-    case (Binary.==, v1, v2) => evalOp(Binary.===, v1, v2) match {
-      case Right(Bool(v)) => Right(Bool(v))
-      case Right(Residual(Binary(Binary.===, v1, v2))) => Right(Residual(Binary(Binary.==, v1, v2)))
-      case r => r
-    }
-
-    case (Binary.===, Undefined(), Undefined()) => Right(Bool(true))
-    case (Binary.===, Null(), Null()) => Right(Bool(true))
-    case (Binary.===, Num(n1), Num(n2)) => Right(Bool(n1 == n2))
-    case (Binary.===, StringLit(n1), StringLit(n2)) => Right(Bool(n1 == n2))
-    case (Binary.===, Bool(n1), Bool(n2)) => Right(Bool(n1 == n2))
-    case (Binary.===, Loc(n1), Loc(n2)) => Right(Bool(n1 == n2)) // same object
-    case (Binary.===, v1, v2) => Right(Bool(false)) // all other cases should be false (residuals are handled above)
-
-    // Failure
-    case (op, v1: Exp, v2: Exp) =>
-      Left((reify(Binary(op, v1, v2)), s"cannot apply operator $op"))
   }
 
   // Check for termination at these nodes.
@@ -758,11 +817,11 @@ object CESK {
   object CheckHistory {
     def unapply(e: Exp) = e match {
       case Ident(x) => Some(e)
-      case While(test, body) => Some(e)
-      case DoWhile(body, test) => Some(e)
-      case For(init, test, iter, body) => Some(e)
-      case ForEach(init, test, iter, body) => Some(e)
-      case ForIn(init, iter, body) => Some(e)
+      case While(label, test, body) => Some(e)
+      case DoWhile(label, body, test) => Some(e)
+      case For(label, init, test, iter, body) => Some(e)
+      case ForEach(label, init, test, iter, body) => Some(e)
+      case ForIn(label, init, iter, body) => Some(e)
       case _ => None
     }
   }
@@ -772,7 +831,7 @@ object CESK {
   def eval(e: Node, maxSteps: Int): Node = {
     import HE._
 
-    var t = maxSteps
+    var t = maxSteps * 100
     var s = inject(e)
 
     // TODO:
@@ -787,11 +846,12 @@ object CESK {
 
       s match {
         // stop when we have a value with the empty continuation.
-        case Σ(v, _, σ, Nil) if v.isValue =>
+        case Σ(NormalForm(v), _, σ, Nil) =>
           return v
 
-        case Σ(v, _, σ, Fail(s)::k) if v.isValue =>
-          return Lambda("error"::Nil, v)
+        case Σ(e, _, σ, Fail(s)::k) =>
+          println(s"FAIL $s")
+          return Lambda("error"::Nil, e)
 
         case s0 @ Σ(e, ρ, σ, k) =>
           s = step(s0)
@@ -813,11 +873,12 @@ object CESK {
 
       s match {
         // stop when we have a value with the empty continuation.
-        case Σ(v, _, σ, Nil) if v.isValue =>
+        case Σ(NormalForm(v), _, σ, Nil) =>
           return v
 
-        case Σ(v, _, σ, Fail(s)::k) if v.isValue =>
-          return Lambda("error"::Nil, v)
+        case Σ(e, _, σ, Fail(s)::k) =>
+          println(s"FAIL $s")
+          return Lambda("error"::Nil, e)
 
         case s0 @ Σ(focus, ρ, σ, k) =>
           val s1 = step(s0)

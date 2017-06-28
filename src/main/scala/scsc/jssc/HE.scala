@@ -142,12 +142,25 @@ object HE {
     Sizer.size
   }
 
+  implicit class StoreHE(σ1: Store) {
+    def <<|(σ2: Store): Boolean = {
+      val locs1 = σ1.keySet
+      val locs2 = σ2.keySet
+      (locs1 subsetOf locs2) && locs1.exists {
+        loc =>
+          ExpHE.he(σ1(loc).e, σ2(loc).e)
+      }
+    }
+  }
+
   // Homeomorphic embedding code
   implicit class ExpHE(e1: Exp) {
     def <<|(e2: Exp): Boolean = {
-      size(e1) <= size(e2) && he(e1, e2)
+      size(e1) <= size(e2) && ExpHE.he(e1, e2)
     }
+  }
 
+  object ExpHE {
     def he(e1: Exp, e2: Exp): Boolean = diving(e1, e2) || coupling(e1, e2)
 
     def he(e1: Option[Exp], e2: Option[Exp]): Boolean = (e1, e2) match {
@@ -170,11 +183,14 @@ object HE {
           case Break(_) | Continue(_) => e
           case Empty() => e
           case Ident(_) => e
+          case LocalAddr(_) => e
           case Return(None) | Yield(None) => e
           case e if yes => e
+          case e if e eq t2 => e // skip t2 to avoid infinite loop
           case e =>
-            if (coupling(t1, e)) {
+            if (he(t1, e)) {
               yes = true
+              // abort the traversal
               e
             }
             else {
@@ -187,7 +203,9 @@ object HE {
       Diver.yes
     }
 
-    def coupling(t1: Exp, t2: Exp): Boolean = (t1, t2) match {
+    def coupling(t1: Exp, t2: Exp): Boolean = (t1 eq t2) || (t1 == t2) || coupling2(t1, t2)
+
+    def coupling2(t1: Exp, t2: Exp): Boolean = (t1, t2) match {
       case (Unary(op1, a1), Unary(op2, a2)) => op1 == op2 && he(a1, a2)
       case (Binary(op1, f1, a1), Binary(op2, f2, a2)) => op1 == op2 && he(f1, f2) && he(a1, a2)
       case (Assign(op1, f1, a1), Assign(op2, f2, a2)) => op1 == op2 && he(f1, f2) && he(a1, a2)
@@ -196,7 +214,6 @@ object HE {
       case (New(e1), New(e2)) => he(e1, e2)
       case (Typeof(e1), Typeof(e2)) => he(e1, e2)
       case (Void(e1), Void(e2)) => he(e1, e2)
-      case (Access(e1, x1), Access(e2, x2)) => x1 == x2 && he(e1, e2)
       case (Block(ss1), Block(ss2)) => ss1.length == ss2.length && (ss1 zip ss2).forall({ case (e1, e2) => he(e1, e2) })
       case (Break(_), Break(_)) => true
       case (Continue(_), Continue(_)) => true
@@ -204,11 +221,14 @@ object HE {
       case (Case(f1, a1), Case(f2, a2)) => he(f1, f2) && he(a1, a2)
       case (Catch(b1, c1, d1), Catch(b2, c2, d2)) => b1 == b2 && he(c1, c2) && he(d1, d2)
       case (Empty(), Empty()) => true
-      case (For(a1, b1, c1, d1), For(a2, b2, c2, d2)) => he(a1, a2) && he(b1, b2) && he(c1, c2) && he(d1, d2)
+      case (For(label1, a1, b1, c1, d1), For(label2, a2, b2, c2, d2)) => label1 == label2 && he(a1, a2) && he(b1, b2) && he(c1, c2) && he(d1, d2)
+      case (ForEach(label1, a1, b1, c1, d1), ForEach(label2, a2, b2, c2, d2)) => label1 == label2 && he(a1, a2) && he(b1, b2) && he(c1, c2) && he(d1, d2)
+      case (ForIn(label1, a1, b1, c1), ForIn(label2, a2, b2, c2)) => label1 == label2 && he(a1, a2) && he(b1, b2) && he(c1, c2)
       case (Lambda(xs1, e1), Lambda(xs2, e2)) => he(e1, e2)
+      case (LocalAddr(_), LocalAddr(_)) => true
+      case (IndexAddr(a1, i1), IndexAddr(a2, i2)) => he(a1, a2) && he(i1, i2)
       case (Ident(_), Ident(_)) => true
       case (Index(a1, i1), Index(a2, i2)) => he(a1, a2) && he(i1, i2)
-      case (Label(x1, e1), Label(x2, e2)) => x1 == x2 && he(e1, e2)
       case (ArrayLit(ss1), ArrayLit(ss2)) => ss1.length == ss2.length && (ss1 zip ss2).forall({ case (e1, e2) => he(e1, e2) })
       case (ObjectLit(ss1), ObjectLit(ss2)) => ss1.length == ss2.length && (ss1 zip ss2).forall({ case (e1, e2) => he(e1, e2) })
       case (Property(a1, i1, g1, s1), Property(a2, i2, g2, s2)) => he(a1, a2) && he(i1, i2) && he(g1, g2) && he(s1, s2)
@@ -223,8 +243,8 @@ object HE {
       case (VarDef(_, e1), VarDef(_, e2)) => he(e1, e2)
       case (LetDef(_, e1), LetDef(_, e2)) => he(e1, e2)
       case (ConstDef(_, e1), ConstDef(_, e2)) => he(e1, e2)
-      case (While(a1, i1), While(a2, i2)) => he(a1, a2) && he(i1, i2)
-      case (DoWhile(a1, i1), DoWhile(a2, i2)) => he(a1, a2) && he(i1, i2)
+      case (While(label1, a1, i1), While(label2, a2, i2)) => label1 == label2 && he(a1, a2) && he(i1, i2)
+      case (DoWhile(label1, a1, i1), DoWhile(label2, a2, i2)) => label1 == label2 && he(a1, a2) && he(i1, i2)
       case (With(a1, i1), With(a2, i2)) => he(a1, a2) && he(i1, i2)
 
       // Treat numbers specially.

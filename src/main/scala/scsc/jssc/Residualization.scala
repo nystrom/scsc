@@ -13,9 +13,9 @@ object Residualization {
     case e @ StringLit(n) => e
     case e @ ArrayLit(es) if es.forall(e => e == reify(e)) => e
     case e @ ObjectLit(es) if es.forall(e => e == reify(e)) => e
-    case e @ Property(k, Some(v), None, None) if k == reify(k) && v == reify(v) => e
-    case e @ Property(k, None, None, None) if k == reify(k) => e
+    case e @ Property(k, v, None, None) if k == reify(k) && v == reify(v) => e
     case e @ Lambda(_, _) => unreify(e)
+    case e @ Loc(_) => ???  // cannot reify a location
     case e @ Residual(e1) => reify(e1)
     case e => strongReify(e)
   }

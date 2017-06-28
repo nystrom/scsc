@@ -15,6 +15,81 @@ object Trees {
     }
   }
 
+  object CvtPrim {
+    def unapply(e: Exp) = e match {
+      case e: Undefined => Some(e)
+      case e: Null => Some(e)
+      case e: Bool => Some(e)
+      case e: Num => Some(e)
+      case e: StringLit => Some(e)
+      // TODO: call toString and valueOf methods if they exist.
+      // case e: ObjectLit => Some(e)
+      // case e: ArrayLit => Some(e)
+      case _ => None
+    }
+  }
+
+  object CvtBool {
+    def unapply(e: Exp): Option[Boolean] = e match {
+      case Bool(v) => Some(v)
+      case Undefined() => Some(false)
+      case Null() => Some(false)
+      case Num(v) => Some(v != 0 && ! v.isNaN)
+      case StringLit(v) => Some(v != "")
+      case Loc(_) => Some(true)
+      case v => None
+    }
+  }
+
+  object CvtNum {
+    def unapply(e: Exp): Option[Double] = e match {
+      case Num(v) => Some(v)
+      case Undefined() => Some(Double.NaN)
+      case Null() => Some(0)
+      case Bool(false) => Some(0)
+      case Bool(true) => Some(1)
+      case v => None
+    }
+  }
+
+  object CvtString {
+    def unapply(e: Exp) = e match {
+      case StringLit(v) => Some(v)
+      case ObjectLit(es) => Some(es.map(_.show).mkString("{", ",", "}"))
+      case ArrayLit(es) => Some(es.map(_.show).mkString("[", ",", "]"))
+      case Lambda(xs, e) => Some("<function>")
+      case e => Some(e.show)
+    }
+  }
+
+  object Value {
+    def unapply(e: Exp) = e match {
+      case v if v.isValue => Some(v)
+      case _ => None
+    }
+  }
+
+  object HeapValue {
+    def unapply(e: Exp) = e match {
+      case v if v.isHeapValue => Some(v)
+      case _ => None
+    }
+  }
+
+  object ValueOrResidual {
+    def unapply(e: Exp) = e match {
+      case v if v.isValueOrResidual => Some(v)
+      case _ => None
+    }
+  }
+
+  object NormalForm {
+    def unapply(e: Exp) = e match {
+      case v if v.isNormalForm => Some(v)
+      case _ => None
+    }
+  }
+
   def fv(n: Exp): Set[Name] = {
     import scsc.js.TreeWalk._
 
@@ -57,6 +132,7 @@ object Trees {
     t.getVars
   }
 
+
   case class Loc(address: Int) extends Exp
   case class Residual(e: Exp) extends Exp
 
@@ -69,17 +145,6 @@ object Trees {
   type Name = String
 
   implicit class IV(e: Exp) {
-    def isTrue = e.isRealValue && ! e.isFalse
-
-    def isFalse: Boolean = e match {
-      case StringLit("") => true
-      case Bool(false) => true
-      case Num(0) => true
-      case Undefined() => true
-      case Null() => true
-      case n => false
-    }
-
     def isPure: Boolean = {
       import scsc.js.TreeWalk._
       object Purity extends Rewriter {
@@ -104,7 +169,7 @@ object Trees {
           case _: Break | _: Continue =>
             pure = false
             e
-          case _: Delete =>
+          case _: Delete | _: New =>
             pure = false
             e
           case e if pure => super.rewrite(e)
@@ -116,46 +181,50 @@ object Trees {
       Purity.pure
     }
 
-    def isRealValue: Boolean = e match {
-      case StringLit(_) => true
-      case Bool(_) => true
-      case Num(_) => true
-      case Undefined() => true
-      case Null() => true
-      case Empty() => true
-      case v: Lambda => true
-      case v: Loc => true
-      case ArrayLit(vs) => vs.forall(_.isRealValue)
-      case ObjectLit(vs) => vs.forall(_.isRealValue)
-      case Property(k, Some(v), None, None) => k.isRealValue && v.isRealValue
-      case Property(k, None, None, None) => k.isRealValue
-      case _ => false
-    }
-
+    // JavaScript values (no control-flow, no residuals)
+    // Locations are the values for object and array literals.
     def isValue: Boolean = e match {
       case StringLit(_) => true
       case Bool(_) => true
       case Num(_) => true
       case Undefined() => true
       case Null() => true
-      case Empty() => true
-      case v: Lambda => true
-      case v: Loc => true
-      case v: Residual => true
-      case ArrayLit(vs) => vs.forall(_.isValue)
-      case ObjectLit(vs) => vs.forall(_.isValue)
-      case Property(k, Some(v), None, None) => k.isValue && v.isValue
-      case Property(k, None, None, None) => k.isValue
+      case Loc(_) => true
       case _ => false
+    }
+
+    def isValueOrResidual: Boolean = e match {
+      case Residual(_) => true
+      case v => v.isValue
+    }
+
+    def isNormalForm: Boolean = e match {
+      // control-flow values
+      case Break(_) => true
+      case Continue(_) => true
+      case Return(v) => v forall { _.isNormalForm }
+      case Yield(v) => v forall { _.isNormalForm }
+      case Throw(v) => v.isNormalForm
+      case Empty() => true
+
+      case v => v.isHeapValue
+    }
+
+    def isHeapValue: Boolean = e match {
+      case Lambda(_, _) => true
+      case ArrayLit(es) => es.forall(_.isHeapValue)
+      case ObjectLit(es) => es.forall(_.isHeapValue)
+      case Property(k, v, g, s) => k.isHeapValue && v.isHeapValue && g.forall(_.isHeapValue) && s.forall(_.isHeapValue)
+      case v => v.isValueOrResidual
     }
 
     def costZero: Boolean = e match {
       case Ident(_) => true
+      case LocalAddr(_) => true
       case Residual(e) => e.costZero
       case ArrayLit(es) => es.forall(_.costZero)
       case ObjectLit(es) => es.forall(_.costZero)
-      case Property(k, Some(v), None, None) => k.costZero && v.costZero
-      case Property(k, None, None, None) => k.costZero
+      case Property(k, v, g, s) => k.costZero && v.costZero && g.forall(_.costZero) && s.forall(_.costZero)
       case v => v.isValue
     }
   }
@@ -209,48 +278,48 @@ object Trees {
   sealed trait Lit extends Exp
   case class Unary(op: Operator, e: Exp) extends Exp
   case class IncDec(op: Operator, e: Exp) extends Exp
-  case class Delete(e: Exp) extends Exp
-  case class New(e: Exp) extends Exp
-  case class Typeof(e: Exp) extends Exp
+  case class Delete(e: Exp) extends Exp // HACKED
+  case class New(e: Exp) extends Exp // HACKED
+  case class Typeof(e: Exp) extends Exp // HACKED (does not handle prototypes)
   case class Void(e: Exp) extends Exp
   case class Assign(op: Option[Operator], left: Exp, right: Exp) extends Exp
-  case class Binary(op: Operator, left: Exp, right: Exp) extends Exp
-  case class Access(base: Exp, prop: Name) extends Exp
+  case class Binary(op: Operator, left: Exp, right: Exp) extends Exp  // HACKED: many operators wrong
   case class Block(es: List[Exp]) extends Exp
   case class Break(label: Option[Name]) extends Exp
   case class Call(f: Exp, args: List[Exp]) extends Exp
-  case class NewCall(f: Exp, args: List[Exp]) extends Exp
-  case class Case(test: Option[Exp], body: Exp) extends Exp
-  case class Catch(ex: Name, test: Option[Exp], body: Exp) extends Exp
+  case class NewCall(f: Exp, args: List[Exp]) extends Exp        // MISSING
+  case class Case(test: Option[Exp], body: Exp) extends Exp // MISSING
+  case class Catch(ex: Name, test: Option[Exp], body: Exp) extends Exp  // UNTESTED
   case class Continue(label: Option[Name]) extends Exp
   case class Empty() extends Exp
-  case class For(init: Exp, test: Exp, modify: Exp, body: Exp) extends Exp
-  case class ForIn(init: Exp, modify: Exp, body: Exp) extends Exp
-  case class ForEach(init: Exp, test: Exp, modify: Exp, body: Exp) extends Exp
+  case class For(label: Option[Name], init: Exp, test: Exp, modify: Exp, body: Exp) extends Exp
+  case class ForIn(label: Option[Name], init: Exp, modify: Exp, body: Exp) extends Exp // MISSING
+  case class ForEach(label: Option[Name], init: Exp, test: Exp, modify: Exp, body: Exp) extends Exp // MISSING
   case class Lambda(params: List[Name], body: Exp) extends Exp
   case class Program(body: Exp) extends Exp
   case class Ident(x: Name) extends Exp
+  case class LocalAddr(x: Name) extends Exp
   case class IfElse(test: Exp, pass: Exp, fail: Exp) extends Exp
   case class Index(a: Exp, i: Exp) extends Exp
-  case class Label(label: Name, body: Exp) extends Exp
-  case class ArrayLit(es: List[Exp]) extends Exp
+  case class IndexAddr(a: Exp, i: Exp) extends Exp
+  case class ArrayLit(es: List[Exp]) extends Exp  // HACKED (prototype missing)
   case class Bool(v: Boolean) extends Lit
   case class Num(v: Double) extends Lit
   case class StringLit(v: String) extends Lit
   case class Null() extends Lit
   case class Undefined() extends Lit
-  case class ObjectLit(es: List[Exp]) extends Exp
-  case class Property(k: Exp, v: Option[Exp], getter: Option[Exp], setter: Option[Exp]) extends Exp
+  case class ObjectLit(es: List[Exp]) extends Exp // HACKED (prototype missing)
+  case class Property(k: Exp, v: Exp, getter: Option[Exp], setter: Option[Exp]) extends Exp // HACKED, no getter, setter
   case class Return(e: Option[Exp]) extends Exp
-  case class Yield(e: Option[Exp]) extends Exp
-  case class Switch(e: Exp, cases: List[Exp]) extends Exp
+  case class Yield(e: Option[Exp]) extends Exp  // MISSING
+  case class Switch(e: Exp, cases: List[Exp]) extends Exp // MISSING
   case class Cond(test: Exp, pass: Exp, fail: Exp) extends Exp
   case class Throw(e: Exp) extends Exp
   case class Try(e: Exp, catches: List[Exp], fin: Option[Exp]) extends Exp
   case class VarDef(x: Name, init: Exp) extends Exp
-  case class LetDef(x: Name, init: Exp) extends Exp
-  case class ConstDef(x: Name, init: Exp) extends Exp
-  case class While(cond: Exp, body: Exp) extends Exp
-  case class DoWhile(body: Exp, cond: Exp) extends Exp
-  case class With(exp: Exp, body: Exp) extends Exp
+  case class LetDef(x: Name, init: Exp) extends Exp  // MISSING
+  case class ConstDef(x: Name, init: Exp) extends Exp  // MISSING
+  case class While(label: Option[Name], cond: Exp, body: Exp) extends Exp
+  case class DoWhile(label: Option[Name], body: Exp, cond: Exp) extends Exp
+  case class With(exp: Exp, body: Exp) extends Exp  // MISSING
 }

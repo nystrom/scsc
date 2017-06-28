@@ -19,8 +19,6 @@ object Machine {
   // ENVIRONMENTS
   ////////////////////////////////////////////////////////////////
 
-  // In the CESK machine, environments map names to values (locations)
-  // and the store maps locations to closures.
   case class Closure(e: Exp, ρ: Env) {
     override def toString = s"Closure(${e.show}, $ρ)"
   }

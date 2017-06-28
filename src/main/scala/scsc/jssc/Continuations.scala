@@ -46,8 +46,8 @@ object Continuations {
 
   // Extensions:
 
-  case class Load(ρ: Env) extends ContAction {
-    override def toString = s"*☐"
+  case class LoadCont(ρ: Env) extends ContAction {
+    override def toString = s"LOAD ☐"
   }
 
   // Unary operators
@@ -62,6 +62,8 @@ object Continuations {
   case class DoBinaryOp(op: Operator, v1: Exp, ρ: Env) extends ContAction {
     override def toString = s"${v1.show} $op ☐"
   }
+
+  case class FocusCont(e: Exp, ρ: Env) extends ContAction
 
   case class BlockCont(todo: List[Exp], done: List[Exp], ρ: Env) extends ContAction {
     override def toString = (done, todo) match {
@@ -80,13 +82,22 @@ object Continuations {
       case None => s"loop { $cont }"
     }
   }
+  case class BreakFrame(label: Option[Name]) extends ContAction
+  case class ContinueFrame(label: Option[Name]) extends ContAction
 
   // Assignment.
   case class EvalAssignRhs(op: Option[Operator], rhs: Exp, ρ: Env) extends ContAction
   case class DoAssign(op: Option[Operator], lhs: Loc, ρ: Env) extends ContAction
+  case class RebuildAssign(op: Option[Operator], lhs: Exp, ρ: Env) extends ContAction
 
   // ++, --, etc.
   case class DoIncDec(op: Operator, ρ: Env) extends ContAction
+
+  // typeof
+  case class DoTypeof(ρ: Env) extends ContAction
+
+  // new
+  case class DoNew(ρ: Env) extends ContAction
 
   // actions on residuals
   sealed trait RebuildCont extends ContAction
@@ -106,13 +117,24 @@ object Continuations {
   case class RebuildIfElseTrue(test: Exp, s2: Exp, σAfterTest: Store, ρ: Env) extends RebuildCont
   case class RebuildIfElseFalse(test: Exp, s1: Exp, σAfterS1: Store, ρ: Env) extends RebuildCont
 
-  case class RebuildWhileTest(test: Exp, body: Exp, ρ: Env) extends RebuildCont
-  case class RebuildWhileBody(test1: Exp, test: Exp, body: Exp, ρ: Env) extends RebuildCont
+  case class RebuildForTest(label: Option[Name], test: Exp, iter: Exp, body: Exp, ρ: Env) extends RebuildCont
+  case class RebuildForBody(label: Option[Name], test1: Exp, test: Exp, iter: Exp, body: Exp, ρ: Env) extends RebuildCont
+  case class RebuildForIter(label: Option[Name], body1: Exp, test1: Exp, test: Exp, iter: Exp, body: Exp, ρ: Env) extends RebuildCont
 
-  case class RebuildForTest(test: Exp, iter: Exp, body: Exp, ρ: Env) extends RebuildCont
-  case class RebuildForBody(test1: Exp, test: Exp, iter: Exp, body: Exp, ρ: Env) extends RebuildCont
-  case class RebuildForIter(body1: Exp, test1: Exp, test: Exp, iter: Exp, body: Exp, ρ: Env) extends RebuildCont
+  case class InitObject(loc: Loc, todo: List[Exp], done: List[Exp], ρ: Env) extends ContAction
+  case class WrapProperty(k: Exp, ρ: Env) extends ContAction
+  case class EvalPropertyValue(v: Exp, ρ: Env) extends ContAction
 
-  case class WrapLambda(xs: List[Name], ρ: Env) extends ContAction
+  // delete a[i]
+  case class EvalPropertyNameForDel(i: Exp, ρ: Env) extends ContAction
+  case class DoDeleteProperty(a: Exp, ρ: Env) extends ContAction
+
+  // a[i]
+  case class EvalPropertyNameForGet(i: Exp, ρ: Env) extends ContAction
+  case class GetProperty(a: Exp, ρ: Env) extends ContAction
+
+  // a[i] = v
+  case class EvalPropertyNameForSet(i: Exp, ρ: Env) extends ContAction
+  case class GetPropertyAddressOrCreate(a: Exp, ρ: Env) extends ContAction
 
 }
