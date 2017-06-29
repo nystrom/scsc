@@ -17,6 +17,8 @@ object Residualization {
 
     while (worklist.nonEmpty) {
       val (path, v) = worklist.head
+      worklist = worklist.tail
+      
       if (v == loc) {
         return path
       }

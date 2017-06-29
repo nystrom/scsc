@@ -83,6 +83,8 @@ object Machine {
 
     while (worklist.nonEmpty) {
       val loc = worklist.head
+      worklist = worklist.tail
+
       if (! seen.contains(loc)) {
         seen += loc
         σ.get(loc) match {
