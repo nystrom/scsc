@@ -19,11 +19,7 @@ object Machine {
   // ENVIRONMENTS
   ////////////////////////////////////////////////////////////////
 
-  case class Closure(e: Exp, ρ: Env) {
-    override def toString = s"Closure(${e.show}, $ρ)"
-  }
-
-  val ρ0: Env = Map()
+  lazy val ρ0: Env = Context.ρ0
   type Env = Map[Name, Loc]
 
   // trait Env {
@@ -63,6 +59,9 @@ object Machine {
   // STORES
   ////////////////////////////////////////////////////////////////
 
+  // The heap stores closures.
+  case class Closure(e: Exp, ρ: Env)
+
   type Store = Map[Loc, Closure]
 
   implicit class StoreOps(σ: Store) {
@@ -71,7 +70,40 @@ object Machine {
     }
   }
 
-  val σ0: Store = Map()
+  lazy val σ0: Store = Context.σ0
+
+  // garbage collect the store with respect to the environment.
+  def gc(ρ: Env, σ: Store): Store = {
+    import scala.collection.mutable.HashSet
+    import scala.collection.mutable.ListBuffer
+
+    var worklist: Vector[Loc] = ρ.toVector map { case (x, v) => v }
+    val seen: HashSet[Loc] = new HashSet()
+    val newσ: ListBuffer[(Loc, Closure)] = ListBuffer()
+
+    while (worklist.nonEmpty) {
+      val loc = worklist.head
+      if (! seen.contains(loc)) {
+        seen += loc
+        σ.get(loc) match {
+          case Some(v @ Closure(FunObject(_, _, _, props), _)) =>
+            newσ += ((loc, v))
+            props foreach {
+              case Property(k, loc1: Loc, _, _) =>
+                worklist = worklist :+ loc1
+              case _ =>
+            }
+          case Some(v) =>
+            newσ += (loc -> v)
+          case None =>
+        }
+      }
+    }
+
+    newσ.toMap
+  }
+
+  def sanitize(σ: Store): Store = σ
 
   def mergeStores(σ1: Store, σ2: Store): Store = {
     if (σ1 eq σ2) {

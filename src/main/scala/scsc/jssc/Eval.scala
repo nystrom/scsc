@@ -7,6 +7,21 @@ object Eval {
   import Machine._
   import Continuations._
   import Residualization._
+  import Context.{ρempty, σempty}
+
+  def getPropertyAddress(loc: Loc, i: Exp, σ: Store) = {
+    σ.get(loc) match {
+      case Some(Closure(FunObject(typeof, xs, body, props), _)) =>
+        val v = props collectFirst {
+          case Property(k, v: Loc, g, s) if evalOp(Binary.==, k, i) == Bool(true) => v
+        }
+        v match {
+          case Some(v) => Some(v)
+          case None => None
+        }
+      case _ => None
+    }
+  }
 
   // Fix this! This is too simple and doesn't handle coercions corretctly.
   // Let's look at the spec.
@@ -16,10 +31,10 @@ object Eval {
     case (Binary.*, CvtNum(n1), CvtNum(n2)) => Num(n1 * n2)
     case (Binary./, CvtNum(n1), CvtNum(0)) =>
       println("ERROR: div by 0: ${Binary(op, v1, v2).show}")
-      reify(Binary(op, v1, v2))
+      reify(Binary(op, v1, v2))(σempty, ρempty)
     case (Binary.%, CvtNum(n1), CvtNum(0)) =>
       println("ERROR: mod by 0: ${Binary(op, v1, v2).show}")
-      reify(Binary(op, v1, v2))
+      reify(Binary(op, v1, v2))(σempty, ρempty)
     case (Binary./, CvtNum(n1), CvtNum(n2)) => Num(n1 / n2)
     case (Binary.%, CvtNum(n1), CvtNum(n2)) => Num(n1 % n2)
 
@@ -52,30 +67,27 @@ object Eval {
 
     case (Binary.BIND, v1, v2) =>
       println("ERROR: unimplemented ${Binary(op, v1, v2).show}")
-      reify(Binary(op, v1, v2))
-    case (Binary.COMMALEFT, v1, v2) =>
-      println("ERROR: unimplemented ${Binary(op, v1, v2).show}")
-      reify(Binary(op, v1, v2))
-    case (Binary.COMMARIGHT, v1, v2) =>
-      println("ERROR: unimplemented ${Binary(op, v1, v2).show}")
-      reify(Binary(op, v1, v2))
+      reify(Binary(op, v1, v2))(σempty, ρempty)
 
-    case (op, v1, v2 @ Residual(e2)) => reify(Binary(op, v1, v2))
-    case (op, v1 @ Residual(e1), v2) => reify(Binary(op, v1, v2))
+    case (op, v1, v2 @ Residual(e2)) => reify(Binary(op, v1, v2))(σempty, ρempty)
+    case (op, v1 @ Residual(e1), v2) => reify(Binary(op, v1, v2))(σempty, ρempty)
+
+    case (Binary.COMMALEFT, v1, v2) => v1
+    case (Binary.COMMARIGHT, v1, v2) => v2
 
     // Equality operators should not work on residuals.
     // So match after the above.
 
     case (Binary.!=, v1, v2) => evalOp(Binary.==, v1, v2) match {
       case Bool(v) => Bool(!v)
-      case Residual(Binary(Binary.==, v1, v2)) => reify(Binary(Binary.!=, v1, v2))
-      case r => reify(Binary(Binary.!=, v1, v2))
+      case Residual(Binary(Binary.==, v1, v2)) => reify(Binary(Binary.!=, v1, v2))(σempty, ρempty)
+      case r => reify(Binary(Binary.!=, v1, v2))(σempty, ρempty)
     }
 
     case (Binary.!==, v1, v2) => evalOp(Binary.===, v1, v2) match {
       case Bool(v) => Bool(!v)
-      case Residual(Binary(Binary.===, v1, v2)) => reify(Binary(Binary.!==, v1, v2))
-      case r => reify(Binary(Binary.!==, v1, v2))
+      case Residual(Binary(Binary.===, v1, v2)) => reify(Binary(Binary.!==, v1, v2))(σempty, ρempty)
+      case r => reify(Binary(Binary.!==, v1, v2))(σempty, ρempty)
     }
 
     case (Binary.==, Null(), Undefined()) => Bool(true)
@@ -87,14 +99,14 @@ object Eval {
 
     case (Binary.==, Loc(n1), Loc(n2)) if n1 == n2 => Bool(true)
     // We don't handle object literals, so just reify.
-    case (Binary.==, v1 @ Loc(n1), v2) => reify(Binary(Binary.==, v1, v2))
-    case (Binary.==, v1, v2 @ Loc(n2)) => reify(Binary(Binary.==, v1, v2))
+    case (Binary.==, v1 @ Loc(n1), v2) => reify(Binary(Binary.==, v1, v2))(σempty, ρempty)
+    case (Binary.==, v1, v2 @ Loc(n2)) => reify(Binary(Binary.==, v1, v2))(σempty, ρempty)
 
     // for other cases, just use ===.
     case (Binary.==, v1, v2) => evalOp(Binary.===, v1, v2) match {
       case Bool(v) => Bool(v)
-      case Residual(Binary(Binary.===, v1, v2)) => reify(Binary(Binary.==, v1, v2))
-      case r => reify(Binary(Binary.==, v1, v2))
+      case Residual(Binary(Binary.===, v1, v2)) => reify(Binary(Binary.==, v1, v2))(σempty, ρempty)
+      case r => reify(Binary(Binary.==, v1, v2))(σempty, ρempty)
     }
 
     case (Binary.===, Undefined(), Undefined()) => Bool(true)
@@ -108,7 +120,7 @@ object Eval {
     // Failure
     case (op, v1, v2) =>
       println("ERROR: cannot apply ${Binary(op, v1, v2).show}")
-      reify(Binary(op, v1, v2))
+      reify(Binary(op, v1, v2))(σempty, ρempty)
   }
 }
 

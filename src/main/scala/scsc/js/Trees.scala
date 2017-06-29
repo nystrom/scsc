@@ -102,7 +102,7 @@ object Trees {
       def getDefs = defs.toSet
 
       override def rewrite(t: Exp): Exp = t match {
-        case t @ Ident(x) =>
+        case t @ Local(x) =>
           vars += x
           t
         case t @ Lambda(xs, e) =>
@@ -132,7 +132,8 @@ object Trees {
     t.getVars
   }
 
-
+  // FIXME: Prim("foo.bar") should just be Residual(Index(Local("foo"), StringLit("bar")))
+  case class Prim(name: String) extends Exp
   case class Loc(address: Int) extends Exp
   case class Residual(e: Exp) extends Exp
 
@@ -151,16 +152,17 @@ object Trees {
         var pure = true
 
         override def rewrite(e: Exp): Exp = e match {
-          case _: Call | _: NewCall =>
+          case _: Call | _: NewCall | _: New =>
             pure = false
             e
           case _: While | _: DoWhile | _: For | _: ForIn | _: ForEach =>
+            // might diverge (but not for-in or for-each)
             pure = false
             e
           case _: Assign | _: IncDec =>
             pure = false
             e
-          case _: Return | _: Yield | _: Throw | _: Catch | _: Try =>
+          case _: Return | _: Yield | _: Throw | _: Catch | _: TryCatch | _: TryFinally =>
             pure = false
             e
           case _: VarDef | _: LetDef | _: ConstDef =>
@@ -195,6 +197,7 @@ object Trees {
 
     def isValueOrResidual: Boolean = e match {
       case Residual(_) => true
+      case Prim(_) => true
       case v => v.isValue
     }
 
@@ -211,23 +214,14 @@ object Trees {
     }
 
     def isHeapValue: Boolean = e match {
-      case Lambda(_, _) => true
-      case ArrayLit(es) => es.forall(_.isHeapValue)
-      case ObjectLit(es) => es.forall(_.isHeapValue)
-      case Property(k, v, g, s) => k.isHeapValue && v.isHeapValue && g.forall(_.isHeapValue) && s.forall(_.isHeapValue)
+      case FunObject(_, _, _, _) => true
       case v => v.isValueOrResidual
     }
-
-    def costZero: Boolean = e match {
-      case Ident(_) => true
-      case LocalAddr(_) => true
-      case Residual(e) => e.costZero
-      case ArrayLit(es) => es.forall(_.costZero)
-      case ObjectLit(es) => es.forall(_.costZero)
-      case Property(k, v, g, s) => k.costZero && v.costZero && g.forall(_.costZero) && s.forall(_.costZero)
-      case v => v.isValue
-    }
   }
+
+  // This is either a function object or a JS object in the heap.
+  // Properties should be a list of Property(value, loc)
+  case class FunObject(typeof: String, params: List[Name], body: Option[Exp], properties: List[Exp]) extends Exp
 
   sealed trait Operator
 
@@ -297,7 +291,7 @@ object Trees {
   case class ForEach(label: Option[Name], init: Exp, test: Exp, modify: Exp, body: Exp) extends Exp // MISSING
   case class Lambda(params: List[Name], body: Exp) extends Exp
   case class Program(body: Exp) extends Exp
-  case class Ident(x: Name) extends Exp
+  case class Local(x: Name) extends Exp
   case class LocalAddr(x: Name) extends Exp
   case class IfElse(test: Exp, pass: Exp, fail: Exp) extends Exp
   case class Index(a: Exp, i: Exp) extends Exp
@@ -315,7 +309,8 @@ object Trees {
   case class Switch(e: Exp, cases: List[Exp]) extends Exp // MISSING
   case class Cond(test: Exp, pass: Exp, fail: Exp) extends Exp
   case class Throw(e: Exp) extends Exp
-  case class Try(e: Exp, catches: List[Exp], fin: Option[Exp]) extends Exp
+  case class TryCatch(e: Exp, catches: List[Exp]) extends Exp
+  case class TryFinally(e: Exp, fin: Exp) extends Exp
   case class VarDef(x: Name, init: Exp) extends Exp
   case class LetDef(x: Name, init: Exp) extends Exp  // MISSING
   case class ConstDef(x: Name, init: Exp) extends Exp  // MISSING

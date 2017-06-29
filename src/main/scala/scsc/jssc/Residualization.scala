@@ -7,17 +7,55 @@ object Residualization {
   import Machine._
   import Continuations._
 
-  def reify(e: Exp): Exp = e match {
-    case e @ Num(n) => e
-    case e @ Bool(n) => e
-    case e @ StringLit(n) => e
-    case e @ ArrayLit(es) if es.forall(e => e == reify(e)) => e
-    case e @ ObjectLit(es) if es.forall(e => e == reify(e)) => e
-    case e @ Property(k, v, None, None) if k == reify(k) && v == reify(v) => e
-    case e @ Lambda(_, _) => unreify(e)
-    case e @ Loc(_) => ???  // cannot reify a location
-    case e @ Residual(e1) => reify(e1)
-    case e => strongReify(e)
+  def findAccessPath(loc: Loc, σ: Store, ρ: Env): Exp = {
+    import scala.collection.mutable.HashSet
+
+    // Bread-first search through the store to find an access path to the location.
+    // Doing BFS returns the shortest path.
+    var worklist: Vector[(Exp, Loc)] = ρ.toVector map { case (x, v) => (Local(x), v) }
+    val seen: HashSet[Loc] = new HashSet()
+
+    while (worklist.nonEmpty) {
+      val (path, v) = worklist.head
+      if (v == loc) {
+        return path
+      }
+      else if (! seen.contains(loc)) {
+        seen += loc
+
+        σ.get(v) match {
+          case Some(Closure(loc1: Loc, _)) =>
+            worklist = worklist :+ (path, loc1)
+          case Some(Closure(FunObject(_, _, _, props), _)) =>
+            props foreach {
+              case Property(k, loc1: Loc, _, _) =>
+                worklist = worklist :+ (Index(path, k), loc1)
+              case _ =>
+            }
+          case _ =>
+        }
+      }
+    }
+
+    // No access path was found.
+    Undefined()
+  }
+
+  def reify(e: Exp)(implicit σ: Store, ρ: Env): Exp = {
+    import scsc.js.TreeWalk._
+
+    object Reify extends Rewriter {
+      override def rewrite(e: Exp): Exp = e match {
+        case Residual(e) => super.rewrite(e)
+        case e: Loc => findAccessPath(e, σ, ρ)
+        case e => super.rewrite(e)
+      }
+    }
+
+    Reify.rewrite(e) match {
+      case Value(e) => e
+      case e => Residual(e)
+    }
   }
 
   def unreify(e: Exp): Exp = {
@@ -33,17 +71,16 @@ object Residualization {
     Unreify.rewrite(e)
   }
 
-  def strongReify(e: Exp): Exp = Residual(unreify(e))
+  def strongReify(e: Exp)(implicit σ: Store, ρ: Env): Exp = Residual(unreify(e))
 
-  def strongReifyEnv(ρ: Env): Env = ρ
-
-  def strongReifyStore(σ: Store): Store = σ map {
-    case (loc, Closure(v, ρ)) => (loc, Closure(strongReify(v), strongReifyEnv(ρ)))
+  def strongReifyStore(σ: Store, ρ: Env): Store = σ map {
+    case (loc, Closure(v, ρ)) => (loc, Closure(strongReify(v)(σ, ρ), ρ))
   }
 
   def strongReify(s: St): St = s match {
     case Σ(focus, ρ, σ, k) =>
-      val vars: Set[Name] = fv(focus)
+      val focus1 = strongReify(focus)(σ, ρ)
+      val vars: Set[Name] = fv(focus1)
       val k1 = vars.toList match {
         case Nil => k
         case vars =>
@@ -56,6 +93,6 @@ object Residualization {
           }
           RebuildLet(vars, vals, ρ)::k
       }
-      Σ(strongReify(focus), strongReifyEnv(ρ), strongReifyStore(σ), k1)
+      Σ(focus1, ρ, strongReifyStore(σ, ρ), k1)
   }
 }

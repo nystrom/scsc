@@ -14,7 +14,7 @@ object Continuations {
 
   sealed trait ContAction
 
-  case class EvalMoreArgs(fun: Exp, todo: List[Exp], done: List[Exp], ρ: Env) extends ContAction {
+  case class EvalMoreArgs(fun: Exp, thisValue: Exp, todo: List[Exp], done: List[Exp], ρ: Env) extends ContAction {
     override def toString = (done, todo) match {
       case (Nil, Nil) => s"${fun.show}(☐)"
       case (done, Nil) => s"${fun.show}(${done.map(_.show).mkString(", ")}, ☐)"
@@ -22,20 +22,24 @@ object Continuations {
       case (done, todo) => s"${fun.show}(${done.map(_.show).mkString(", ")}, ☐, ${todo.map(_.show).mkString(", ")})"
     }
   }
-  case class EvalArgs(todo: List[Exp], ρ: Env) extends ContAction {
+  case class EvalArgs(thisValue: Exp, todo: List[Exp], ρ: Env) extends ContAction {
     override def toString = s"☐(${todo.map(_.show).mkString(", ")})"
   }
-  case class DoCall(fun: Exp, args: List[Exp], ρ: Env) extends ContAction {
+  case class DoCall(fun: Exp, thisValue: Exp, args: List[Exp], ρ: Env) extends ContAction {
     override def toString = s"${fun.show}(${args.map(_.show).mkString(", ")}) ☐"
   }
   case class Fail(s: String) extends ContAction {
     override def toString = s"FAIL($s)"
   }
 
+  case class InitProto(loc: Loc, ρ: Env) extends ContAction
+  case class EvalMethodProperty(methodProp: Exp, args: List[Exp], ρ: Env) extends ContAction
+
   case class CallFrame(ρ: Env) extends ContAction
   case class ReturnFrame() extends ContAction
   case class ThrowFrame() extends ContAction
-  case class TryFrame(cs: List[Exp], fin: Option[Exp], ρ: Env) extends ContAction
+  case class CatchFrame(cs: List[Exp], ρ: Env) extends ContAction
+  case class FinallyFrame(fin: Exp, ρ: Env) extends ContAction
 
   // Residualization:
   // For each reduction continuation, i.e., the ones that "Do" something,
@@ -84,6 +88,13 @@ object Continuations {
   }
   case class BreakFrame(label: Option[Name]) extends ContAction
   case class ContinueFrame(label: Option[Name]) extends ContAction
+
+  case class Breaking(label: Option[Name]) extends ContAction
+  case class Continuing(label: Option[Name]) extends ContAction
+  case class Returning(v: Exp) extends ContAction
+  case class Throwing(v: Exp) extends ContAction
+  case class DoReturn() extends ContAction
+  case class DoThrow() extends ContAction
 
   // Assignment.
   case class EvalAssignRhs(op: Option[Operator], rhs: Exp, ρ: Env) extends ContAction

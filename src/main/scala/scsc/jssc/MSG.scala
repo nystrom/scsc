@@ -25,7 +25,7 @@ object MSG {
       val s3 = for { (u, t) <- s2 -- s1.keys } yield (u, t.subst(s1))
       val s4 = for { u <- s1.keys.toList intersect s2.keys.toList }
         yield s2(u) match {
-          case t @ Ident(v) => (v, s1(u))
+          case t @ Local(v) => (v, s1(u))
           case t => (u, t.subst(s1))
         }
       val s5 = s3 ++ s4 ++ s1
@@ -47,7 +47,7 @@ object MSG {
 
     class Subster(s: Subst) extends Rewriter {
       override def rewrite(e: Exp) = e match {
-        case t @ Ident(x) =>
+        case t @ Local(x) =>
           s.get(x) match {
             case Some(u) => u
             case None => t
@@ -84,7 +84,7 @@ object MSG {
           if a < b        // always replace with the least variable
           if u == v                 // a and b map to the same type in s1
           if s2.get(a) == s2.get(b) // a and b map to the same type in s2, or s2 does not contain either a or b
-        } yield (b, Ident(a))
+        } yield (b, Local(a))
         logger.debug("  s1 = " + s1)
         logger.debug("  s2 = " + s2)
         logger.debug("   s = " + s.toMap)
@@ -93,20 +93,20 @@ object MSG {
         val lam = vars1.foldRight(t.subst(s.toMap): Exp) {
           case (x, e) => Lambda(x::Nil, e)
         }
-        val app1 = vars1.foldLeft(Ident(f): Exp) {
+        val app1 = vars1.foldLeft(Local(f): Exp) {
           case (e, x) => Call(e, s1(x)::Nil)
         }
-        val app2 = vars1.foldLeft(Ident(f): Exp) {
+        val app2 = vars1.foldLeft(Local(f): Exp) {
           case (e, x) => Call(e, s2(x)::Nil)
         }
 
         val vars2 = fv(lam).toList
 
         val vapp1 = vars2.foldLeft(app1: Exp) {
-          case (e, x) => Call(e, Ident(x)::Nil)
+          case (e, x) => Call(e, Local(x)::Nil)
         }
         val vapp2 = vars2.foldLeft(app2: Exp) {
-          case (e, x) => Call(e, Ident(x)::Nil)
+          case (e, x) => Call(e, Local(x)::Nil)
         }
         val vlam = vars2.foldRight(lam: Exp) {
           case (x, lam) => Lambda(x::Nil, lam)
@@ -123,7 +123,7 @@ object MSG {
   //   and vars are the newly introduced variables in the generalized types.
   // Fails if t1 and t2 have different types (unimplemented).
   private def generalize(t1: Exp, t2: Exp): Option[(List[Name], Subst, Subst, Exp)] = (t1, t2) match {
-    case (Ident(a), Ident(b)) if a == b => Some((Nil, emptySubst, emptySubst, Ident(a)))
+    case (Local(a), Local(b)) if a == b => Some((Nil, emptySubst, emptySubst, Local(a)))
     case (Num(a), Num(b)) if a == b => Some((Nil, emptySubst, emptySubst, Num(a)))
     // // FIXME
     // case (Lam(ax, a), Lam(bx, b)) if ax == bx =>
@@ -175,7 +175,7 @@ object MSG {
     case (t1, t2) =>
       // head of the terms not equal. Introduce a new variable.
       val a = FreshVar()
-      Some((a::Nil, singletonSubst(a, t1), singletonSubst(a, t2), Ident(a)))
+      Some((a::Nil, singletonSubst(a, t1), singletonSubst(a, t2), Local(a)))
   }
 
 }

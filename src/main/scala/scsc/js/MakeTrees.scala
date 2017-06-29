@@ -56,7 +56,7 @@ object MakeTrees {
     // Wrap e in an explicit load expression.
     def lvalue(e: Exp): Exp = e match {
       // The following expressions evaluate to addresses and should be wrapped in a load.
-      case Ident(x) => LocalAddr(x)
+      case Local(x) => LocalAddr(x)
       case Index(a, i) => IndexAddr(a, i)
       case e => e
     }
@@ -136,8 +136,8 @@ object MakeTrees {
           push(e)
         case Call(f, args) =>
           push(NewCall(f, args))
-        case _ =>
-          ???
+        case e =>
+          push(NewCall(e, Nil))
       }
       n
     }
@@ -480,7 +480,7 @@ object MakeTrees {
       // val prop = pop
       // val base = popR
       // prop match {
-      //   case Ident(x) =>
+      //   case Local(x) =>
       //     push(Access(base, x))
       //   case _ =>
       //     ???
@@ -496,6 +496,27 @@ object MakeTrees {
       push(Block(es.toList.reverse))
       n
     }
+
+    // object FloatDefs extends Rewriter {
+    //   override def rewriteM(e: Exp) = super.rewriteM(e) match {
+    //     case Lambda(xs, e) =>
+    //
+    //     case Block(ss) =>
+    //       val defs = ss collect {
+    //         case VarDef(x, e) =>
+    //           VarDef(x, Undefined())
+    //       }
+    //       val ss2 = ss map {
+    //         case VarDef(x, e) =>
+    //           Assign(None, LocalAddr(x), e)
+    //         case s =>
+    //           s
+    //       }
+    //       Block(defs ++ ss2)
+    //     case e =>
+    //       e
+    //   }
+    // }
 
     // Callback for leaving a BreakNode
     override def leaveBreakNode(n: ir.BreakNode): ir.Node = {
@@ -550,7 +571,7 @@ object MakeTrees {
         val test = popR
         val ex = pop
         ex match {
-          case Ident(x) =>
+          case Local(x) =>
             push((Catch(x, Some(test), body.asInstanceOf[Block])))
           case _ =>
             ???
@@ -560,7 +581,7 @@ object MakeTrees {
         val body = pop
         val ex = pop
         ex match {
-          case Ident(x) =>
+          case Local(x) =>
             push((Catch(x, None, body.asInstanceOf[Block])))
           case _ =>
             ???
@@ -632,12 +653,7 @@ object MakeTrees {
         assert(xs.isEmpty)
         push(Program(body))
       }
-      else if (n.getIdent == null) {
-        push(Lambda(xs.toList, body))
-      }
       else {
-        val x = n.getIdent.getName
-        // Return a lambda even though we know the name.
         push(Lambda(xs.toList, body))
       }
       n
@@ -651,7 +667,7 @@ object MakeTrees {
 
     // Callback for leaving an IdentNode
     override def leaveIdentNode(n: ir.IdentNode): ir.Node = {
-      push(Ident(n.getName))
+      push(Local(n.getName))
       n
     }
 
@@ -761,7 +777,7 @@ object MakeTrees {
       // val k = n.getKeyName
       // push(Property(StringLit(k), v, getter, setter))
       k match {
-        case Ident(x) =>
+        case Local(x) =>
           push(Property(StringLit(x), v, getter, setter))
         case k =>
           push(Property(k, v, getter, setter))
@@ -850,18 +866,36 @@ object MakeTrees {
           Some(v)
         }
       }
-      val es = ListBuffer.empty[Exp]
+      val es = ListBuffer.empty[Catch]
       for (s <- n.getCatchBlocks.toList) {
         val c = pop
         c match {
-          case Catch(_, _, _) =>
+          case c @ Catch(_, _, _) =>
             es += c
           case _ =>
             ???
         }
       }
       val e = pop
-      push(Try(e, es.toList.reverse, f))
+      val e2 = f match {
+        case Some(v) =>
+          TryFinally(e, v)
+        case None =>
+          e
+      }
+      val cs2 = f match {
+        case Some(v) =>
+          es.toList.reverse map {
+            case Catch(ex, test, body) =>
+              Catch(ex, test, TryFinally(body, v))
+          }
+        case None =>
+          es.toList.reverse
+      }
+      cs2 match {
+        case Nil => push(e2)
+        case cs2 => push(TryCatch(e2, cs2))
+      }
       n
     }
 
@@ -878,7 +912,7 @@ object MakeTrees {
       val x = pop
       val e = Option(n.getInit) map { _ => popR } getOrElse Undefined()
       x match {
-        case Ident(x) =>
+        case Local(x) =>
           if (n.isLet) {
             push(LetDef(x, e))
           }
