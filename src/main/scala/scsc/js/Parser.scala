@@ -23,7 +23,7 @@ object Parser {
   lazy val errors = new ErrorManager()
   lazy val context = new Context(options, errors, Thread.currentThread.getContextClassLoader)
 
-  def fromString(input: String): Option[Program] = {
+  def fromString(input: String): Option[Scope] = {
     val source = Source.sourceFor("(input)", input)
     val parser = new JSParser(context.getEnv, source, errors)
     parser.parse match {
@@ -32,7 +32,7 @@ object Parser {
     }
   }
 
-  def fromFile(path: String): Option[Program] = {
+  def fromFile(path: String): Option[Scope] = {
     val source = Source.sourceFor(path, new java.io.File(path))
     val parser = new JSParser(context.getEnv, source, errors)
     parser.parse match {

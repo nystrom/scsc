@@ -18,7 +18,7 @@ object Residualization {
     while (worklist.nonEmpty) {
       val (path, v) = worklist.head
       worklist = worklist.tail
-      
+
       if (v == loc) {
         return path
       }
@@ -28,7 +28,12 @@ object Residualization {
         σ.get(v) match {
           case Some(Closure(loc1: Loc, _)) =>
             worklist = worklist :+ (path, loc1)
-          case Some(Closure(FunObject(_, _, _, props), _)) =>
+          case Some(Closure(FunObject(_, proto, _, _, props), _)) =>
+            proto match {
+              case loc1: Loc =>
+                worklist = worklist :+ (Index(path, StringLit("__proto__")), loc1)
+              case _ =>
+            }
             props foreach {
               case Property(k, loc1: Loc, _, _) =>
                 worklist = worklist :+ (Index(path, k), loc1)
@@ -39,8 +44,47 @@ object Residualization {
       }
     }
 
-    // No access path was found.
-    Undefined()
+    // If there is not an access path, it must be a new object
+    // that we haven't stored in a variable yet.
+
+    // If the location stores a value just return it.
+    σ.get(loc) match {
+      case Some(Closure(_: Loc, _)) =>
+        Undefined()
+      case Some(Closure(Value(v), _)) =>
+        v
+      case Some(Closure(FunObject(_, proto, params, Some(e), props), _)) =>
+        Lambda(params, e)
+      case Some(Closure(FunObject(_, proto, Nil, None, props), _)) =>
+        proto match {
+          case Prim("Object.prototype") =>
+            ObjectLit(props flatMap {
+              case Property(k, v, _, _) if k == StringLit("__proto__") =>
+                Nil
+              case p @ Property(k, v, _, _) =>
+                Property(k, reify(v)(σ, ρ), None, None)::Nil
+            })
+          case Prim("Array.prototype") =>
+            val kvs = props flatMap {
+              case Property(k, v, _, _) if k == StringLit("__proto__") =>
+                Nil
+              case p @ Property(StringLit("length"), v, _, _) =>
+                Nil
+              case p @ Property(CvtNum(n), v, _, _) =>
+                (n, reify(v)(σ, ρ))::Nil
+            }
+            val elements = kvs.sortBy(_._1).map(_._2)
+            ArrayLit(elements)
+          case v =>
+            println(s"PROTOTYPE $v")
+            Undefined()
+        }
+      case _ =>
+        // No access path was found.
+        Undefined()
+    }
+
+
   }
 
   def reify(e: Exp)(implicit σ: Store, ρ: Env): Exp = {
@@ -80,7 +124,7 @@ object Residualization {
   }
 
   def strongReify(s: St): St = s match {
-    case Σ(focus, ρ, σ, k) =>
+    case Σ(focus, ρ, σ, ɸ, k) =>
       val focus1 = strongReify(focus)(σ, ρ)
       val vars: Set[Name] = fv(focus1)
       val k1 = vars.toList match {
@@ -95,6 +139,6 @@ object Residualization {
           }
           RebuildLet(vars, vals, ρ)::k
       }
-      Σ(focus1, ρ, strongReifyStore(σ, ρ), k1)
+      Σ(focus1, ρ, strongReifyStore(σ, ρ), ɸ, k1)
   }
 }

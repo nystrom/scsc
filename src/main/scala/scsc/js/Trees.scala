@@ -58,7 +58,8 @@ object Trees {
       case ObjectLit(es) => Some(es.map(_.show).mkString("{", ",", "}"))
       case ArrayLit(es) => Some(es.map(_.show).mkString("[", ",", "]"))
       case Lambda(xs, e) => Some("<function>")
-      case e => Some(e.show)
+      case Value(e) => Some(e.show)
+      case _ => None
     }
   }
 
@@ -105,6 +106,9 @@ object Trees {
         case t @ Local(x) =>
           vars += x
           t
+        case t @ LocalAddr(x) =>
+          vars += x
+          t
         case t @ Lambda(xs, e) =>
           vars ++= (fv(e) -- xs)
           t
@@ -117,11 +121,6 @@ object Trees {
         case t @ ConstDef(x, _) =>
           defs += x
           super.rewrite(t)
-        case t @ Block(ss) =>
-          val v = new FV()
-          v.rewrite(ss)
-          vars ++= (v.getVars -- v.getDefs)
-          t
         case t =>
           super.rewrite(t)
       }
@@ -192,6 +191,8 @@ object Trees {
       case Undefined() => true
       case Null() => true
       case Loc(_) => true
+      // Empty is the void value
+      case Empty() => true
       case _ => false
     }
 
@@ -208,20 +209,29 @@ object Trees {
       case Return(v) => v forall { _.isNormalForm }
       case Yield(v) => v forall { _.isNormalForm }
       case Throw(v) => v.isNormalForm
-      case Empty() => true
 
       case v => v.isHeapValue
     }
 
     def isHeapValue: Boolean = e match {
-      case FunObject(_, _, _, _) => true
+      case FunObject(_, _, _, _, _) => true
       case v => v.isValueOrResidual
+    }
+  }
+
+  object Sequence {
+    def apply(s1: Exp, s2: Exp): Exp = s1 match {
+      case Undefined() => s2
+      case s1 => s2 match {
+        case Undefined() => s1
+        case s2 => Seq(s1, s2)
+      }
     }
   }
 
   // This is either a function object or a JS object in the heap.
   // Properties should be a list of Property(value, loc)
-  case class FunObject(typeof: String, params: List[Name], body: Option[Exp], properties: List[Exp]) extends Exp
+  case class FunObject(typeof: String, proto: Exp, params: List[Name], body: Option[Exp], properties: List[Exp]) extends Exp
 
   sealed trait Operator
 
@@ -278,7 +288,7 @@ object Trees {
   case class Void(e: Exp) extends Exp
   case class Assign(op: Option[Operator], left: Exp, right: Exp) extends Exp
   case class Binary(op: Operator, left: Exp, right: Exp) extends Exp  // HACKED: many operators wrong
-  case class Block(es: List[Exp]) extends Exp
+  case class Seq(e1: Exp, e2: Exp) extends Exp
   case class Break(label: Option[Name]) extends Exp
   case class Call(f: Exp, args: List[Exp]) extends Exp
   case class NewCall(f: Exp, args: List[Exp]) extends Exp        // MISSING
@@ -290,7 +300,7 @@ object Trees {
   case class ForIn(label: Option[Name], init: Exp, modify: Exp, body: Exp) extends Exp // MISSING
   case class ForEach(label: Option[Name], init: Exp, test: Exp, modify: Exp, body: Exp) extends Exp // MISSING
   case class Lambda(params: List[Name], body: Exp) extends Exp
-  case class Program(body: Exp) extends Exp
+  case class Scope(body: Exp) extends Exp
   case class Local(x: Name) extends Exp
   case class LocalAddr(x: Name) extends Exp
   case class IfElse(test: Exp, pass: Exp, fail: Exp) extends Exp

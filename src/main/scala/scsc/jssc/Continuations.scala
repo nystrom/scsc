@@ -67,20 +67,12 @@ object Continuations {
     override def toString = s"${v1.show} $op ☐"
   }
 
-  case class FocusCont(e: Exp, ρ: Env) extends ContAction
-
-  case class BlockCont(todo: List[Exp], done: List[Exp], ρ: Env) extends ContAction {
-    override def toString = (done, todo) match {
-      case (Nil, Nil) => s"{ ☐ }"
-      case (done, Nil) => s"{ ${done.map(_.show).mkString(", ")}; ☐ }"
-      case (Nil, todo) => s"{ ☐, ${todo.map(_.show).mkString("; ")} }"
-      case (done, todo) => s"{ ${done.map(_.show).mkString("; ")}; ☐; ${todo.map(_.show).mkString("; ")} }"
-    }
-  }
+  case class RebuildSeq(e1: Exp, ρ: Env) extends RebuildCont
+  case class SeqCont(e2: Exp, ρ: Env) extends ContAction
   case class BranchCont(ifTrue: Cont, ifFalse: Cont, ifResidual: Cont) extends ContAction {
     override def toString = s"if (☐) { $ifTrue } else { $ifFalse } [$ifResidual]"
   }
-  case class LoopCont(label: Option[Name], cont: Cont) extends ContAction {
+  case class LoopContXXX(label: Option[Name], cont: Cont) extends ContAction {
     override def toString = label match {
       case Some(label) => s"$label: loop { $cont }"
       case None => s"loop { $cont }"
@@ -108,7 +100,7 @@ object Continuations {
   case class DoTypeof(ρ: Env) extends ContAction
 
   // new
-  case class DoNew(ρ: Env) extends ContAction
+  case class DoNewXXX(ρ: Env) extends ContAction
 
   // actions on residuals
   sealed trait RebuildCont extends ContAction
@@ -117,16 +109,18 @@ object Continuations {
     override def toString = s"[[ let $xs = $vs in ☐ ]]"
   }
 
+  case class RebuildScope(ρ: Env) extends RebuildCont
+
   case class RebuildVarDef(x: Name, ρ: Env) extends RebuildCont
   case class RebuildLetDef(x: Name, ρ: Env) extends RebuildCont
   case class RebuildConstDef(x: Name, ρ: Env) extends RebuildCont
 
-  case class RebuildCondTest(s1: Exp, s2: Exp, ρ: Env) extends RebuildCont
-  case class RebuildCondTrue(test: Exp, s2: Exp, σAfterTest: Store, ρ: Env) extends RebuildCont
-  case class RebuildCondFalse(test: Exp, s1: Exp, σAfterS1: Store, ρ: Env) extends RebuildCont
-  case class RebuildIfElseTest(s1: Exp, s2: Exp, ρ: Env) extends RebuildCont
-  case class RebuildIfElseTrue(test: Exp, s2: Exp, σAfterTest: Store, ρ: Env) extends RebuildCont
-  case class RebuildIfElseFalse(test: Exp, s1: Exp, σAfterS1: Store, ρ: Env) extends RebuildCont
+  case class RebuildCondTest(s1: Exp, s2: Exp, ρBeforeTest: Env) extends RebuildCont
+  case class RebuildCondTrue(test: Exp, s2: Exp, σAfterTest: Store, ɸAfterTest: Effect, ρBeforeTest: Env) extends RebuildCont
+  case class RebuildCondFalse(test: Exp, s1: Exp, σAfterS1: Store, ɸAfterTest: Effect, ɸAfterS1: Effect, ρBeforeTest: Env) extends RebuildCont
+  case class RebuildIfElseTest(s1: Exp, s2: Exp, ρBeforeTest: Env) extends RebuildCont
+  case class RebuildIfElseTrue(test: Exp, s2: Exp, σAfterTest: Store, ɸAfterTest: Effect, ρBeforeTest: Env) extends RebuildCont
+  case class RebuildIfElseFalse(test: Exp, s1: Exp, σAfterS1: Store, ɸAfterTest: Effect, ɸAfterS1: Effect, ρBeforeTest: Env) extends RebuildCont
 
   case class RebuildForTest(label: Option[Name], test: Exp, iter: Exp, body: Exp, ρ: Env) extends RebuildCont
   case class RebuildForBody(label: Option[Name], test1: Exp, test: Exp, iter: Exp, body: Exp, ρ: Env) extends RebuildCont
@@ -147,5 +141,4 @@ object Continuations {
   // a[i] = v
   case class EvalPropertyNameForSet(i: Exp, ρ: Env) extends ContAction
   case class GetPropertyAddressOrCreate(a: Exp, ρ: Env) extends ContAction
-
 }

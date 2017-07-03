@@ -2,7 +2,7 @@ package scsc.jssc
 
 import scala.collection.mutable.ListBuffer
 import scsc.js.Trees._
-
+import scsc.js.TreeWalk._
 
 // So the paper structure is:
 // 1. evaluation
@@ -86,17 +86,54 @@ object CESK {
   // Expressions (e.g., names and property accesses) may evaluate to a memory location.
   def step(s: St): St = s match {
     // Done!
-    case s @ Σ(NormalForm(_), _, _, Nil) => s
+    case s @ Σ(NormalForm(_), _, _, _, Nil) => s
 
     // Fail fast
-    case s @ Σ(_, _, _, Fail(_)::k) => s
+    case s @ Σ(_, _, _, _, Fail(_)::k) => s
 
     ////////////////////////////////////////////////////////////////
-    // Programs.
+    // Scopes.
     ////////////////////////////////////////////////////////////////
 
-    case Σ(Program(s), ρ, σ, k) =>
-      Σ(s, ρ, σ, k)
+    case Σ(Scope(s), ρ, σ, ɸ, k) =>
+      // Go through all the bindings in the block and add them to the environment
+      // as `undefined`. As we go thorugh the block, we'll initialize the variables.
+      object CollectBindings extends Rewriter {
+        var bindings: Vector[Name] = Vector()
+        override def rewrite(e: Exp) = e match {
+          case VarDef(x, _) =>
+            bindings = bindings :+ x
+            super.rewrite(e)
+          case LetDef(x, _) =>
+            bindings = bindings :+ x
+            super.rewrite(e)
+          case ConstDef(x, _) =>
+            bindings = bindings :+ x
+            super.rewrite(e)
+          case _: Lambda | _: FunObject | _: Residual | _: Scope =>
+            // don't recurse on these
+            e
+          case e =>
+            super.rewrite(e)
+        }
+      }
+      CollectBindings.rewrite(s)
+      val bindings = CollectBindings.bindings
+
+      val locs = bindings map { _ => FreshLoc() }
+      val ρ1 = (bindings zip locs).foldLeft(ρ) {
+        case (ρ, (x, loc)) => ρ + (x -> loc)
+      }
+      val σ1 = (bindings zip locs).foldLeft(σ) {
+        case (σ, (x, loc)) => σ.assign(loc, Undefined(), ρ1)
+      }
+      Σ(s, ρ1, σ1, ɸ, RebuildScope(ρ1)::k)
+
+    case Σ(Residual(e), ρ, σ, ɸ, RebuildScope(ρ1)::k) =>
+      Σ(Residual(Scope(e)), ρ, σ, ɸ, k)
+
+    case Σ(Value(e), ρ, σ, ɸ, RebuildScope(ρ1)::k) =>
+      Σ(e, ρ, σ, ɸ, k)
 
     ////////////////////////////////////////////////////////////////
     // Conditionals
@@ -104,26 +141,26 @@ object CESK {
     ////////////////////////////////////////////////////////////////
 
     // if e then s1 else s2
-    case Σ(IfElse(e, s1, s2), ρ, σ, k) =>
-      Σ(e, ρ, σ, BranchCont(BlockCont(s1::Nil, Nil, ρ)::Nil,
-                            BlockCont(s2::Nil, Nil, ρ)::Nil,
-                            RebuildIfElseTest(s1, s2, ρ)::Nil)::k)
+    case Σ(IfElse(e, s1, s2), ρ, σ, ɸ, k) =>
+      Σ(e, ρ, σ, ɸ, BranchCont(SeqCont(s1, ρ)::Nil,
+                               SeqCont(s2, ρ)::Nil,
+                               RebuildIfElseTest(s1, s2, ρ)::Nil)::k)
 
     // e ? s1 : s2
-    case Σ(Cond(e, s1, s2), ρ, σ, k) =>
-      Σ(e, ρ, σ, BranchCont(BlockCont(s1::Nil, Nil, ρ)::Nil,
-                            BlockCont(s2::Nil, Nil, ρ)::Nil,
-                            RebuildCondTest(s1, s2, ρ)::Nil)::k)
+    case Σ(Cond(e, s1, s2), ρ, σ, ɸ, k) =>
+      Σ(e, ρ, σ, ɸ, BranchCont(SeqCont(s1, ρ)::Nil,
+                               SeqCont(s2, ρ)::Nil,
+                               RebuildCondTest(s1, s2, ρ)::Nil)::k)
 
-    case Σ(v @ CvtBool(true), ρ, σ, BranchCont(kt, kf, kr)::k) =>
-      Σ(v, ρ, σ, kt ++ k)
+    case Σ(v @ CvtBool(true), ρ, σ, ɸ, BranchCont(kt, kf, kr)::k) =>
+      Σ(v, ρ, σ, ɸ, kt ++ k)
 
-    case Σ(v @ CvtBool(false), ρ, σ, BranchCont(kt, kf, kr)::k) =>
-      Σ(v, ρ, σ, kf ++ k)
+    case Σ(v @ CvtBool(false), ρ, σ, ɸ, BranchCont(kt, kf, kr)::k) =>
+      Σ(v, ρ, σ, ɸ, kf ++ k)
 
     // Neither true nor false, so residualize
-    case Σ(ValueOrResidual(e), ρ, σ, BranchCont(kt, kf, kr)::k) =>
-      Σ(Residual(e), ρ, σ, kr ++ k)
+    case Σ(ValueOrResidual(e), ρ, σ, ɸ, BranchCont(kt, kf, kr)::k) =>
+      Σ(Residual(e), ρ, σ, ɸ, kr ++ k)
 
 
     // Rebuilding ? : and if-else nodes.
@@ -131,26 +168,31 @@ object CESK {
 
     // Evaluate the test to a (residual) value.
     // Save the store and eval the true branch.
-    case Σ(ValueOrResidual(test), ρ, σ, RebuildCondTest(s1, s2, ρ1)::k) =>
-      Σ(s1, ρ1, σ, RebuildCondTrue(test, s2, σ, ρ)::k)
+    case Σ(ValueOrResidual(test), ρ, σ0, ɸ, RebuildCondTest(s1, s2, ρ0)::k) =>
+      Σ(s1, ρ0, σ0, Undefined(), RebuildCondTrue(reify(test)(σ0, ρ), s2, σ0, ɸ, ρ0)::k)
 
     // Save the evaluated true branch and the store after the true branch.
     // Restore the post-test store and evaluate the false branch.
-    case Σ(ValueOrResidual(s1), ρ, σ, RebuildCondTrue(test, s2, σ1, ρ1)::k) =>
-      Σ(s2, ρ1, σ1, RebuildCondFalse(test, s1, σ, ρ)::k)
+    case Σ(ValueOrResidual(s1), ρ1, σ1, ɸ1, RebuildCondTrue(test, s2, σ0, ɸ0, ρ0)::k) =>
+      Σ(s2, ρ0, σ0, Undefined(), RebuildCondFalse(test, reify(s1)(σ1, ρ1), σ1, ɸ0, ɸ1, ρ0)::k)
 
     // Rebuild and merge the post-true and post-false stores.
-    case Σ(ValueOrResidual(s2), ρ, σ, RebuildCondFalse(test, s1, σ1, ρ1)::k) =>
-      Σ(reify(Cond(test, s1, s2))(σ, ρ), ρ1, mergeStores(σ1, σ), k)
+    case Σ(ValueOrResidual(s2), ρ2, σ2, ɸ2, RebuildCondFalse(test, s1, σ1, ɸ0, ɸ1, ρ0)::k) =>
+      val ɸ = Sequence(ɸ0, IfElse(test, ɸ1, ɸ2))
+      Σ(Residual(Cond(test, s1, reify(s2)(σ2, ρ2))), ρ0, σ1.merge(σ2), ɸ, k)
 
-    case Σ(ValueOrResidual(test), ρ, σ, RebuildIfElseTest(s1, s2, ρ1)::k) =>
-      Σ(s1, ρ1, σ, RebuildIfElseTrue(test, s2, σ, ρ)::k)
+    case Σ(ValueOrResidual(test), ρ, σ0, ɸ, RebuildIfElseTest(s1, s2, ρ0)::k) =>
+      Σ(s1, ρ0, σ0, Undefined(), RebuildIfElseTrue(reify(test)(σ0, ρ), s2, σ0, ɸ, ρ0)::k)
 
-    case Σ(ValueOrResidual(s1), ρ, σ, RebuildIfElseTrue(test, s2, σ1, ρ1)::k) =>
-      Σ(s2, ρ1, σ1, RebuildIfElseFalse(test, s1, σ, ρ)::k)
+    // Save the evaluated true branch and the store after the true branch.
+    // Restore the post-test store and evaluate the false branch.
+    case Σ(ValueOrResidual(s1), ρ1, σ1, ɸ1, RebuildIfElseTrue(test, s2, σ0, ɸ0, ρ0)::k) =>
+      Σ(s2, ρ0, σ0, Undefined(), RebuildIfElseFalse(test, reify(s1)(σ1, ρ1), σ1, ɸ0, ɸ1, ρ0)::k)
 
-    case Σ(ValueOrResidual(s2), ρ, σ, RebuildIfElseFalse(test, s1, σ1, ρ1)::k) =>
-      Σ(reify(IfElse(test, s1, s2))(σ, ρ), ρ1, mergeStores(σ1, σ), k)
+    // Rebuild and merge the post-true and post-false stores.
+    case Σ(ValueOrResidual(s2), ρ2, σ2, ɸ2, RebuildIfElseFalse(test, s1, σ1, ɸ0, ɸ1, ρ0)::k) =>
+      val ɸ = Sequence(ɸ0, IfElse(test, ɸ1, ɸ2))
+      Σ(Undefined(), ρ0, σ1.merge(σ2), ɸ, k)
 
     // the problem, in general, is that the loop condition evaluates to something in the current store.
     // but the next time around the loop, the store is different.
@@ -164,22 +206,22 @@ object CESK {
     // termination detection and rebuilding the loop.
     ////////////////////////////////////////////////////////////////
 
-    case Σ(For(label, Empty(), test, iter, body), ρ, σ, k) =>
-      Σ(test, ρ, σ, BranchCont(
-                      BlockCont(body::Nil, Nil, ρ)::ContinueFrame(label)::BlockCont(iter::For(label, Empty(), test, iter, body)::Nil, Nil, ρ)::BreakFrame(label)::Nil,
-                      BlockCont(Undefined()::Nil, Nil, ρ)::Nil,
+    case Σ(For(label, Empty(), test, iter, body), ρ, σ, ɸ, k) =>
+      Σ(test, ρ, σ, ɸ, BranchCont(
+                      SeqCont(body, ρ)::ContinueFrame(label)::SeqCont(Seq(iter, For(label, Empty(), test, iter, body)), ρ)::BreakFrame(label)::Nil,
+                      SeqCont(Undefined(), ρ)::Nil,
                       RebuildForTest(label, test, iter, body, ρ)::Nil)::k)
 
-    case Σ(For(label, init, test, iter, body), ρ, σ, k) =>
-      Σ(Block(init::For(label, Empty(), test, iter, body)::Nil), ρ, σ, k)
+    case Σ(For(label, init, test, iter, body), ρ, σ, ɸ, k) =>
+      Σ(Seq(init, For(label, Empty(), test, iter, body)), ρ, σ, ɸ, k)
 
     // do body while test
-    case Σ(DoWhile(label, body, test), ρ, σ, k) =>
-      Σ(body, ρ, σ, ContinueFrame(label)::BlockCont(While(label, test, body)::Nil, Nil, ρ)::BreakFrame(label)::k)
+    case Σ(DoWhile(label, body, test), ρ, σ, ɸ, k) =>
+      Σ(body, ρ, σ, ɸ, ContinueFrame(label)::SeqCont(While(label, test, body), ρ)::BreakFrame(label)::k)
 
     // just desugar into a for loop
-    case Σ(While(label, test, body), ρ, σ, k) =>
-      Σ(For(label, Empty(), test, Empty(), body), ρ, σ, k)
+    case Σ(While(label, test, body), ρ, σ, ɸ, k) =>
+      Σ(For(label, Empty(), test, Empty(), body), ρ, σ, ɸ, k)
 
     // Residualizing loops.
     // PE the test.
@@ -195,20 +237,20 @@ object CESK {
 
     // The loop condition test should be a residual value.
     // the continuation stores the original (non-partially-evaluated) loop test and body
-    case Σ(ValueOrResidual(test), ρ, σ, RebuildForTest(label0, test0, iter0, body0, ρ1)::k) =>
-      Σ(body0, ρ1, σ, RebuildForBody(label0, test, test0, iter0, body0, ρ)::k)
+    case Σ(ValueOrResidual(test), ρ, σ, ɸ, RebuildForTest(label0, test0, iter0, body0, ρ1)::k) =>
+      Σ(body0, ρ1, σ, ɸ, RebuildForBody(label0, test, test0, iter0, body0, ρ)::k)
 
-    case Σ(ValueOrResidual(body1), ρ, σ, RebuildForBody(label0, test1, test0, iter0, body0, ρ1)::k) =>
-      Σ(iter0, ρ, σ, RebuildForIter(label0, body1, test1, test0, iter0, body0, ρ1)::k)
+    case Σ(ValueOrResidual(body1), ρ, σ, ɸ, RebuildForBody(label0, test1, test0, iter0, body0, ρ1)::k) =>
+      Σ(iter0, ρ, σ, ɸ, RebuildForIter(label0, body1, test1, test0, iter0, body0, ρ1)::k)
 
     // Discard the store.
-    case Σ(ValueOrResidual(iter1), ρ, σ, RebuildForIter(label, body1, test1, test0, Empty(), body0, ρ1)::k) =>
-      Σ(reify(IfElse(test1, Block(body1::iter1::While(label, test0, body0)::Nil), Undefined()))(σ, ρ),
-        ρ1, σ0, k)
+    case Σ(ValueOrResidual(iter1), ρ, σ, ɸ, RebuildForIter(label, body1, test1, test0, Empty(), body0, ρ1)::k) =>
+      Σ(reify(IfElse(test1, Seq(body1, Seq(iter1, While(label, test0, body0))), Undefined()))(σ, ρ),
+        ρ1, σ0, ɸ, k)
 
-    case Σ(ValueOrResidual(iter1), ρ, σ, RebuildForIter(label, body1, test1, test0, iter0, body0, ρ1)::k) =>
-      Σ(reify(IfElse(test1, Block(body1::iter1::For(label, Empty(), test0, iter0, body0)::Nil), Undefined()))(σ, ρ),
-        ρ1, σ0, k)
+    case Σ(ValueOrResidual(iter1), ρ, σ, ɸ, RebuildForIter(label, body1, test1, test0, iter0, body0, ρ1)::k) =>
+      Σ(reify(IfElse(test1, Seq(body1, Seq(iter1, For(label, Empty(), test0, iter0, body0))), Undefined()))(σ, ρ),
+        ρ1, σ0, ɸ, k)
 
     // Break and continue.
 
@@ -233,85 +275,59 @@ object CESK {
     // case Σ(Continue(optLabel), ρ, σ, _::k) =>
     //   Σ(Continue(optLabel), ρ, σ, k)
 
-    case Σ(Break(label), ρ, σ, k) =>
-      Σ(Undefined(), ρ, σ, Breaking(label)::k)
-    case Σ(Continue(label), ρ, σ, k) =>
-      Σ(Undefined(), ρ, σ, Continuing(label)::k)
+    case Σ(Break(label), ρ, σ, ɸ, k) =>
+      Σ(Undefined(), ρ, σ, ɸ, Breaking(label)::k)
+    case Σ(Continue(label), ρ, σ, ɸ, k) =>
+      Σ(Undefined(), ρ, σ, ɸ, Continuing(label)::k)
 
-    case Σ(v, ρ, σ, Breaking(None)::BreakFrame(_)::k) =>
-      Σ(v, ρ, σ, k)
-    case Σ(v, ρ, σ, Continuing(None)::ContinueFrame(_)::k) =>
-      Σ(v, ρ, σ, k)
+    case Σ(v, ρ, σ, ɸ, Breaking(None)::BreakFrame(_)::k) =>
+      Σ(v, ρ, σ, ɸ, k)
+    case Σ(v, ρ, σ, ɸ, Continuing(None)::ContinueFrame(_)::k) =>
+      Σ(v, ρ, σ, ɸ, k)
 
-    case Σ(v, ρ, σ, Breaking(Some(x))::BreakFrame(Some(y))::k) if x == y =>
-      Σ(v, ρ, σ, k)
-    case Σ(v, ρ, σ, Continuing(Some(x))::ContinueFrame(Some(y))::k) if x == y =>
-      Σ(v, ρ, σ, k)
+    case Σ(v, ρ, σ, ɸ, Breaking(Some(x))::BreakFrame(Some(y))::k) if x == y =>
+      Σ(v, ρ, σ, ɸ, k)
+    case Σ(v, ρ, σ, ɸ, Continuing(Some(x))::ContinueFrame(Some(y))::k) if x == y =>
+      Σ(v, ρ, σ, ɸ, k)
 
     // If we hit a rebuild continuation, we must run it, passing in v
     // (which is either undefined or a residual) to the rebuild continuation
-    case Σ(v, ρ, σ, Breaking(label)::(a: RebuildCont)::k) =>
-      Σ(v, ρ, σ, a::Breaking(label)::k)
-    case Σ(v, ρ, σ, Continuing(label)::(a: RebuildCont)::k) =>
-      Σ(v, ρ, σ, a::Continuing(label)::k)
+    case Σ(v, ρ, σ, ɸ, Breaking(label)::(a: RebuildCont)::k) =>
+      Σ(v, ρ, σ, ɸ, a::Breaking(label)::k)
+    case Σ(v, ρ, σ, ɸ, Continuing(label)::(a: RebuildCont)::k) =>
+      Σ(v, ρ, σ, ɸ, a::Continuing(label)::k)
 
-    case Σ(v, ρ, σ, Breaking(label)::_::k) =>
-      Σ(v, ρ, σ, Breaking(label)::k)
-    case Σ(v, ρ, σ, Continuing(label)::_::k) =>
-      Σ(v, ρ, σ, Continuing(label)::k)
+    case Σ(v, ρ, σ, ɸ, Breaking(label)::_::k) =>
+      Σ(v, ρ, σ, ɸ, Breaking(label)::k)
+    case Σ(v, ρ, σ, ɸ, Continuing(label)::_::k) =>
+      Σ(v, ρ, σ, ɸ, Continuing(label)::k)
 
     // discard useless break and continue frames
-    case Σ(NormalForm(v), ρ, σ, BreakFrame(_)::k) =>
-      Σ(v, ρ, σ, k)
-    case Σ(NormalForm(v), ρ, σ, ContinueFrame(_)::k) =>
-      Σ(v, ρ, σ, k)
+    case Σ(NormalForm(v), ρ, σ, ɸ, BreakFrame(_)::k) =>
+      Σ(v, ρ, σ, ɸ, k)
+    case Σ(NormalForm(v), ρ, σ, ɸ, ContinueFrame(_)::k) =>
+      Σ(v, ρ, σ, ɸ, k)
 
     ////////////////////////////////////////////////////////////////
     // Blocks.
     // As usual, residual handling is difficult.
     ////////////////////////////////////////////////////////////////
 
-    case Σ(Empty(), ρ, σ, k) =>
-      Σ(Undefined(), ρ, σ, k)
+    case Σ(Empty(), ρ, σ, ɸ, k) =>
+      Σ(Undefined(), ρ, σ, ɸ, k)
 
-    case Σ(Block(Nil), ρ, σ, k) =>
-      Σ(Undefined(), ρ, σ, k)
+    case Σ(Seq(s1, s2), ρ, σ, ɸ, k) =>
+      Σ(s1, ρ, σ, ɸ, SeqCont(s2, ρ)::k)
 
-    case Σ(Block(s::ss), ρ, σ, k) =>
-      // Go through all the bindings in the block and add them to the environment
-      // as `undefined`. As we go thorugh the block, we'll initialize the variables.
-      val bindings = (s::ss) collect {
-        case VarDef(x, e) =>
-          (x, e)
-        case LetDef(x, e) =>
-          (x, e)
-        case ConstDef(x, e) =>
-          (x, e)
-      }
-      val locs = bindings map { _ => FreshLoc() }
-      val ρ1 = (bindings zip locs).foldLeft(ρ) {
-        case (ρ, ((x, e), loc)) => ρ + (x -> loc)
-      }
-      val σ1 = (bindings zip locs).foldLeft(σ) {
-        case (σ, ((x, e), loc)) => σ.assign(loc, Undefined(), ρ1)
-      }
-      Σ(s, ρ1, σ1, BlockCont(ss, Nil, ρ1)::k)
+    case Σ(Residual(s1), ρ, σ, ɸ, SeqCont(s2, ρ1)::k) =>
+      Σ(s2, ρ1, σ, Seq(ɸ, s1), k)
 
-    // If we don't have to save any residual for the block, just eval to the value.
-    case Σ(NormalForm(v), ρ, σ, BlockCont(Nil, Nil, ρ1)::k) =>
-      Σ(v, ρ1, σ, k)
+    // Discard the value and evaluate the sequel.
+    case Σ(Value(_), ρ, σ, ɸ, SeqCont(s2, ρ1)::k) =>
+      Σ(s2, ρ, σ, ɸ, k)
 
-    // If we have to save the block, append the value to the residual.
-    case Σ(NormalForm(v), ρ, σ, BlockCont(Nil, done, ρ1)::k) =>
-      Σ(reify(Block(done :+ v))(σ, ρ), ρ1, σ, k)
-
-    // Append non-value residuals to block residual.
-    case Σ(Residual(e), ρ, σ, BlockCont(s::ss, done, ρ1)::k) if ! e.isPure =>
-      Σ(s, ρ1, σ, BlockCont(ss, done :+ e, ρ1)::k)
-
-    // Ignore non-residual values if there's more to do in the block.
-    case Σ(NormalForm(v), ρ, σ, BlockCont(s::ss, done, ρ1)::k) =>
-      Σ(s, ρ1, σ, BlockCont(ss, done, ρ1)::k)
+    // case Σ(ValueOrResidual(s2), ρ, σ, ɸ, RebuildSeq(s1, ρ1)::k) =>
+    //   Σ(reify(Seq(s1, s2))(σ, ρ), ρ1, σ, ɸ, k)
 
     ////////////////////////////////////////////////////////////////
     // Definitions.
@@ -323,101 +339,100 @@ object CESK {
     // Then run the initializer, assigning to the location.
     // The DoAssign continuation should leave the initializer in the focus,
     // but we should evaluate to undefined, so add block continuation for that.
-    case Σ(VarDef(x, Lambda(xs, e)), ρ, σ, k) =>
+    case Σ(VarDef(x, Lambda(xs, e)), ρ, σ, ɸ, k) =>
       // Special case lambdas because we need to set the name of the heap object.
       // var Point = function (x, y) { this.x = x; this.y = y}
       // ==
       // var Point = { __code__: fun..., prototype: { __proto__: Function.prototype } }
       ρ.get(x) match {
         case Some(loc) =>
-          val __proto__ = FreshLoc()
           val name = FreshLoc()
           val prototype = FreshLoc()
           val lambdaLoc = FreshLoc()
-          val p = FunObject("object", Nil, None, Property(StringLit("__proto__"), __proto__, None, None)::Nil)
-          val o = FunObject("function", xs, Some(e), Property(StringLit("name"), name, None, None)::Property(StringLit("prototype"), prototype, None, None)::Nil)
+          val p = FunObject("object", Prim("Function.prototype"), Nil, None, Nil)
+          val o = FunObject("function", prototype, xs, Some(e), Property(StringLit("name"), name, None, None)::Property(StringLit("prototype"), prototype, None, None)::Nil)
           val σ1 = σ.assign(name, StringLit(x), ρ)
-                    .assign(__proto__, Prim("Function.prototype"), ρ)
                     .assign(prototype, p, ρ)
                     .assign(lambdaLoc, o, ρ)
                     .assign(loc, lambdaLoc, ρ)
-          Σ(lambdaLoc, ρ, σ1,
+          Σ(lambdaLoc, ρ, σ1, ɸ,
             DoAssign(None, loc, ρ)::
-            RebuildVarDef(x, ρ)::
-            BlockCont(Undefined()::Nil, Nil, ρ)::k)
+            RebuildVarDef(x, ρ)::k)
         case None =>
-          Σ(e, ρ, σ, Fail(s"variable $x not found")::k)
+          Σ(e, ρ, σ, ɸ, Fail(s"variable $x not found")::k)
       }
 
-    case Σ(VarDef(x, e), ρ, σ, k) =>
+    case Σ(VarDef(x, e), ρ, σ, ɸ, k) =>
       ρ.get(x) match {
         case Some(loc) =>
-          Σ(e, ρ, σ, DoAssign(None, loc, ρ)::RebuildVarDef(x, ρ)::BlockCont(Undefined()::Nil, Nil, ρ)::k)
+          Σ(e, ρ, σ, ɸ, DoAssign(None, loc, ρ)::RebuildVarDef(x, ρ)::k)
         case None =>
-          Σ(e, ρ, σ, Fail(s"variable $x not found")::k)
+          Σ(e, ρ, σ, ɸ, Fail(s"variable $x not found")::k)
       }
-    case Σ(LetDef(x, e), ρ, σ, k) =>
+    case Σ(LetDef(x, e), ρ, σ, ɸ, k) =>
       ρ.get(x) match {
         case Some(loc) =>
-          Σ(e, ρ, σ, DoAssign(None, loc, ρ)::RebuildLetDef(x, ρ)::BlockCont(Undefined()::Nil, Nil, ρ)::k)
+          Σ(e, ρ, σ, ɸ, DoAssign(None, loc, ρ)::RebuildLetDef(x, ρ)::k)
         case None =>
-          Σ(e, ρ, σ, Fail(s"variable $x not found")::k)
+          Σ(e, ρ, σ, ɸ, Fail(s"variable $x not found")::k)
       }
-    case Σ(ConstDef(x, e), ρ, σ, k) =>
+    case Σ(ConstDef(x, e), ρ, σ, ɸ, k) =>
       ρ.get(x) match {
         case Some(loc) =>
-          Σ(e, ρ, σ, DoAssign(None, loc, ρ)::RebuildConstDef(x, ρ)::BlockCont(Undefined()::Nil, Nil, ρ)::k)
+          Σ(e, ρ, σ, ɸ, DoAssign(None, loc, ρ)::RebuildConstDef(x, ρ)::k)
         case None =>
-          Σ(e, ρ, σ, Fail(s"variable $x not found")::k)
+          Σ(e, ρ, σ, ɸ, Fail(s"variable $x not found")::k)
       }
 
-    case Σ(ValueOrResidual(v), ρ, σ, RebuildVarDef(x, ρ1)::k) =>
-      Σ(reify(VarDef(x, v))(σ, ρ), ρ1, σ, k)
-    case Σ(ValueOrResidual(v), ρ, σ, RebuildLetDef(x, ρ1)::k) =>
-      Σ(reify(LetDef(x, v))(σ, ρ), ρ1, σ, k)
-    case Σ(ValueOrResidual(v), ρ, σ, RebuildConstDef(x, ρ1)::k) =>
-      Σ(reify(ConstDef(x, v))(σ, ρ), ρ1, σ, k)
+    // FIXME this is dubious
+    // We should rebuild the vardefs _only_ if necessary.
+    case Σ(ValueOrResidual(v), ρ, σ, ɸ, RebuildVarDef(x, ρ1)::k) =>
+      Σ(reify(VarDef(x, v))(σ, ρ), ρ1, σ, ɸ, k)
+    case Σ(ValueOrResidual(v), ρ, σ, ɸ, RebuildLetDef(x, ρ1)::k) =>
+      Σ(reify(LetDef(x, v))(σ, ρ), ρ1, σ, ɸ, k)
+    case Σ(ValueOrResidual(v), ρ, σ, ɸ, RebuildConstDef(x, ρ1)::k) =>
+      Σ(reify(ConstDef(x, v))(σ, ρ), ρ1, σ, ɸ, k)
 
     ////////////////////////////////////////////////////////////////
     // Assignment.
     ////////////////////////////////////////////////////////////////
 
     // we can assign to undefined. yep, that's right.
-    case Σ(Assign(op, Undefined(), rhs), ρ, σ, k) =>
-      Σ(rhs, ρ, σ, DoAssign(op, FreshLoc(), ρ)::k)
+    case Σ(Assign(op, Undefined(), rhs), ρ, σ, ɸ, k) =>
+      Σ(rhs, ρ, σ, ɸ, DoAssign(op, FreshLoc(), ρ)::k)
 
-    case Σ(Assign(op, lhs, rhs), ρ, σ, k) =>
-      Σ(lhs, ρ, σ, EvalAssignRhs(op, rhs, ρ)::k)
+    case Σ(Assign(op, lhs, rhs), ρ, σ, ɸ, k) =>
+      Σ(lhs, ρ, σ, ɸ, EvalAssignRhs(op, rhs, ρ)::k)
 
-    case Σ(lhs: Loc, ρ, σ, EvalAssignRhs(op, rhs, ρ1)::k) =>
-      Σ(rhs, ρ1, σ, DoAssign(op, lhs, ρ)::k)
+    case Σ(lhs: Loc, ρ, σ, ɸ, EvalAssignRhs(op, rhs, ρ1)::k) =>
+      Σ(rhs, ρ1, σ, ɸ, DoAssign(op, lhs, ρ)::k)
 
-    case Σ(NormalForm(lhs), ρ, σ, EvalAssignRhs(op, rhs, ρ1)::k) =>
-      Σ(rhs, ρ1, σ, RebuildAssign(op, lhs, ρ)::k)
+    case Σ(NormalForm(lhs), ρ, σ, ɸ, EvalAssignRhs(op, rhs, ρ1)::k) =>
+      Σ(rhs, ρ1, σ, ɸ, RebuildAssign(op, lhs, ρ)::k)
 
-    case Σ(ValueOrResidual(rhs), ρ, σ, RebuildAssign(op, lhs, ρ1)::k) =>
+    case Σ(ValueOrResidual(rhs), ρ, σ, ɸ, RebuildAssign(op, lhs, ρ1)::k) =>
       // Normal assignment... the result is the rhs value
-      Σ(reify(Assign(op, lhs, rhs))(σ, ρ), ρ1, σ, k)
+      Σ(reify(Assign(op, lhs, rhs))(σ, ρ), ρ1, σ, ɸ, k)
 
-    case Σ(ValueOrResidual(rhs), ρ, σ, DoAssign(None, lhs, ρ1)::k) =>
+    case Σ(ValueOrResidual(rhs), ρ, σ, ɸ, DoAssign(None, lhs, ρ1)::k) =>
       // Normal assignment... the result is the rhs value
-      Σ(rhs, ρ1, σ.assign(lhs, rhs, ρ), k)
+      Σ(rhs, ρ1, σ.assign(lhs, rhs, ρ), ɸ, k)
 
-    case Σ(ValueOrResidual(rhs), ρ, σ, DoAssign(Some(op), lhs, ρ1)::k) =>
+    case Σ(ValueOrResidual(rhs), ρ, σ, ɸ, DoAssign(Some(op), lhs, ρ1)::k) =>
       val right = rhs
       σ.get(lhs) match {
         case Some(Closure(left, _)) =>
           val v = Eval.evalOp(op, left, right)
-          Σ(v, ρ1, σ.assign(lhs, v, ρ), k)
+          Σ(v, ρ1, σ.assign(lhs, v, ρ), ɸ, k)
         case None =>
           // can store lookups fail?
-          Σ(rhs, ρ1, σ, Fail(s"could not find value at location $lhs")::k)
+          Σ(rhs, ρ1, σ, ɸ, Fail(s"could not find value at location $lhs")::k)
       }
 
-    case Σ(IncDec(op, lhs), ρ, σ, k) =>
-      Σ(lhs, ρ, σ, DoIncDec(op, ρ)::k)
+    case Σ(IncDec(op, lhs), ρ, σ, ɸ, k) =>
+      Σ(lhs, ρ, σ, ɸ, DoIncDec(op, ρ)::k)
 
-    case Σ(loc: Loc, ρ, σ, DoIncDec(op, ρ1)::k) =>
+    case Σ(loc: Loc, ρ, σ, ɸ, DoIncDec(op, ρ1)::k) =>
       σ.get(loc) match {
         case Some(Closure(oldValue, ρ2)) =>
           val binOp = op match {
@@ -435,149 +450,149 @@ object CESK {
             case Postfix.-- => oldValue
             case _ => ???
           }
-          Σ(v, ρ2, σ.assign(loc, newValue, ρ), k)
+          Σ(v, ρ2, σ.assign(loc, newValue, ρ), ɸ, k)
         case None =>
-          Σ(loc, ρ, σ, Fail(s"could not load location $loc")::k)
+          Σ(loc, ρ, σ, ɸ, Fail(s"could not load location $loc")::k)
       }
 
-    case Σ(ValueOrResidual(e), ρ, σ, DoIncDec(op, ρ1)::k) =>
-      Σ(reify(IncDec(op, e))(σ, ρ), ρ1, σ, k)
+    case Σ(ValueOrResidual(e), ρ, σ, ɸ, DoIncDec(op, ρ1)::k) =>
+      Σ(reify(IncDec(op, e))(σ, ρ), ρ1, σ, ɸ, k)
 
     ////////////////////////////////////////////////////////////////
     // Variables. Just lookup the value. If not present, residualize.
     ////////////////////////////////////////////////////////////////
-    case Σ(LocalAddr(x), ρ, σ, k) =>
+    case Σ(LocalAddr(x), ρ, σ, ɸ, k) =>
       ρ.get(x) match {
         case Some(v) =>
-          Σ(v, ρ, σ, k)
+          Σ(v, ρ, σ, ɸ, k)
         case None =>
           // The special global name "undefined" evaluates to "undefined".
           if (x == "undefined") {
             val loc = FreshLoc()
-            Σ(loc, ρ, σ.assign(loc, Undefined(), ρ), k)
+            Σ(loc, ρ, σ.assign(loc, Undefined(), ρ), ɸ, k)
           }
           else {
             println(s"variable $x not found... residualizing")
-            Σ(reify(Local(x))(σ, ρ), ρ, σ, k)
+            Σ(reify(Local(x))(σ, ρ), ρ, σ, ɸ, k)
           }
       }
 
-    case Σ(Local(x), ρ, σ, k) =>
-      Σ(LocalAddr(x), ρ, σ, LoadCont(ρ)::k)
+    case Σ(Local(x), ρ, σ, ɸ, k) =>
+      Σ(LocalAddr(x), ρ, σ, ɸ, LoadCont(ρ)::k)
 
-    case Σ(Index(a, i), ρ, σ, k) =>
-      Σ(a, ρ, σ, EvalPropertyNameForGet(i, ρ)::k)
+    case Σ(Index(a, i), ρ, σ, ɸ, k) =>
+      Σ(a, ρ, σ, ɸ, EvalPropertyNameForGet(i, ρ)::k)
 
-    case Σ(loc: Loc, ρ, σ, LoadCont(ρ1)::k) =>
+    case Σ(loc: Loc, ρ, σ, ɸ, LoadCont(ρ1)::k) =>
       σ.get(loc) match {
         case Some(Closure(v, ρ2)) =>
-          Σ(v, ρ2, σ, k)
+          Σ(v, ρ2, σ, ɸ, k)
         case None =>
-          Σ(loc, ρ, σ, Fail(s"could not load location $loc")::k)
+          Σ(loc, ρ, σ, ɸ, Fail(s"could not load location $loc")::k)
       }
 
-    case Σ(Undefined(), ρ, σ, LoadCont(ρ1)::k) =>
-      Σ(Undefined(), ρ1, σ, k)
+    case Σ(Undefined(), ρ, σ, ɸ, LoadCont(ρ1)::k) =>
+      Σ(Undefined(), ρ1, σ, ɸ, k)
 
-    case Σ(ValueOrResidual(e), ρ, σ, LoadCont(ρ1)::k) =>
-      Σ(reify(e)(σ, ρ), ρ1, σ, k)
+    case Σ(ValueOrResidual(e), ρ, σ, ɸ, LoadCont(ρ1)::k) =>
+      Σ(reify(e)(σ, ρ), ρ1, σ, ɸ, k)
 
     ////////////////////////////////////////////////////////////////
     // Special unary operators.
     ////////////////////////////////////////////////////////////////
 
-    case Σ(Typeof(e), ρ, σ, k) =>
+    case Σ(Typeof(e), ρ, σ, ɸ, k) =>
       // void e just discards the value
-      Σ(e, ρ, σ, DoTypeof(ρ)::k)
+      Σ(e, ρ, σ, ɸ, DoTypeof(ρ)::k)
 
-    case Σ(Num(v), ρ, σ, DoTypeof(ρ1)::k) =>
-      Σ(StringLit("number"), ρ1, σ, k)
-    case Σ(Bool(v), ρ, σ, DoTypeof(ρ1)::k) =>
-      Σ(StringLit("boolean"), ρ1, σ, k)
-    case Σ(StringLit(v), ρ, σ, DoTypeof(ρ1)::k) =>
-      Σ(StringLit("string"), ρ1, σ, k)
-    case Σ(Undefined(), ρ, σ, DoTypeof(ρ1)::k) =>
-      Σ(StringLit("undefined"), ρ1, σ, k)
-    case Σ(Null(), ρ, σ, DoTypeof(ρ1)::k) =>
-      Σ(StringLit("object"), ρ1, σ, k)
-    case Σ(loc: Loc, ρ, σ, DoTypeof(ρ1)::k) =>
+    case Σ(Num(v), ρ, σ, ɸ, DoTypeof(ρ1)::k) =>
+      Σ(StringLit("number"), ρ1, σ, ɸ, k)
+    case Σ(Bool(v), ρ, σ, ɸ, DoTypeof(ρ1)::k) =>
+      Σ(StringLit("boolean"), ρ1, σ, ɸ, k)
+    case Σ(StringLit(v), ρ, σ, ɸ, DoTypeof(ρ1)::k) =>
+      Σ(StringLit("string"), ρ1, σ, ɸ, k)
+    case Σ(Undefined(), ρ, σ, ɸ, DoTypeof(ρ1)::k) =>
+      Σ(StringLit("undefined"), ρ1, σ, ɸ, k)
+    case Σ(Null(), ρ, σ, ɸ, DoTypeof(ρ1)::k) =>
+      Σ(StringLit("object"), ρ1, σ, ɸ, k)
+    case Σ(loc: Loc, ρ, σ, ɸ, DoTypeof(ρ1)::k) =>
       σ.get(loc) match {
-        case Some(Closure(FunObject(typeof, _, _, _), _)) =>
-          Σ(StringLit(typeof), ρ1, σ, k)
+        case Some(Closure(FunObject(typeof, _, _, _, _), _)) =>
+          Σ(StringLit(typeof), ρ1, σ, ɸ, k)
         case Some(Closure(v, ρ2)) =>
-          Σ(v, ρ2, σ, DoTypeof(ρ1)::k)
+          Σ(v, ρ2, σ, ɸ, DoTypeof(ρ1)::k)
         case None =>
-          Σ(StringLit("undefined"), ρ1, σ, k)
+          Σ(StringLit("undefined"), ρ1, σ, ɸ, k)
       }
-    case Σ(Residual(e), ρ, σ, DoTypeof(ρ1)::k) =>
-      Σ(reify(Typeof(e))(σ, ρ), ρ1, σ, k)
+    case Σ(Residual(e), ρ, σ, ɸ, DoTypeof(ρ1)::k) =>
+      Σ(reify(Typeof(e))(σ, ρ), ρ1, σ, ɸ, k)
 
-    case Σ(Void(Residual(e)), ρ, σ, k) if e.isPure =>
+    case Σ(Void(Residual(e)), ρ, σ, ɸ, k) if e.isPure =>
       // void e just discards the value
-      Σ(Undefined(), ρ, σ, k)
+      Σ(Undefined(), ρ, σ, ɸ, k)
 
-    case Σ(Void(Residual(e)), ρ, σ, k) =>
+    case Σ(Void(Residual(e)), ρ, σ, ɸ, k) =>
       // void e just discards the value
-      Σ(reify(Void(e))(σ, ρ), ρ, σ, k)
+      Σ(reify(Void(e))(σ, ρ), ρ, σ, ɸ, k)
 
-    case Σ(Void(e), ρ, σ, k) =>
+    case Σ(Void(e), ρ, σ, ɸ, k) =>
       // void e just discards the value
-      Σ(e, ρ, σ, BlockCont(Undefined()::Nil, Nil, ρ)::k)
+      Σ(e, ρ, σ, ɸ, SeqCont(Undefined(), ρ)::k)
 
     ////////////////////////////////////////////////////////////////
     // Unary operators.
     ////////////////////////////////////////////////////////////////
 
-    case Σ(Unary(op, e), ρ, σ, k) =>
-      Σ(e, ρ, σ, DoUnaryOp(op, ρ)::k)
+    case Σ(Unary(op, e), ρ, σ, ɸ, k) =>
+      Σ(e, ρ, σ, ɸ, DoUnaryOp(op, ρ)::k)
 
-    case Σ(CvtBool(v), ρ, σ, DoUnaryOp(Prefix.!, ρ1)::k) =>
-      Σ(Bool(!v), ρ1, σ, k)
+    case Σ(CvtBool(v), ρ, σ, ɸ, DoUnaryOp(Prefix.!, ρ1)::k) =>
+      Σ(Bool(!v), ρ1, σ, ɸ, k)
 
-    case Σ(CvtNum(v), ρ, σ, DoUnaryOp(Prefix.~, ρ1)::k) =>
-      Σ(Num(~v.toLong), ρ1, σ, k)
+    case Σ(CvtNum(v), ρ, σ, ɸ, DoUnaryOp(Prefix.~, ρ1)::k) =>
+      Σ(Num(~v.toLong), ρ1, σ, ɸ, k)
 
-    case Σ(CvtNum(v), ρ, σ, DoUnaryOp(Prefix.+, ρ1)::k) =>
-      Σ(Num(+v), ρ1, σ, k)
+    case Σ(CvtNum(v), ρ, σ, ɸ, DoUnaryOp(Prefix.+, ρ1)::k) =>
+      Σ(Num(+v), ρ1, σ, ɸ, k)
 
-    case Σ(CvtNum(v), ρ, σ, DoUnaryOp(Prefix.-, ρ1)::k) =>
-      Σ(Num(-v), ρ1, σ, k)
+    case Σ(CvtNum(v), ρ, σ, ɸ, DoUnaryOp(Prefix.-, ρ1)::k) =>
+      Σ(Num(-v), ρ1, σ, ɸ, k)
 
-    case Σ(ValueOrResidual(v), ρ, σ, DoUnaryOp(op, ρ1)::k) =>
-      Σ(reify(Unary(op, v))(σ, ρ), ρ1, σ, k)
+    case Σ(ValueOrResidual(v), ρ, σ, ɸ, DoUnaryOp(op, ρ1)::k) =>
+      Σ(reify(Unary(op, v))(σ, ρ), ρ1, σ, ɸ, k)
 
     ////////////////////////////////////////////////////////////////
     // Binary operators.
     ////////////////////////////////////////////////////////////////
 
     // Eval the left operand.
-    case Σ(Binary(op, e1, e2), ρ, σ, k) =>
-      Σ(e1, ρ, σ, EvalBinaryOpRight(op, e2, ρ)::k)
+    case Σ(Binary(op, e1, e2), ρ, σ, ɸ, k) =>
+      Σ(e1, ρ, σ, ɸ, EvalBinaryOpRight(op, e2, ρ)::k)
 
     // Short-circuit && and ||
-    case Σ(v @ CvtBool(false), ρ, σ, EvalBinaryOpRight(Binary.&&, e2, ρ1)::k) =>
-      Σ(v, ρ1, σ, k)
+    case Σ(v @ CvtBool(false), ρ, σ, ɸ, EvalBinaryOpRight(Binary.&&, e2, ρ1)::k) =>
+      Σ(v, ρ1, σ, ɸ, k)
 
-    case Σ(v @ CvtBool(true), ρ, σ, EvalBinaryOpRight(Binary.||, e2, ρ1)::k) =>
-      Σ(v, ρ1, σ, k)
+    case Σ(v @ CvtBool(true), ρ, σ, ɸ, EvalBinaryOpRight(Binary.||, e2, ρ1)::k) =>
+      Σ(v, ρ1, σ, ɸ, k)
 
     // If we have a value and we need to evaluate the second argument
     // of a binary operator, switch the focus to the second argument
     // with a continuation that performs the operation.
-    case Σ(ValueOrResidual(v), ρ, σ, EvalBinaryOpRight(op, e2, ρ1)::k) =>
-      Σ(e2, ρ1, σ, DoBinaryOp(op, v, ρ1)::k)
+    case Σ(ValueOrResidual(v), ρ, σ, ɸ, EvalBinaryOpRight(op, e2, ρ1)::k) =>
+      Σ(e2, ρ1, σ, ɸ, DoBinaryOp(op, v, ρ1)::k)
 
     // Does the property i exist in loc?
-    case Σ(Value(i), ρ, σ, DoBinaryOp(Binary.IN, loc: Loc, ρ1)::k) =>
+    case Σ(Value(i), ρ, σ, ɸ, DoBinaryOp(Binary.IN, loc: Loc, ρ1)::k) =>
       σ.get(loc) match {
         case None =>
-          Σ(loc, ρ, σ, Fail(s"could not load location $loc")::k)
+          Σ(loc, ρ, σ, ɸ, Fail(s"could not load location $loc")::k)
         case _ =>
           Eval.getPropertyAddress(loc, i, σ) match {
             case Some(v) =>
-              Σ(Bool(true), ρ1, σ, k)
+              Σ(Bool(true), ρ1, σ, ɸ, k)
             case None =>
-              Σ(Bool(false), ρ1, σ, k)
+              Σ(Bool(false), ρ1, σ, ɸ, k)
           }
       }
 
@@ -585,27 +600,28 @@ object CESK {
     // x instanceof y
     // ==
     // x.__proto__ === y.prototype
-    case Σ(v2: Loc, ρ, σ, DoBinaryOp(Binary.INSTANCEOF, v1: Loc, ρ1)::k) =>
+    case Σ(v2: Loc, ρ, σ, ɸ, DoBinaryOp(Binary.INSTANCEOF, v1: Loc, ρ1)::k) =>
       val result = for {
-        v1protoLoc <- Eval.getPropertyAddress(v1, StringLit("__proto__"), σ)
-        Closure(v1proto, _) <- σ.get(v1protoLoc)
+        Closure(FunObject(_, v1protoLoc, _, _, _), _) <- σ.get(v1)
+        Closure(v1proto, _) <- v1protoLoc match { case v1protoLoc: Loc => σ.get(v1protoLoc)
+                                                  case v1Proto => Some(v1Proto) }
         v2protoLoc <- Eval.getPropertyAddress(v2, StringLit("prototype"), σ)
         Closure(v2proto, _) <- σ.get(v2protoLoc)
       } yield (v1proto, v2proto)
 
       result match {
         case Some((proto1, proto2)) =>
-          Σ(Binary(Binary.===, proto1, proto2), ρ1, σ, k)
+          Σ(Binary(Binary.===, proto1, proto2), ρ1, σ, ɸ, k)
         case None =>
-          Σ(reify(Binary(Binary.INSTANCEOF, v1, v2))(σ, ρ), ρ1, σ, k)
+          Σ(reify(Binary(Binary.INSTANCEOF, v1, v2))(σ, ρ), ρ1, σ, ɸ, k)
       }
 
-    case Σ(ValueOrResidual(v2), ρ, σ, DoBinaryOp(Binary.INSTANCEOF, v1, ρ1)::k) =>
-      Σ(reify(Binary(Binary.INSTANCEOF, v1, v2))(σ, ρ), ρ1, σ, k)
+    case Σ(ValueOrResidual(v2), ρ, σ, ɸ, DoBinaryOp(Binary.INSTANCEOF, v1, ρ1)::k) =>
+      Σ(reify(Binary(Binary.INSTANCEOF, v1, v2))(σ, ρ), ρ1, σ, ɸ, k)
 
-    case Σ(ValueOrResidual(v2), ρ, σ, DoBinaryOp(op, v1, ρ1)::k) =>
+    case Σ(ValueOrResidual(v2), ρ, σ, ɸ, DoBinaryOp(op, v1, ρ1)::k) =>
       val v = Eval.evalOp(op, v1, v2)
-      Σ(v, ρ1, σ, k)
+      Σ(v, ρ1, σ, ɸ, k)
 
     ////////////////////////////////////////////////////////////////
     // Calls and lambda.
@@ -615,38 +631,51 @@ object CESK {
     ////////////////////////////////////////////////////////////////
 
     // A method call "x.m()" passes "x" as "this"
-    case Σ(Call(IndexAddr(e, m), args), ρ, σ, k) =>
-      Σ(e, ρ, σ, EvalMethodProperty(m, args, ρ)::k)
+    case Σ(Call(IndexAddr(e, m), args), ρ, σ, ɸ, k) =>
+      Σ(e, ρ, σ, ɸ, EvalMethodProperty(m, args, ρ)::k)
 
-    case Σ(NormalForm(thisValue), ρ, σ, EvalMethodProperty(m, es, ρ1)::k) =>
-      Σ(m, ρ1, σ, GetProperty(thisValue, ρ1)::EvalArgs(thisValue, es, ρ1)::k)
+    case Σ(NormalForm(thisValue), ρ, σ, ɸ, EvalMethodProperty(m, es, ρ1)::k) =>
+      Σ(m, ρ1, σ, ɸ, GetProperty(thisValue, ρ1)::EvalArgs(thisValue, es, ρ1)::k)
 
     // A non-method call "f()" passes "window" as "this"
-    case Σ(Call(fun, args), ρ, σ, k) =>
-      Σ(fun, ρ, σ, EvalArgs(Prim("window"), args, ρ)::k)
+    case Σ(Call(fun, args), ρ, σ, ɸ, k) =>
+      Σ(fun, ρ, σ, ɸ, EvalArgs(Prim("window"), args, ρ)::k)
 
-    case Σ(ValueOrResidual(fun), ρ, σ, EvalArgs(thisValue, Nil, ρ1)::k) =>
-      Σ(Empty(), ρ1, σ, DoCall(fun, thisValue, Nil, ρ1)::k)
+    case Σ(ValueOrResidual(fun), ρ, σ, ɸ, EvalArgs(thisValue, Nil, ρ1)::k) =>
+      Σ(Empty(), ρ1, σ, ɸ, DoCall(fun, thisValue, Nil, ρ1)::k)
 
-    case Σ(ValueOrResidual(fun), ρ, σ, EvalArgs(thisValue, arg::args, ρ1)::k) =>
-      Σ(arg, ρ1, σ, EvalMoreArgs(fun, thisValue, args, Nil, ρ1)::k)
+    case Σ(ValueOrResidual(fun), ρ, σ, ɸ, EvalArgs(thisValue, arg::args, ρ1)::k) =>
+      Σ(arg, ρ1, σ, ɸ, EvalMoreArgs(fun, thisValue, args, Nil, ρ1)::k)
 
-    case Σ(ValueOrResidual(v), ρ, σ, EvalMoreArgs(fun, thisValue, arg::args, done, ρ1)::k) =>
-      Σ(arg, ρ1, σ, EvalMoreArgs(fun, thisValue, args, done :+ v, ρ1)::k)
+    case Σ(ValueOrResidual(v), ρ, σ, ɸ, EvalMoreArgs(fun, thisValue, arg::args, done, ρ1)::k) =>
+      Σ(arg, ρ1, σ, ɸ, EvalMoreArgs(fun, thisValue, args, done :+ v, ρ1)::k)
 
-    case Σ(ValueOrResidual(v), ρ, σ, EvalMoreArgs(fun, thisValue, Nil, done, ρ1)::k) =>
-      Σ(Empty(), ρ1, σ, DoCall(fun, thisValue, done :+ v, ρ1)::k)
+    case Σ(ValueOrResidual(v), ρ, σ, ɸ, EvalMoreArgs(fun, thisValue, Nil, done, ρ1)::k) =>
+      Σ(Empty(), ρ1, σ, ɸ, DoCall(fun, thisValue, done :+ v, ρ1)::k)
 
-    case Σ(_, ρ, σ, DoCall(Prim("eval"), _, args @ (StringLit(code)::Nil), ρ1)::k) =>
+    // Primitives
+    case Σ(_, ρ, σ, ɸ, DoCall(Prim("eval"), _, args @ (StringLit(code)::_), ρ1)::k) =>
       val e = scsc.js.Parser.fromString(code)
       e match {
-        case Some(Program(e)) =>
-          Σ(e, ρ1, σ, k)
+        case Some(e) =>
+          Σ(e, ρ1, σ, ɸ, k)
         case None =>
-          Σ(reify(Call(Prim("eval"), args))(σ, ρ), ρ1, σ0, k)
+          Σ(reify(Call(Prim("eval"), args))(σ, ρ), ρ1, σ0, ɸ, k)
       }
+    case Σ(_, ρ, σ, ɸ, DoCall(Prim("eval"), _, Value(v)::_, ρ1)::k) =>
+      Σ(v, ρ1, σ, ɸ, k)
+    case Σ(_, ρ, σ, ɸ, DoCall(Prim("eval"), _, Nil, ρ1)::k) =>
+      Σ(Undefined(), ρ1, σ, ɸ, k)
+    case Σ(_, ρ, σ, ɸ, DoCall(Prim("isNaN"), _, CvtNum(v)::_, ρ1)::k) =>
+      Σ(Bool(v.isNaN), ρ1, σ, ɸ, k)
+    case Σ(_, ρ, σ, ɸ, DoCall(Prim("isFinite"), _, CvtNum(v)::_, ρ1)::k) =>
+      Σ(Bool(!v.isInfinite), ρ1, σ, ɸ, k)
+    case Σ(_, ρ, σ, ɸ, DoCall(Prim("isNaN"), _, Nil, ρ1)::k) =>
+      Σ(Bool(true), ρ1, σ, ɸ, k)
+    case Σ(_, ρ, σ, ɸ, DoCall(Prim("isFinite"), _, Nil, ρ1)::k) =>
+      Σ(Bool(false), ρ1, σ, ɸ, k)
 
-    case Σ(_, ρ, σ, DoCall(FunObject(_, xs, Some(e), _), thisValue, args, ρ1)::k) =>
+    case Σ(_, ρ, σ, ɸ, DoCall(FunObject(_, _, xs, Some(e), _), thisValue, args, ρ1)::k) =>
       // TODO: to ensure all non-garbage values in the heap are accessible
       // from the environment, don't shadow variables. Instead, append
       // the frame number to all variable references.
@@ -668,88 +697,91 @@ object CESK {
         case (σ, (loc, v)) =>
           σ + (loc -> Closure(v, ρ1))
       }
-      Σ(e, ρ2, σ1, CallFrame(ρ1)::k)  // use ρ1 in the call frame.. this is the env we pop to.
+      Σ(e, ρ2, σ1, ɸ, CallFrame(ρ1)::k)  // use ρ1 in the call frame.. this is the env we pop to.
 
     // The function is not a lambda. Residualize the call. Clear the store since we have no idea what the function
     // will do to the store.
-    case Σ(_, ρ, σ, DoCall(fun, thisValue, args, ρ1)::k) =>
-      Σ(reify(Call(fun, args))(σ, ρ), ρ1, σ0, k)
+    case Σ(_, ρ, σ, ɸ, DoCall(fun, thisValue, args, ρ1)::k) =>
+      Σ(reify(Call(fun, args))(σ, ρ), ρ1, σ0, ɸ, k)
 
     // Wrap v in a let.
-    case Σ(NormalForm(v), ρ, σ, RebuildLet(xs, args, ρ1)::k) =>
+    case Σ(NormalForm(v), ρ, σ, ɸ, RebuildLet(xs, args, ρ1)::k) =>
       val ss = (xs zip args) collect {
         case (x, e) if (fv(v) contains x) => LetDef(x, e)
       }
       if (ss.nonEmpty) {
-        Σ(reify(Block(ss :+ v))(σ, ρ), ρ1, σ, k)
+        val block = ss.foldRight(v) {
+          case (s1, s2) => Seq(s1, s2)
+        }
+        Σ(reify(block)(σ, ρ), ρ1, σ, ɸ, k)
       }
       else {
-        Σ(v, ρ1, σ, k)
+        Σ(v, ρ1, σ, ɸ, k)
       }
 
     ////////////////////////////////////////////////////////////////
     // Return. Pop the continuations until we hit the caller.
     ////////////////////////////////////////////////////////////////
 
-    case Σ(Return(Some(e)), ρ, σ, k) =>
-      Σ(e, ρ, σ, DoReturn()::k)
-    case Σ(Return(None), ρ, σ, k) =>
-      Σ(Undefined(), ρ, σ, DoReturn()::k)
+    case Σ(Return(Some(e)), ρ, σ, ɸ, k) =>
+      Σ(e, ρ, σ, ɸ, DoReturn()::k)
+    case Σ(Return(None), ρ, σ, ɸ, k) =>
+      Σ(Undefined(), ρ, σ, ɸ, DoReturn()::k)
 
-    case Σ(ValueOrResidual(v), ρ, σ, DoReturn()::k) =>
-      Σ(Undefined(), ρ, σ, Returning(v)::k)
+    case Σ(ValueOrResidual(v), ρ, σ, ɸ, DoReturn()::k) =>
+      Σ(Undefined(), ρ, σ, ɸ, Returning(v)::k)
 
     // Once we hit the call frame, evaluate the return value.
     // Then pop the call frame using the NormalForm rule.
-    case Σ(res, ρ, σ, Returning(v)::CallFrame(ρ1)::k) =>
-      Σ(v, ρ1, σ, k)
+    case Σ(res, ρ, σ, ɸ, Returning(v)::CallFrame(ρ1)::k) =>
+      Σ(v, ρ1, σ, ɸ, k)
 
     // If we hit a rebuild continuation, we must run it, passing in v
     // (which is either undefined or a residual) to the rebuild continuation
-    case Σ(v, ρ, σ, Returning(e)::(a: RebuildCont)::k) =>
-      Σ(v, ρ, σ, a::Returning(e)::k)
+    case Σ(v, ρ, σ, ɸ, Returning(e)::(a: RebuildCont)::k) =>
+      Σ(v, ρ, σ, ɸ, a::Returning(e)::k)
 
-    case Σ(v, ρ, σ, Returning(e)::_::k) =>
-      Σ(v, ρ, σ, Returning(e)::k)
+    case Σ(v, ρ, σ, ɸ, Returning(e)::_::k) =>
+      Σ(v, ρ, σ, ɸ, Returning(e)::k)
 
     // If we run off the end of the function body, act like we returned normally.
     // This also runs after evaluating the return value after a return.
-    case Σ(ValueOrResidual(v), ρ, σ, CallFrame(ρ1)::k) =>
-      Σ(v, ρ1, σ, k)
+    case Σ(ValueOrResidual(v), ρ, σ, ɸ, CallFrame(ρ1)::k) =>
+      Σ(v, ρ1, σ, ɸ, k)
 
     ////////////////////////////////////////////////////////////////
     // Throw. This is implemented similarly to Return.
     ////////////////////////////////////////////////////////////////
 
-    case Σ(Throw(e), ρ, σ, k) =>
-      Σ(e, ρ, σ, DoThrow()::k)
+    case Σ(Throw(e), ρ, σ, ɸ, k) =>
+      Σ(e, ρ, σ, ɸ, DoThrow()::k)
 
-    case Σ(ValueOrResidual(v), ρ, σ, DoThrow()::k) =>
-      Σ(Undefined(), ρ, σ, Throwing(v)::k)
+    case Σ(ValueOrResidual(v), ρ, σ, ɸ, DoThrow()::k) =>
+      Σ(Undefined(), ρ, σ, ɸ, Throwing(v)::k)
 
     // If we're throwing and we hit a try block,
     // evaluate the finally block and rethrow.
-    case Σ(v, ρ, σ, Throwing(e)::FinallyFrame(f, ρ1)::k) =>
-      Σ(f, ρ1, σ, Throwing(e)::k)
+    case Σ(v, ρ, σ, ɸ, Throwing(e)::FinallyFrame(fin, ρ1)::k) =>
+      Σ(fin, ρ1, σ, ɸ, Throwing(e)::k)
 
     // If we hit a rebuild continuation, we must run it, passing in v
     // (which is either undefined or a residual) to the rebuild continuation
-    case Σ(v, ρ, σ, Throwing(e)::(a: RebuildCont)::k) =>
-      Σ(v, ρ, σ, a::Throwing(e)::k)
+    case Σ(v, ρ, σ, ɸ, Throwing(e)::(a: RebuildCont)::k) =>
+      Σ(v, ρ, σ, ɸ, a::Throwing(e)::k)
 
-    case Σ(v, ρ, σ, Throwing(e)::_::k) =>
-      Σ(v, ρ, σ, Throwing(e)::k)
+    case Σ(v, ρ, σ, ɸ, Throwing(e)::_::k) =>
+      Σ(v, ρ, σ, ɸ, Throwing(e)::k)
 
     // Run the finally block, if any. Then restore the value.
     // And pass it to k.
-    case Σ(ValueOrResidual(v), ρ, σ, FinallyFrame(f, ρ1)::k) =>
-      Σ(f, ρ1, σ, BlockCont(v::Nil, Nil, ρ)::k)
+    case Σ(ValueOrResidual(v), ρ, σ, ɸ, FinallyFrame(fin, ρ1)::k) =>
+      Σ(fin, ρ1, σ, ɸ, SeqCont(v, ρ)::k)
 
-    case Σ(TryCatch(e, cs), ρ, σ, k) =>
-      Σ(e, ρ, σ, CatchFrame(cs, ρ)::k)
+    case Σ(TryCatch(e, cs), ρ, σ, ɸ, k) =>
+      Σ(e, ρ, σ, ɸ, CatchFrame(cs, ρ)::k)
 
-    case Σ(TryFinally(e, f), ρ, σ, k) =>
-      Σ(e, ρ, σ, FinallyFrame(f, ρ)::k)
+    case Σ(TryFinally(e, fin), ρ, σ, ɸ, k) =>
+      Σ(e, ρ, σ, ɸ, FinallyFrame(fin, ρ)::k)
 
 
     ////////////////////////////////////////////////////////////////
@@ -762,25 +794,23 @@ object CESK {
     // sets this.__proto__ to Point.prototype
     // calls the Point function
 
-    case Σ(NewCall(f, args), ρ, σ, k) =>
+    case Σ(NewCall(fun, args), ρ, σ, ɸ, k) =>
       val loc = FreshLoc()
-      Σ(f, ρ, σ, InitProto(loc, ρ)::LoadCont(ρ)::EvalArgs(loc, args, ρ)::BlockCont(loc::Nil, Nil, ρ)::k)
+      Σ(fun, ρ, σ, ɸ, InitProto(loc, ρ)::LoadCont(ρ)::EvalArgs(loc, args, ρ)::SeqCont(loc, ρ)::k)
 
-    case Σ(f, ρ, σ, InitProto(loc, ρ1)::k) =>
-      val v1 =
-        FunObject("object", Nil, None,
-          Property(StringLit("__proto__"), reify(Index(f, StringLit("prototype")))(σ, ρ), None, None)::Nil)
-      Σ(f, ρ, σ.assign(loc, v1, ρ1), k)
+    case Σ(fun, ρ, σ, ɸ, InitProto(loc, ρ1)::k) =>
+      val v1 = FunObject("object", reify(Index(fun, StringLit("prototype")))(σ, ρ), Nil, None, Nil)
+      Σ(fun, ρ, σ.assign(loc, v1, ρ1), ɸ, k)
 
-    case Σ(Delete(IndexAddr(a, i)), ρ, σ, k) =>
-      Σ(a, ρ, σ, EvalPropertyNameForDel(i, ρ)::k)
+    case Σ(Delete(IndexAddr(a, i)), ρ, σ, ɸ, k) =>
+      Σ(a, ρ, σ, ɸ, EvalPropertyNameForDel(i, ρ)::k)
 
-    case Σ(ValueOrResidual(a), ρ, σ, EvalPropertyNameForDel(i, ρ1)::k) =>
-      Σ(i, ρ1, σ, DoDeleteProperty(a, ρ1)::k)
+    case Σ(ValueOrResidual(a), ρ, σ, ɸ, EvalPropertyNameForDel(i, ρ1)::k) =>
+      Σ(i, ρ1, σ, ɸ, DoDeleteProperty(a, ρ1)::k)
 
-    case Σ(Value(i), ρ, σ, DoDeleteProperty(loc: Loc, ρ1)::k) =>
+    case Σ(Value(i), ρ, σ, ɸ, DoDeleteProperty(loc: Loc, ρ1)::k) =>
       σ.get(loc) match {
-        case Some(Closure(FunObject(typeof, xs, body, props), ρ2)) =>
+        case Some(Closure(FunObject(typeof, proto, xs, body, props), ρ2)) =>
           val v = props collectFirst {
             case Property(k, v: Loc, g, s) if Eval.evalOp(Binary.==, k, i) == Bool(true) => v
           }
@@ -790,35 +820,35 @@ object CESK {
                 case Property(k, v: Loc, g, s) if Eval.evalOp(Binary.==, k, i) == Bool(true) => false
                 case _ => true
               }
-              Σ(loc, ρ1, σ.assign(loc, FunObject(typeof, xs, body, removed), ρ2), k)
+              Σ(loc, ρ1, σ.assign(loc, FunObject(typeof, proto, xs, body, removed), ρ2), ɸ, k)
             case None =>
               // The field isn't there anyway.
-              Σ(loc, ρ1, σ, k)
+              Σ(loc, ρ1, σ, ɸ, k)
           }
         case Some(Closure(v, ρ2)) =>
-          Σ(loc, ρ1, σ, k)
+          Σ(loc, ρ1, σ, ɸ, k)
         case None =>
-          Σ(loc, ρ, σ, Fail(s"could not load location $loc")::k)
+          Σ(loc, ρ, σ, ɸ, Fail(s"could not load location $loc")::k)
       }
 
-    case Σ(ValueOrResidual(i), ρ, σ, DoDeleteProperty(ValueOrResidual(a), ρ1)::k) =>
-      Σ(reify(Delete(IndexAddr(a, i)))(σ, ρ), ρ1, σ, k)
+    case Σ(ValueOrResidual(i), ρ, σ, ɸ, DoDeleteProperty(ValueOrResidual(a), ρ1)::k) =>
+      Σ(reify(Delete(IndexAddr(a, i)))(σ, ρ), ρ1, σ, ɸ, k)
 
-    case Σ(IndexAddr(a, i), ρ, σ, k) =>
-      Σ(a, ρ, σ, EvalPropertyNameForSet(i, ρ)::k)
+    case Σ(IndexAddr(a, i), ρ, σ, ɸ, k) =>
+      Σ(a, ρ, σ, ɸ, EvalPropertyNameForSet(i, ρ)::k)
 
-    case Σ(ValueOrResidual(a), ρ, σ, EvalPropertyNameForSet(i, ρ1)::k) =>
-      Σ(i, ρ1, σ, GetPropertyAddressOrCreate(a, ρ1)::k)
+    case Σ(ValueOrResidual(a), ρ, σ, ɸ, EvalPropertyNameForSet(i, ρ1)::k) =>
+      Σ(i, ρ1, σ, ɸ, GetPropertyAddressOrCreate(a, ρ1)::k)
 
-    case Σ(Value(i), ρ, σ, GetPropertyAddressOrCreate(loc: Loc, ρ1)::k) =>
+    case Σ(Value(i), ρ, σ, ɸ, GetPropertyAddressOrCreate(loc: Loc, ρ1)::k) =>
       σ.get(loc) match {
-        case Some(Closure(FunObject(typeof, xs, body, props), ρ2)) =>
+        case Some(Closure(FunObject(typeof, proto, xs, body, props), ρ2)) =>
           val v = props collectFirst {
             case Property(k, v: Loc, g, s) if Eval.evalOp(Binary.==, k, i) == Bool(true) => v
           }
           v match {
             case Some(v) =>
-              Σ(v, ρ2, σ, k)
+              Σ(v, ρ2, σ, ɸ, k)
             case None =>
               // FIXME: maybe the property key is reified?
               // I don't think this can happen, though.
@@ -826,80 +856,84 @@ object CESK {
               // The field is missing.
               // Create it.
               val fieldLoc = FreshLoc()
-              val σ1 = σ.assign(loc, FunObject(typeof, xs, body, props :+ Property(i, fieldLoc, None, None)), ρ2)
+              val σ1 = σ.assign(loc, FunObject(typeof, proto, xs, body, props :+ Property(i, fieldLoc, None, None)), ρ2)
               val σ2 = σ1.assign(fieldLoc, Undefined(), ρ2)
-              Σ(fieldLoc, ρ1, σ2, k)
+              Σ(fieldLoc, ρ1, σ2, ɸ, k)
           }
         case Some(Closure(v, ρ2)) =>
-          Σ(Undefined(), ρ1, σ, k)
+          Σ(Undefined(), ρ1, σ, ɸ, k)
         case None =>
-          Σ(loc, ρ, σ, Fail(s"could not load location $loc")::k)
+          Σ(loc, ρ, σ, ɸ, Fail(s"could not load location $loc")::k)
       }
 
-    case Σ(ValueOrResidual(a), ρ, σ, EvalPropertyNameForGet(i, ρ1)::k) =>
-      Σ(i, ρ1, σ, GetProperty(a, ρ1)::k)
+    case Σ(ValueOrResidual(a), ρ, σ, ɸ, EvalPropertyNameForGet(i, ρ1)::k) =>
+      Σ(i, ρ1, σ, ɸ, GetProperty(a, ρ1)::k)
 
     // restrict the property to values to ensure == during property lookup works correctly
     // otherwise, a[f()] will result in undefined rather than a reified access
-    case Σ(Value(i), ρ, σ, GetProperty(loc: Loc, ρ1)::k) =>
+    case Σ(Value(i), ρ, σ, ɸ, GetProperty(loc: Loc, ρ1)::k) =>
       σ.get(loc) match {
-        case Some(Closure(FunObject(typeof, xs, body, props), ρ2)) =>
+        case Some(Closure(FunObject(typeof, proto, xs, body, props), ρ2)) =>
           val v = props collectFirst {
             case Property(k, v: Loc, g, s) if Eval.evalOp(Binary.==, k, i) == Bool(true) => v
           }
           v match {
             case Some(v) =>
-              Σ(v, ρ2, σ, LoadCont(ρ1)::k)
+              Σ(v, ρ2, σ, ɸ, LoadCont(ρ1)::k)
             case None =>
               // Lookup the __proto__ field.
               // If found, load the property from the prototype.
               // Otherwise, return undefined.
-              val proto = props collectFirst {
-                case Property(k, v: Loc, g, s) if Eval.evalOp(Binary.==, k, StringLit("__proto__")) == Bool(true) => v
-              }
               proto match {
-                case Some(protoLoc) =>
-                  Σ(i, ρ1, σ, GetProperty(protoLoc, ρ1)::k)
-                case None =>
-                  Σ(Undefined(), ρ1, σ, k)
+                case protoLoc: Loc =>
+                  Σ(i, ρ1, σ, ɸ, GetProperty(protoLoc, ρ1)::k)
+                case _ =>
+                  Σ(Undefined(), ρ1, σ, ɸ, k)
               }
           }
         case Some(Closure(v, ρ2)) =>
-          Σ(Undefined(), ρ1, σ, k)
+          Σ(Undefined(), ρ1, σ, ɸ, k)
         case None =>
-          Σ(loc, ρ, σ, Fail(s"could not load location $loc")::k)
+          Σ(loc, ρ, σ, ɸ, Fail(s"could not load location $loc")::k)
       }
 
-    case Σ(ValueOrResidual(i), ρ, σ, GetProperty(ValueOrResidual(a), ρ1)::k) =>
-      Σ(reify(Index(a, i))(σ, ρ), ρ1, σ, k)
+    case Σ(ValueOrResidual(i), ρ, σ, ɸ, GetProperty(ValueOrResidual(a), ρ1)::k) =>
+      Σ(reify(Index(a, i))(σ, ρ), ρ1, σ, ɸ, k)
 
     // Create an empty object
     // Initialize a non-empty object.
-    case Σ(ObjectLit(ps), ρ, σ, k) =>
+    case Σ(ObjectLit(ps), ρ, σ, ɸ, k) =>
       val loc = FreshLoc()
-      val v = FunObject("object", Nil, None, Nil)
-      Σ(Property(StringLit("__proto__"), Prim("Object.prototype"), None, None), ρ, σ.assign(loc, v, ρ), InitObject(loc, ps, Nil, ρ)::k)
+      val v = FunObject("object", Prim("Object.prototype"), Nil, None, Nil)
+      val seq = ps.reverse.foldRight(loc: Exp) {
+        case (Property(prop, value, _, _), rest) =>
+          Seq(Assign(None, IndexAddr(loc, prop), value), rest)
+        case _ => ???
+      }
+      Σ(seq, ρ, σ.assign(loc, v, ρ), ɸ, k)
 
     // Put a lambda in the heap.
-    case Σ(Lambda(xs, e), ρ, σ, k) =>
+    case Σ(Lambda(xs, e), ρ, σ, ɸ, k) =>
       val loc = FreshLoc()
-      val v = FunObject("function", xs, Some(e), Nil)
-      Σ(Property(StringLit("__proto__"), Prim("Function.prototype"), None, None), ρ, σ.assign(loc, v, ρ), InitObject(loc, Nil, Nil, ρ)::k)
+      val v = FunObject("function", Prim("Function.prototype"), xs, Some(e), Nil)
+      Σ(loc, ρ, σ.assign(loc, v, ρ), ɸ, k)
 
     // Array literals desugar to objects
-    case Σ(ArrayLit(es), ρ, σ, k) =>
+    case Σ(ArrayLit(es), ρ, σ, ɸ, k) =>
       val loc = FreshLoc()
-      val v = FunObject("object", Nil, None, Nil)
-      val ps = es.zipWithIndex.map {
-        case (e, i) => Property(StringLit(i.toString), e, None, None)
+      val v = FunObject("object", Prim("Array.prototype"), Nil, None, Nil)
+      val len = Seq(Assign(None, IndexAddr(loc, StringLit("length")), Num(es.length)), loc)
+      val seq = es.reverse.zipWithIndex.foldRight(len: Exp) {
+        case ((value, i), rest) =>
+          Seq(Assign(None, IndexAddr(loc, StringLit(i.toLong.toString)), value), rest)
       }
-      val ps2 = Property(StringLit("length"), Num(es.length), None, None)::ps
-      Σ(Property(StringLit("__proto__"), Prim("Array.prototype"), None, None), ρ, σ.assign(loc, v, ρ), InitObject(loc, ps2, Nil, ρ)::k)
+      Σ(seq, ρ, σ.assign(loc, v, ρ), ɸ, k)
 
     ////////////////////////////////////////////////////////////////
     // Properties
     ////////////////////////////////////////////////////////////////
 
+/*
     // Done with all properties, put the object in the store.
     case Σ(v @ Property(ValueOrResidual(vk), ValueOrResidual(vv), _, _), ρ, σ, InitObject(loc, Nil, vs, ρ1)::k) =>
       val vs2 = vs :+ v
@@ -914,12 +948,12 @@ object CESK {
       }
       // Add the properties to the object (which should already exist in the heap)
       val σ1 = σ.get(loc) match {
-        case Some(Closure(FunObject(typeof, params, body, props0), ρ2)) =>
-          σ.assign(loc, FunObject(typeof, params, body, props0 ++ props), ρ2)
+        case Some(Closure(FunObject(typeof, proto, params, body, props0), ρ2)) =>
+          σ.assign(loc, FunObject(typeof, proto, params, body, props0 ++ props), ρ2)
         case Some(_) =>
           ???
         case None =>
-          σ.assign(loc, FunObject("object", Nil, None, props), ρ1)
+          σ.assign(loc, FunObject("object", Prim("Object.prototype"), Nil, None, props), ρ1)
           ???
       }
       val σ2 = zipped.foldLeft(σ1) {
@@ -931,34 +965,35 @@ object CESK {
     // Done with a property, go to the next one.
     case Σ(v @ Property(ValueOrResidual(vk), ValueOrResidual(vv), _, _), ρ, σ, InitObject(loc, e::es, vs, ρ1)::k) =>
       Σ(e, ρ1, σ, InitObject(loc, es, vs :+ v, ρ1)::k)
+*/
 
     // evaluate a property
-    case Σ(Property(ValueOrResidual(x), e, _, _), ρ, σ, k) if ! e.isValue =>
-      Σ(e, ρ, σ, WrapProperty(x, ρ)::k)
+    case Σ(Property(ValueOrResidual(x), e, _, _), ρ, σ, ɸ, k) if ! e.isValue =>
+      Σ(e, ρ, σ, ɸ, WrapProperty(x, ρ)::k)
 
-    case Σ(Property(ek, ev, _, _), ρ, σ, k) =>
-      Σ(ek, ρ, σ, EvalPropertyValue(ev, ρ)::k)
+    case Σ(Property(ek, ev, _, _), ρ, σ, ɸ, k) =>
+      Σ(ek, ρ, σ, ɸ, EvalPropertyValue(ev, ρ)::k)
 
-    case Σ(ValueOrResidual(vv), ρ, σ, WrapProperty(vk, ρ1)::k) =>
-      Σ(Property(vk, vv, None, None), ρ1, σ, k)
+    case Σ(ValueOrResidual(vv), ρ, σ, ɸ, WrapProperty(vk, ρ1)::k) =>
+      Σ(Property(vk, vv, None, None), ρ1, σ, ɸ, k)
 
-    case Σ(ValueOrResidual(vk), ρ, σ, EvalPropertyValue(ev, ρ1)::k) =>
-      Σ(ev, ρ1, σ, WrapProperty(vk, ρ1)::k)
+    case Σ(ValueOrResidual(vk), ρ, σ, ɸ, EvalPropertyValue(ev, ρ1)::k) =>
+      Σ(ev, ρ1, σ, ɸ, WrapProperty(vk, ρ1)::k)
 
     ////////////////////////////////////////////////////////////////
     // Other cases.
     ////////////////////////////////////////////////////////////////
 
     // Don't implement with.
-    case Σ(With(exp, body), ρ, σ, k) =>
-      Σ(reify(With(exp, body))(σ, ρ), ρ, σ, k)
+    case Σ(With(exp, body), ρ, σ, ɸ, k) =>
+      Σ(reify(With(exp, body))(σ, ρ), ρ, σ, ɸ, k)
 
     ////////////////////////////////////////////////////////////////
     // Catch all.
     ////////////////////////////////////////////////////////////////
 
-    case s @ Σ(e, ρ, σ, k) =>
-      Σ(e, ρ, σ, Fail(s"no step defined for $s")::k)
+    case s @ Σ(e, ρ, σ, ɸ, k) =>
+      Σ(e, ρ, σ, ɸ, Fail(s"no step defined for $s")::k)
   }
 
   // Check for termination at these nodes.
@@ -976,32 +1011,11 @@ object CESK {
     }
   }
 
-  def evalProgram(e: Program, maxSteps: Int): Program = {
+  def evalProgram(e: Scope, maxSteps: Int): Scope = {
     eval(e, maxSteps) match {
-      case p: Program => p
-      case e: Block => Program(e)
-      case e => Program(Block(e::Nil))
+      case p: Scope => p
+      case e => Scope(e)
     }
-    // import scsc.js.TreeWalk._
-    // object PE extends Rewriter {
-    //   override def rewrite(e: Exp) = e match {
-    //     case VarDef(x, Lambda(xs, e)) =>
-    //       val e1 = eval(e, maxSteps)
-    //       VarDef(x, Lambda(xs, e1))
-    //     case VarDef(x, e) =>
-    //       val e1 = eval(e, maxSteps)
-    //       VarDef(x, e1)
-    //     case e =>
-    //       super.rewrite(e)
-    //   }
-    // }
-    //
-    // val e1 = PE.rewrite(e)
-    //
-    // e1 match {
-    //   case p: Program => p
-    //   case _ => ???
-    // }
   }
 
   // Evaluator.
@@ -1024,14 +1038,14 @@ object CESK {
 
       s match {
         // stop when we have a value with the empty continuation.
-        case Σ(NormalForm(v), _, σ, Nil) =>
-          return v
+        case Σ(NormalForm(v), ρ, σ, ɸ, Nil) =>
+          return unreify(reify(v)(σ, ρ))
 
-        case Σ(e, _, σ, Fail(s)::k) =>
+        case Σ(e, _, σ, ɸ, Fail(s)::k) =>
           println(s"FAIL $s")
           return Lambda("error"::Nil, e)
 
-        case s0 @ Σ(e, ρ, σ, k) =>
+        case s0 @ Σ(e, ρ, σ, ɸ, k) =>
           s = step(s0)
       }
     }
@@ -1043,7 +1057,6 @@ object CESK {
     val hist: ListBuffer[St] = ListBuffer()
     hist += s
 
-
     while (true) {
       t -= 1
       println(s)
@@ -1051,18 +1064,18 @@ object CESK {
 
       s match {
         // stop when we have a value with the empty continuation.
-        case Σ(NormalForm(v), _, σ, Nil) =>
-          return v
+        case Σ(NormalForm(v), ρ, σ, ɸ, Nil) =>
+          return unreify(reify(v)(σ, ρ))
 
-        case Σ(e, _, σ, Fail(s)::k) =>
+        case Σ(e, ρ, σ, ɸ, Fail(s)::k) =>
           println(s"FAIL $s")
           return Lambda("error"::Nil, e)
 
-        case s0 @ Σ(focus, ρ, σ, k) =>
+        case s0 @ Σ(focus, ρ, σ, ɸ, k) =>
           val s1 = step(s0)
 
           s1 match {
-            case Σ(CheckHistory(focus1), ρ1, σ, k1) =>
+            case Σ(CheckHistory(focus1), ρ1, σ, ɸ, k1) =>
               s = hist.foldRight(s1) {
                 case (prev, s_) if s1 == s_ =>
                   // try to fold, just for debugging purposes now

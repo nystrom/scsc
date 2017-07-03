@@ -16,7 +16,7 @@ object MakeTrees {
     def toList = xs.asScala.toList
   }
 
-  def make(n: ir.Node): Option[Program] = {
+  def make(n: ir.Node): Option[Scope] = {
     object Debug extends Visitor {
       override def enterDefault(n: ir.Node) = {
         println(s"enter ${n.getClass.getName} $n")
@@ -32,7 +32,7 @@ object MakeTrees {
     val v = new TreeBuilder
     n.accept(v)
     v.peek flatMap {
-      case p: Program =>
+      case p: Scope =>
         v.pop
         v.peek match {
           case Some(_) =>
@@ -42,7 +42,7 @@ object MakeTrees {
         }
         Some(p)
       case _ =>
-        println("Program is not at top of stack")
+        println("Scope is not at top of stack")
         None
     }
   }
@@ -493,7 +493,14 @@ object MakeTrees {
       val es = ListBuffer.empty[Exp]
       for (s <- n.getStatements.toList)
         es += pop
-      push(Block(es.toList.reverse))
+      val block = es.toList.reverse match {
+        case Nil => Empty()
+        case s::ss =>
+          ss.foldLeft(s) {
+            case (s1, s2) => Seq(s1, s2)
+          }
+      }
+      push(block)
       n
     }
 
@@ -548,18 +555,18 @@ object MakeTrees {
       if (n.getTest != null && n.getBody != null) {
         val body = pop
         val test = popR
-        push(Case(Some(test), body.asInstanceOf[Block]))
+        push(Case(Some(test), body))
       }
       else if (n.getBody != null) {
         val body = pop
-        push(Case(None, body.asInstanceOf[Block]))
+        push(Case(None, body))
       }
       else if (n.getTest != null) {
         val test = popR
-        push(Case(Some(test), Block(Nil)))
+        push(Case(Some(test), Empty()))
       }
       else {
-        push(Case(None, Block(Nil)))
+        push(Case(None, Empty()))
       }
       n
     }
@@ -572,7 +579,7 @@ object MakeTrees {
         val ex = pop
         ex match {
           case Local(x) =>
-            push((Catch(x, Some(test), body.asInstanceOf[Block])))
+            push((Catch(x, Some(test), body)))
           case _ =>
             ???
         }
@@ -582,7 +589,7 @@ object MakeTrees {
         val ex = pop
         ex match {
           case Local(x) =>
-            push((Catch(x, None, body.asInstanceOf[Block])))
+            push((Catch(x, None, body)))
           case _ =>
             ???
         }
@@ -612,12 +619,7 @@ object MakeTrees {
     // Callback for leaving a BlockStatement
     override def leaveBlockStatement(n: ir.BlockStatement): ir.Node = {
       val e = pop
-      e match {
-        case e: Block =>
-          push(e)
-        case _ =>
-          ???
-      }
+      push(e)
       n
     }
 
@@ -651,10 +653,10 @@ object MakeTrees {
 
       if (n.isProgram) {
         assert(xs.isEmpty)
-        push(Program(body))
+        push(Scope(body))
       }
       else {
-        push(Lambda(xs.toList, body))
+        push(Lambda(xs.toList, Scope(body)))
       }
       n
     }

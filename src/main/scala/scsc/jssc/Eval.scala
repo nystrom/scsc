@@ -11,7 +11,7 @@ object Eval {
 
   def getPropertyAddress(loc: Loc, i: Exp, σ: Store) = {
     σ.get(loc) match {
-      case Some(Closure(FunObject(typeof, xs, body, props), _)) =>
+      case Some(Closure(FunObject(typeof, proto, xs, body, props), _)) =>
         val v = props collectFirst {
           case Property(k, v: Loc, g, s) if evalOp(Binary.==, k, i) == Bool(true) => v
         }

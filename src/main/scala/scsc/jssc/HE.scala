@@ -27,14 +27,18 @@ object HE {
   def toTerm(s: St): Option[(Exp, Int)] = {
     println("converting to term " + s)
     s match {
-      case Σ(e, ρ, σ, Nil) =>
+      case Σ(e, ρ, σ, Undefined(), Nil) =>
         val u = unreify(e)
         println("--> " + u)
         Some((u, 0))
-      case Σ(e, ρ, σ, Fail(_)::k) =>
+      case Σ(e, ρ, σ, ɸ, Nil) =>
+        val u = unreify(e)
+        println("--> " + Seq(ɸ, u))
+        Some((u, 0))
+      case Σ(e, ρ, σ, ɸ, Fail(_)::k) =>
         None
-      case Σ(e, ρ, σ, k) =>
-        val s1 = step(Σ(strongReify(e)(σ, ρ), ρ, σ, k))
+      case Σ(e, ρ, σ, ɸ, k) =>
+        val s1 = step(Σ(strongReify(e)(σ, ρ), ρ, σ, ɸ, k))
         toTerm(s1) map {
           case (u, n) => (u, n+1)
         }
@@ -208,6 +212,7 @@ object HE {
     def coupling(t1: Exp, t2: Exp): Boolean = (t1 eq t2) || (t1 == t2) || coupling2(t1, t2)
 
     def coupling2(t1: Exp, t2: Exp): Boolean = (t1, t2) match {
+      case (Scope(a1), Scope(a2)) => he(a1, a2)
       case (Prim(a1), Prim(a2)) => a1 == a2
       case (Unary(op1, a1), Unary(op2, a2)) => op1 == op2 && he(a1, a2)
       case (Binary(op1, f1, a1), Binary(op2, f2, a2)) => op1 == op2 && he(f1, f2) && he(a1, a2)
@@ -217,7 +222,6 @@ object HE {
       case (New(e1), New(e2)) => he(e1, e2)
       case (Typeof(e1), Typeof(e2)) => he(e1, e2)
       case (Void(e1), Void(e2)) => he(e1, e2)
-      case (Block(ss1), Block(ss2)) => ss1.length == ss2.length && (ss1 zip ss2).forall({ case (e1, e2) => he(e1, e2) })
       case (Break(_), Break(_)) => true
       case (Continue(_), Continue(_)) => true
       case (Call(e1, es1), Call(e2, es2)) => he(e1, e2) && (es1 zip es2).forall({ case (e1, e2) => he(e1, e2) })
@@ -231,8 +235,8 @@ object HE {
       case (Local(_), Local(_)) => true
       case (LocalAddr(_), LocalAddr(_)) => true
       case (Index(a1, i1), Index(a2, i2)) => he(a1, a2) && he(i1, i2)
-      case (IndexAddr(a1, i1), IndexAddr(a2, i2)) => he(a1, a2) && he(i1, i2)
       case (ArrayLit(ss1), ArrayLit(ss2)) => ss1.length == ss2.length && (ss1 zip ss2).forall({ case (e1, e2) => he(e1, e2) })
+      case (Seq(a1, i1), Seq(a2, i2)) => he(a1, a2) && he(i1, i2)
       case (ObjectLit(ss1), ObjectLit(ss2)) => ss1.length == ss2.length && (ss1 zip ss2).forall({ case (e1, e2) => he(e1, e2) })
       case (Property(a1, i1, g1, s1), Property(a2, i2, g2, s2)) => he(a1, a2) && he(i1, i2) && he(g1, g2) && he(s1, s2)
       case (Return(e1), Return(e2)) => he(e1, e2)
@@ -275,7 +279,7 @@ object HE {
       // FIXME: currently the whistle blows a bit too often.
       // For instance, with the logarithmic version of pow.
       // Need to incorporate the environment too, perhaps.
-      case (s1 @ Σ(e1, ρ1, σ1, k1), s2 @ Σ(e2, ρ2, σ2, k2)) if e1 == e2 && k1.getClass == k2.getClass =>
+      case (s1 @ Σ(e1, ρ1, σ1, ɸ1, k1), s2 @ Σ(e2, ρ2, σ2, ɸ2, k2)) if e1 == e2 && k1.getClass == k2.getClass =>
         (toTerm(s1), toTerm(s2)) match {
           case (Some((t1, n1)), Some((t2, n2))) =>
             println("HE: comparing " + s1)

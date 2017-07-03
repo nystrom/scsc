@@ -40,8 +40,8 @@ object TreeWalk {
         Assign(op, rewrite(left), rewrite(right))
       case Binary(op, left, right) =>
         Binary(op, rewrite(left), rewrite(right))
-      case Block(es) =>
-        Block(rewrite(es))
+      case Seq(e1, e2) =>
+        Seq(rewrite(e1), rewrite(e2))
       case Break(label) =>
         Break(label)
       case Call(f, args) =>
@@ -64,8 +64,8 @@ object TreeWalk {
         ForEach(label, rewrite(init), rewrite(test), rewrite(modify), rewrite(body))
       case Lambda(params, body) =>
         Lambda(params, rewrite(body))
-      case Program(body) =>
-        Program(rewrite(body))
+      case Scope(body) =>
+        Scope(rewrite(body))
       case Local(x) =>
         Local(x)
       case LocalAddr(x) =>
@@ -118,8 +118,8 @@ object TreeWalk {
         DoWhile(label, rewrite(body), rewrite(cond))
       case With(exp, body) =>
         With(rewrite(exp), rewrite(body))
-      case FunObject(typeof, params, body, props) =>
-        FunObject(typeof, params, rewrite(body), rewrite(props))
+      case FunObject(typeof, proto, params, body, props) =>
+        FunObject(typeof, rewrite(proto), params, rewrite(body), rewrite(props))
     }
   }
 }
