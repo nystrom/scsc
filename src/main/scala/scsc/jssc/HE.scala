@@ -27,18 +27,14 @@ object HE {
   def toTerm(s: St): Option[(Exp, Int)] = {
     println("converting to term " + s)
     s match {
-      case Σ(e, ρ, σ, Undefined(), Nil) =>
+      case Σ(e, ρ, σ, Nil) =>
         val u = unreify(e)
         println("--> " + u)
         Some((u, 0))
-      case Σ(e, ρ, σ, ɸ, Nil) =>
-        val u = unreify(e)
-        println("--> " + Seq(ɸ, u))
-        Some((u, 0))
-      case Σ(e, ρ, σ, ɸ, Fail(_)::k) =>
+      case Σ(e, ρ, σ, Fail(_)::k) =>
         None
-      case Σ(e, ρ, σ, ɸ, k) =>
-        val s1 = step(Σ(strongReify(e)(σ, ρ), ρ, σ, ɸ, k))
+      case Σ(e, ρ, σ, k) =>
+        val s1 = step(Σ(strongReify(e)(σ, ρ), ρ, σ, k))
         toTerm(s1) map {
           case (u, n) => (u, n+1)
         }
@@ -279,7 +275,7 @@ object HE {
       // FIXME: currently the whistle blows a bit too often.
       // For instance, with the logarithmic version of pow.
       // Need to incorporate the environment too, perhaps.
-      case (s1 @ Σ(e1, ρ1, σ1, ɸ1, k1), s2 @ Σ(e2, ρ2, σ2, ɸ2, k2)) if e1 == e2 && k1.getClass == k2.getClass =>
+      case (s1 @ Σ(e1, ρ1, σ1, k1), s2 @ Σ(e2, ρ2, σ2, k2)) if e1 == e2 && k1.getClass == k2.getClass =>
         (toTerm(s1), toTerm(s2)) match {
           case (Some((t1, n1)), Some((t2, n2))) =>
             println("HE: comparing " + s1)

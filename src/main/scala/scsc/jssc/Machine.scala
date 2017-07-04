@@ -5,22 +5,15 @@ import scsc.js.Trees._
 object Machine {
   import Continuations._
 
-  // The state of the CESFK machine:
-  case class Σ(c: Exp, e: Env, s: Store, f: Effect, k: Cont) {
-    override def toString = s"Σ(e = ${c.show}, ρ = $e, σ = $s, ɸ = $f, k = $k)"
+  // The state of the CESK machine:
+  case class Σ(c: Exp, e: Env, s: Store, k: Cont) {
+    override def toString = s"Σ(e = ${c.show}, ρ = $e, σ = $s, k = $k)"
   }
 
   type St = Σ
 
   // Inject a term into the machine.
-  def inject(e: Exp): St = Σ(e, ρ0, σ0, ɸ0, Nil)
-
-  ////////////////////////////////////////////////////////////////
-  // EFFECTS
-  ////////////////////////////////////////////////////////////////
-
-  type Effect = Exp
-  lazy val ɸ0 = Undefined()
+  def inject(e: Exp): St = Σ(e, ρ0, σ0, Nil)
 
   ////////////////////////////////////////////////////////////////
   // ENVIRONMENTS
@@ -79,6 +72,22 @@ object Machine {
     }
 
     def sanitize: Store = σ
+
+    def sanitize(ρ: Env): Store = {
+      import scala.collection.mutable.MapBuilder
+
+      val σnew: MapBuilder[Loc, Closure, Store] = new MapBuilder(σ0)
+
+      for ((x, loc) <- ρ) {
+        σ.get(loc) match {
+          case Some(v) =>
+            σnew += (loc -> v)
+          case None =>
+        }
+      }
+
+      σnew.result
+    }
 
     def merge(σ2: Store): Store = {
       val σ1 = σ

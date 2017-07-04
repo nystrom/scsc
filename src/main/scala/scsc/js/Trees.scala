@@ -48,17 +48,26 @@ object Trees {
       case Null() => Some(0)
       case Bool(false) => Some(0)
       case Bool(true) => Some(1)
+      case StringLit(v) =>
+        try {
+          Some(java.lang.Double.parseDouble(v))
+        }
+        catch {
+          case ex: java.lang.NumberFormatException => None
+        }
       case v => None
     }
   }
 
   object CvtString {
     def unapply(e: Exp) = e match {
+      case XML(v) => Some(v)
+      case Regex(v, opts) => Some(s"/$v/$opts")
       case StringLit(v) => Some(v)
       case ObjectLit(es) => Some(es.map(_.show).mkString("{", ",", "}"))
       case ArrayLit(es) => Some(es.map(_.show).mkString("[", ",", "]"))
       case Lambda(xs, e) => Some("<function>")
-      case Value(e) => Some(e.show)
+      case Value(e) => Some(scsc.js.PP.pretty(e))
       case _ => None
     }
   }
@@ -80,13 +89,6 @@ object Trees {
   object ValueOrResidual {
     def unapply(e: Exp) = e match {
       case v if v.isValueOrResidual => Some(v)
-      case _ => None
-    }
-  }
-
-  object NormalForm {
-    def unapply(e: Exp) = e match {
-      case v if v.isNormalForm => Some(v)
       case _ => None
     }
   }
@@ -145,7 +147,15 @@ object Trees {
   type Name = String
 
   implicit class IV(e: Exp) {
-    def isPure: Boolean = {
+    def isPure: Boolean = e match {
+      case Value(v) => true
+      case Local(_) => true
+      case LocalAddr(_) => true
+      case Residual(v) => v.isPure
+      case _ => false
+    }
+
+    def isPure2: Boolean = {
       import scsc.js.TreeWalk._
       object Purity extends Rewriter {
         var pure = true
@@ -183,9 +193,11 @@ object Trees {
     }
 
     // JavaScript values (no control-flow, no residuals)
-    // Locations are the values for object and array literals.
+    // Locations are the values for objects and functions.
     def isValue: Boolean = e match {
       case StringLit(_) => true
+      case XML(_) => true
+      case Regex(_, _) => true
       case Bool(_) => true
       case Num(_) => true
       case Undefined() => true
@@ -200,17 +212,6 @@ object Trees {
       case Residual(_) => true
       case Prim(_) => true
       case v => v.isValue
-    }
-
-    def isNormalForm: Boolean = e match {
-      // control-flow values
-      case Break(_) => true
-      case Continue(_) => true
-      case Return(v) => v forall { _.isNormalForm }
-      case Yield(v) => v forall { _.isNormalForm }
-      case Throw(v) => v.isNormalForm
-
-      case v => v.isHeapValue
     }
 
     def isHeapValue: Boolean = e match {
@@ -310,6 +311,8 @@ object Trees {
   case class Bool(v: Boolean) extends Lit
   case class Num(v: Double) extends Lit
   case class StringLit(v: String) extends Lit
+  case class XML(v: String) extends Lit
+  case class Regex(v: String, opts: String) extends Lit
   case class Null() extends Lit
   case class Undefined() extends Lit
   case class ObjectLit(es: List[Exp]) extends Exp // HACKED (prototype missing)

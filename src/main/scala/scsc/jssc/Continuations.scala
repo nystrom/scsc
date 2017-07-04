@@ -116,12 +116,14 @@ object Continuations {
   case class RebuildConstDef(x: Name, ρ: Env) extends RebuildCont
 
   case class RebuildCondTest(s1: Exp, s2: Exp, ρBeforeTest: Env) extends RebuildCont
-  case class RebuildCondTrue(test: Exp, s2: Exp, σAfterTest: Store, ɸAfterTest: Effect, ρBeforeTest: Env) extends RebuildCont
-  case class RebuildCondFalse(test: Exp, s1: Exp, σAfterS1: Store, ɸAfterTest: Effect, ɸAfterS1: Effect, ρBeforeTest: Env) extends RebuildCont
+  case class RebuildCondTrue(test: Exp, s2: Exp, σAfterTest: Store, ρBeforeTest: Env) extends RebuildCont
+  case class RebuildCondFalse(test: Exp, s1: Exp, σAfterS1: Store, ρBeforeTest: Env) extends RebuildCont
   case class RebuildIfElseTest(s1: Exp, s2: Exp, ρBeforeTest: Env) extends RebuildCont
-  case class RebuildIfElseTrue(test: Exp, s2: Exp, σAfterTest: Store, ɸAfterTest: Effect, ρBeforeTest: Env) extends RebuildCont
-  case class RebuildIfElseFalse(test: Exp, s1: Exp, σAfterS1: Store, ɸAfterTest: Effect, ɸAfterS1: Effect, ρBeforeTest: Env) extends RebuildCont
+  case class RebuildIfElseTrue(test: Exp, s2: Exp, σAfterTest: Store, ρBeforeTest: Env) extends RebuildCont
+  case class RebuildIfElseFalse(test: Exp, s1: Exp, σAfterS1: Store, ρBeforeTest: Env) extends RebuildCont
 
+
+  case class RebuildForIn(label: Option[Name], init: Exp, iter: Exp, ρ: Env) extends RebuildCont
   case class RebuildForTest(label: Option[Name], test: Exp, iter: Exp, body: Exp, ρ: Env) extends RebuildCont
   case class RebuildForBody(label: Option[Name], test1: Exp, test: Exp, iter: Exp, body: Exp, ρ: Env) extends RebuildCont
   case class RebuildForIter(label: Option[Name], body1: Exp, test1: Exp, test: Exp, iter: Exp, body: Exp, ρ: Env) extends RebuildCont

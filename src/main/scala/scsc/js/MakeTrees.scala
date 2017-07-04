@@ -625,19 +625,25 @@ object MakeTrees {
 
     // Callback for leaving a ForNode
     override def leaveForNode(n: ir.ForNode): ir.Node = {
-      val body = pop
-      val modify = Option(n.getModify) map { _ => pop } getOrElse Empty()
-      val test = Option(n.getTest) map { _ => popR } getOrElse Bool(true)
-      val init = Option(n.getInit) map { _ => pop } getOrElse Empty()
       if (n.isForIn) {
-        assert(n.getModify == null)
-        push(ForIn(None, init, test, body))
-      }
-      else if (n.isForEach) {
-        push(ForEach(None, init, test, modify, body))
+        val body = pop
+        val modify = Option(n.getModify) map { _ => pop } getOrElse Empty()
+        // val test = Option(n.getTest) map { _ => popR } getOrElse Bool(true)
+        // println(s"test ${n.getTest} $test")
+        val init = Option(n.getInit) map { _ => pop } getOrElse Empty()
+        push(ForIn(None, init, modify, body))
       }
       else {
-        push(For(None, init, test, modify, body))
+        val body = pop
+        val modify = Option(n.getModify) map { _ => pop } getOrElse Empty()
+        val test = Option(n.getTest) map { _ => popR } getOrElse Bool(true)
+        val init = Option(n.getInit) map { _ => pop } getOrElse Empty()
+        if (n.isForEach) {
+          push(ForEach(None, init, test, modify, body))
+        }
+        else {
+          push(For(None, init, test, modify, body))
+        }
       }
       n
     }
@@ -727,6 +733,8 @@ object MakeTrees {
     // Callback for leaving a LiteralNode
     override def leaveLiteralNode(n: ir.LiteralNode[_]): ir.Node = {
       import jdk.nashorn.internal.runtime.ScriptRuntime
+      import jdk.nashorn.internal.parser.Lexer.RegexToken
+      import jdk.nashorn.internal.parser.Lexer.XMLToken
 
       n.getValue match {
         case null =>
@@ -748,7 +756,12 @@ object MakeTrees {
           push(Bool(v))
         case ScriptRuntime.UNDEFINED =>
           push(Undefined())
-        case _ =>
+        case v: RegexToken =>
+          push(Regex(v.getExpression, v.getOptions))
+        case v: XMLToken =>
+          push(XML(v.getExpression))
+        case v =>
+          println(s"missing implementation $v ${v.getClass}")
           ???
       }
       n
@@ -903,7 +916,8 @@ object MakeTrees {
 
     // Callback for leaving a {@link JoinPredecessorExpression}.
     override def leaveJoinPredecessorExpression(n: ir.JoinPredecessorExpression): ir.Node = {
-      leaveDefault(n)
+      val e = pop
+      push(e)
       n
     }
 

@@ -84,6 +84,10 @@ object TreeWalk {
         Num(v)
       case StringLit(v) =>
         StringLit(v)
+      case XML(v) =>
+        XML(v)
+      case Regex(v, opts) =>
+        Regex(v, opts)
       case Null() =>
         Null()
       case Undefined() =>

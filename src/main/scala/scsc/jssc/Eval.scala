@@ -29,12 +29,14 @@ object Eval {
     case (Binary.+, CvtNum(n1), CvtNum(n2)) => Num(n1 + n2)
     case (Binary.-, CvtNum(n1), CvtNum(n2)) => Num(n1 - n2)
     case (Binary.*, CvtNum(n1), CvtNum(n2)) => Num(n1 * n2)
-    case (Binary./, CvtNum(n1), CvtNum(0)) =>
-      println("ERROR: div by 0: ${Binary(op, v1, v2).show}")
-      reify(Binary(op, v1, v2))(σempty, ρempty)
-    case (Binary.%, CvtNum(n1), CvtNum(0)) =>
-      println("ERROR: mod by 0: ${Binary(op, v1, v2).show}")
-      reify(Binary(op, v1, v2))(σempty, ρempty)
+    // case (Binary./, CvtNum(n1), CvtNum(0)) =>
+    //   println("ERROR: div by 0: ${Binary(op, v1, v2).show}")
+    //   reify(Binary(op, v1, v2))(σempty, ρempty)
+    // case (Binary.%, CvtNum(n1), CvtNum(0)) =>
+    //   println("ERROR: mod by 0: ${Binary(op, v1, v2).show}")
+    //   reify(Binary(op, v1, v2))(σempty, ρempty)
+
+    // div by 0 is allowed (returns NaN or +/-Inf)
     case (Binary./, CvtNum(n1), CvtNum(n2)) => Num(n1 / n2)
     case (Binary.%, CvtNum(n1), CvtNum(n2)) => Num(n1 % n2)
 
@@ -121,6 +123,47 @@ object Eval {
     case (op, v1, v2) =>
       println("ERROR: cannot apply ${Binary(op, v1, v2).show}")
       reify(Binary(op, v1, v2))(σempty, ρempty)
+  }
+
+  def evalPrim(fun: String, args: List[Exp]): Option[Exp] = (fun, args) match {
+    case ("eval", StringLit(code)::_) => scsc.js.Parser.fromString(code)
+    case ("eval", Value(v)::_) => Some(v)
+    case ("eval", Nil) => Some(Undefined())
+    case ("isNaN", CvtNum(v)::_) => Some(Bool(v.isNaN))
+    case ("isNaN", Nil) => Some(Bool(true))
+    case ("isFinite", CvtNum(v)::_) => Some(Bool(!v.isInfinite))
+    case ("isFinite", Nil) => Some(Bool(false))
+    case ("String.indexOf", StringLit(s)::StringLit(c)::Nil) => None
+    case ("String.charAt", StringLit(s)::CvtNum(i)::Nil) => None /// Some(StringLit(s(i.toInt).toString))
+    case ("Regex.exec", Regex(re, opts)::StringLit(s)::Nil) => None /// Some(StringLit(s(i.toInt).toString))
+    case ("Math.abs", CvtNum(v)::_) => Some(Num(v.abs))
+    case ("Math.sqrt", CvtNum(v)::_) => Some(Num(math.sqrt(v)))
+    case ("Math.floor", CvtNum(v)::_) => None
+    case ("Math.ceil", CvtNum(v)::_) => None
+    case ("Math.round", CvtNum(v)::_) => None
+    case ("Math.exp", CvtNum(v)::_) => Some(Num(math.exp(v)))
+    case ("Math.log", CvtNum(v)::_) => None
+    case ("Math.sin", CvtNum(v)::_) => Some(Num(math.sin(v)))
+    case ("Math.cos", CvtNum(v)::_) => Some(Num(math.cos(v)))
+    case ("Math.tan", CvtNum(v)::_) => Some(Num(math.tan(v)))
+    case ("Math.asin", CvtNum(v)::_) => Some(Num(math.asin(v)))
+    case ("Math.acos", CvtNum(v)::_) => Some(Num(math.acos(v)))
+    case ("Math.atan", CvtNum(v)::_) => Some(Num(math.atan(v)))
+    case ("Math.pow", CvtNum(v1)::CvtNum(v2)::_) => Some(Num(math.pow(v1, v2)))
+    case ("Math.atan2", CvtNum(v1)::CvtNum(v2)::_) => Some(Num(math.atan2(v1, v2)))
+    case ("Math.max", es) =>
+      val r = es.foldLeft(Option(-1.0/0.0)) {
+        case (Some(v1), CvtNum(v2)) => Some(math.max(v1, v2))
+        case _ => None
+      }
+      r map { v => Num(v) }
+    case ("Math.min", es) =>
+      val r = es.foldLeft(Option(1.0/0.0)) {
+        case (Some(v1), CvtNum(v2)) => Some(math.min(v1, v2))
+        case _ => None
+      }
+      r map { v => Num(v) }
+    case _ => None
   }
 }
 
