@@ -73,7 +73,7 @@ object PP {
       case ForEach(label, init, test, modify, body) =>
         text("for each") <+> parens(show(init) <> semi <+> show(test) <> semi <+> show(modify)) <> line <> nest(show(body))
       case Lambda(params, body) =>
-        text("function") <+> parens(hsep(params.map(text), comma)) <> nest(show(body))
+        text("function") <+> parens(hsep(params.map(text), comma)) <> nest(braces(show(body)))
       case Scope(body) =>
         show(body)
       case Local(x) =>
@@ -131,12 +131,12 @@ object PP {
         text("try") <+> nest(braces(show(body))) <+> text("catch") <+> vsep(catches, line)
       case TryFinally(body, fin) =>
         text("try") <+> nest(braces(show(body))) <+> text("finally") <+> show(fin)
+      case VarDef(x, Undefined()) =>
+        text("var") <+> text(x)
+      case VarDef(x, Lambda(params, body)) =>
+        text("function") <+> text(x) <> parens(hsep(params.map(text), comma)) <> nest(braces(show(body)))
       case VarDef(x, init) =>
         text("var") <+> text(x) <+> text("=") <+> show(init)
-      case LetDef(x, init) =>
-        text("let") <+> text(x) <+> text("=") <+> show(init)
-      case ConstDef(x, init) =>
-        text("const") <+> text(x) <+> text("=") <+> show(init)
       case While(label, cond, body) =>
         text("while") <+> parens(show(cond)) <+> nest(braces(show(body)))
       case DoWhile(label, body, cond) =>

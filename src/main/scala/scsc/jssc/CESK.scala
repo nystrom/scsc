@@ -40,6 +40,74 @@ object CESK {
   import Continuations._
   import Residualization._
 
+  def extendWithCond(test: Exp, σAfterTest: Store, ρ: Env, result: Boolean): Store = {
+    test match {
+      case Residual(e) =>
+        extendWithCond(e, σAfterTest, ρ, result)
+
+      case Binary(Binary.&&, e1, e2) if result =>
+        extendWithCond(e2, extendWithCond(e1, σAfterTest, ρ, true), ρ, true)
+      case Binary(Binary.||, e1, e2) if ! result =>
+        extendWithCond(e2, extendWithCond(e1, σAfterTest, ρ, false), ρ, false)
+      case Unary(Prefix.!, e) =>
+        extendWithCond(e, σAfterTest, ρ, ! result)
+
+      case Binary(Binary.===, Local(x), Value(v)) if result =>
+        ρ.get(x) match {
+          case Some(loc) => σAfterTest.assign(loc, v, ρ)
+          case None => σAfterTest
+        }
+      case Binary(Binary.==, Local(x), Value(v)) if result =>
+        ρ.get(x) match {
+          case Some(loc) => σAfterTest.assign(loc, v, ρ)
+          case None => σAfterTest
+        }
+      case Binary(Binary.!==, Local(x), Value(v)) if ! result =>
+        ρ.get(x) match {
+          case Some(loc) => σAfterTest.assign(loc, v, ρ)
+          case None => σAfterTest
+        }
+      case Binary(Binary.!=, Local(x), Value(v)) if ! result =>
+        ρ.get(x) match {
+          case Some(loc) => σAfterTest.assign(loc, v, ρ)
+          case None => σAfterTest
+        }
+
+      case Binary(Binary.===, Value(v), Local(x)) if result =>
+        ρ.get(x) match {
+          case Some(loc) => σAfterTest.assign(loc, v, ρ)
+          case None => σAfterTest
+        }
+      case Binary(Binary.==, Value(v), Local(x)) if result =>
+        ρ.get(x) match {
+          case Some(loc) => σAfterTest.assign(loc, v, ρ)
+          case None => σAfterTest
+        }
+      case Binary(Binary.!==, Value(v), Local(x)) if ! result =>
+        ρ.get(x) match {
+          case Some(loc) => σAfterTest.assign(loc, v, ρ)
+          case None => σAfterTest
+        }
+      case Binary(Binary.!=, Value(v), Local(x)) if ! result =>
+        ρ.get(x) match {
+          case Some(loc) => σAfterTest.assign(loc, v, ρ)
+          case None => σAfterTest
+        }
+
+      case Local(x) =>
+        ρ.get(x) match {
+          case Some(loc) =>
+            // FIXME should't do this... x is not true, it's something that can
+            // be coerced to true.
+            σAfterTest.assign(loc, Bool(result), ρ)
+          case None =>
+            σAfterTest
+        }
+
+      case _ =>
+        σAfterTest
+    }
+  }
 
   // Partial evaluation is implemented as follows:
   // We start with normal CEK-style evaluation.
@@ -56,13 +124,6 @@ object CESK {
   object Value {
     def unapply(e: Exp) = e match {
       case v if v.isValue => Some(v)
-      case _ => None
-    }
-  }
-
-  object HeapValue {
-    def unapply(e: Exp) = e match {
-      case v if v.isHeapValue => Some(v)
       case _ => None
     }
   }
@@ -91,9 +152,9 @@ object CESK {
       case Local(x) => Some(e)
       case While(label, test, body) => Some(e)
       case DoWhile(label, body, test) => Some(e)
-      case For(label, init, test, iter, body) => Some(e)
-      case ForEach(label, init, test, iter, body) => Some(e)
-      case ForIn(label, init, iter, body) => Some(e)
+      case For(label, Empty(), test, iter, body) => Some(e)
+      case ForEach(label, Empty(), test, iter, body) => Some(e)
+      case ForIn(label, Empty(), iter, body) => Some(e)
       case _ => None
     }
   }
@@ -121,11 +182,16 @@ object CESK {
     while (t > 0) {
       t -= 1
       println(s)
+
+      assert(! s.c.isInstanceOf[Loc])
       // println("term " + toTerm(s).map(_.show).getOrElse("FAIL"))
 
       s match {
         // stop when we have a value with the empty continuation.
-        case Σ(ValueOrResidual(v), ρ, σ, Nil) =>
+        case Σ(Residual(v), ρ, σ, Nil) =>
+          return v
+
+        case Σ(Value(v), ρ, σ, Nil) =>
           return unreify(reify(v)(σ, ρ))
 
         case Σ(e, _, σ, Fail(s)::k) =>
@@ -147,6 +213,9 @@ object CESK {
     while (true) {
       t -= 1
       println(s)
+
+      assert(! s.c.isInstanceOf[Loc])
+
       println("term " + toTerm(s).map { case (u, n) => s"${u.show} in $n steps" }.getOrElse("FAIL"))
 
       s match {
@@ -154,7 +223,20 @@ object CESK {
         case Σ(ValueOrResidual(v), ρ, σ, Nil) =>
           return unreify(reify(v)(σ, ρ))
 
+        case Σ(e, ρ, σ, Backup(s)::k) =>
+          println(s"FAIL $s")
+          return Lambda("error"::Nil, e)
+
         case Σ(e, ρ, σ, Fail(s)::k) =>
+          // If we fail to reify, backup...
+
+          // Idea: it's a partial machine.
+          // Not all expressions can be reified.
+          // If we hit a failure state, we *backup*
+          // to the first state we can reify, then continue from there.
+          // We cannot reify a location that has not yet been stored in
+          // a variable.
+          // OR: we need to append the path to the location.
           println(s"FAIL $s")
           return Lambda("error"::Nil, e)
 

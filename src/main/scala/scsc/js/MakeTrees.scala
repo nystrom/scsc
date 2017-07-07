@@ -8,6 +8,7 @@ object MakeTrees {
   import jdk.nashorn.internal.parser.TokenType
 
   import scsc.js.Visitor
+  import scsc.util.FreshVar
 
   import scala.collection.mutable.ListBuffer
   import scala.collection.JavaConverters._
@@ -16,17 +17,124 @@ object MakeTrees {
     def toList = xs.asScala.toList
   }
 
-  def make(n: ir.Node): Option[Scope] = {
-    object Debug extends Visitor {
-      override def enterDefault(n: ir.Node) = {
-        println(s"enter ${n.getClass.getName} $n")
-        super.enterDefault(n)
-      }
-      override def leaveDefault(n: ir.Node) = {
-        println(s"leave ${n.getClass.getName} $n")
-        super.leaveDefault(n)
+  object Debug extends Visitor {
+    override def enterDefault(n: ir.Node) = {
+      println(s"enter ${n.getClass.getName} $n")
+      super.enterDefault(n)
+    }
+    override def leaveDefault(n: ir.Node) = {
+      println(s"leave ${n.getClass.getName} $n")
+      super.leaveDefault(n)
+    }
+  }
+
+  class Flatten() extends TreeWalk.Rewriter {
+    val hoist: ListBuffer[Exp] = ListBuffer()
+
+    def block(es: List[Exp]) = es match {
+      case Nil => Undefined()
+      case e::es => es.foldLeft(e) {
+        case (e1, e2) => Seq(e1, e2)
       }
     }
+
+    override def rewrite(e: Exp) = e match {
+      case Binary(op, e1, e2) =>
+        val t = FreshVar()
+        val t1 = rewrite(e1)
+        val t2 = rewrite(e2)
+        hoist += Assign(None, LocalAddr(t), Binary(op, t1, t2))
+        Local(t)
+      case Unary(op, e1) =>
+        val t = FreshVar()
+        val t1 = rewrite(e1)
+        hoist += Assign(None, LocalAddr(t), Unary(op, t1))
+        Local(t)
+      case Delete(e1) =>
+        val t = FreshVar()
+        val t1 = rewrite(e1)
+        hoist += Assign(None, LocalAddr(t), Delete(t1))
+        Local(t)
+      case Typeof(e1) =>
+        val t = FreshVar()
+        val t1 = rewrite(e1)
+        hoist += Assign(None, LocalAddr(t), Typeof(t1))
+        Local(t)
+      case Void(e1) =>
+        val t = FreshVar()
+        val t1 = rewrite(e1)
+        hoist += Assign(None, LocalAddr(t), Void(t1))
+        Local(t)
+      case Assign(op, e1, e2) =>
+        val t = FreshVar()
+        val t1 = rewrite(e1)
+        val t2 = rewrite(e2)
+        Assign(op, t1, t2)
+      case Cond(e0, e1, e2) =>
+        val t = FreshVar()
+        val t0 = rewrite(e0)
+        val v1 = new Flatten()
+        val v2 = new Flatten()
+        val t1 = v1.rewrite(e1)
+        val t2 = v2.rewrite(e2)
+        hoist += IfElse(t0, block(v1.hoist.toList :+ Assign(None, LocalAddr(t), t1)), block(v2.hoist.toList :+ Assign(None, LocalAddr(t), t2)))
+        Local(t)
+      case IfElse(e0, s1, s2) =>
+        val t0 = rewrite(e0)
+        val v1 = new Flatten()
+        val v2 = new Flatten()
+        val t1 = v1.rewrite(s1)
+        val t2 = v2.rewrite(s2)
+        IfElse(t0, block(v1.hoist.toList :+ t1), block(v2.hoist.toList :+ t2))
+      case Value(v) =>
+        v
+      case e =>
+        super.rewrite(e)
+    }
+  }
+
+  // Hoist variable definitions to the top of the scope.
+  // Replace variable definitions with assignments or with nothing if a lambda.
+  // Add assignments to nodes that might create objects
+  // This should ensure new objects become reachable from the environment
+  // in a finite number of steps.
+  object IntroAssignments extends TreeWalk.Rewriter {
+    val hoist: ListBuffer[Exp] = ListBuffer()
+
+    override def rewrite(e: Exp) = e match {
+      // case _: ObjectLit | _: ArrayLit | _: Call | _: NewCall | _: Lambda =>
+      //   println(s"INTRO assignment for $e")
+      //   val e2 = super.rewrite(e)
+      //   val x = FreshVar()
+      //   hoist += VarDef(x, Undefined())
+      //   Assign(None, LocalAddr(x), e2)
+      case e @ VarDef(x, Lambda(xs, body)) =>
+        println(s"HOIST function def $e")
+        val body2 = super.rewrite(body)
+        hoist += VarDef(x, Lambda(xs, body2))
+        Undefined()
+      case e @ VarDef(x, init) =>
+        println(s"HOIST var def $e")
+        val e2 = super.rewrite(e)
+        hoist += VarDef(x, Undefined())
+        Seq(Assign(None, LocalAddr(x), init), Undefined())
+      case e @ Scope(body) =>
+        println(s"rewrite scope $e")
+        val oldHoist = hoist.toList
+        hoist.clear
+        val body2 = rewrite(body)
+        val body3 = hoist.toList.foldRight(body2) {
+          case (d, e) => Seq(d, e)
+        }
+        hoist.clear
+        hoist ++= oldHoist
+        Scope(body3)
+      case e =>
+        super.rewrite(e)
+    }
+  }
+
+  def make(n: ir.Node): Option[Scope] = {
     n.accept(Debug)
 
     val v = new TreeBuilder
@@ -45,6 +153,10 @@ object MakeTrees {
         println("Scope is not at top of stack")
         None
     }
+  }
+
+  def desugar(p: Scope) = {
+    IntroAssignments.rewrite(p).asInstanceOf[Scope]
   }
 
   // Default implementation of NodeOperatorVisitor.
@@ -929,15 +1041,7 @@ object MakeTrees {
       val e = Option(n.getInit) map { _ => popR } getOrElse Undefined()
       x match {
         case Local(x) =>
-          if (n.isLet) {
-            push(LetDef(x, e))
-          }
-          else if (n.isConst) {
-            push(ConstDef(x, e))
-          }
-          else {
-            push(VarDef(x, e))
-          }
+          push(VarDef(x, e))
         case _ =>
           ???
       }

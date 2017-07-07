@@ -32,12 +32,29 @@ object Parser {
     }
   }
 
-  def fromFile(path: String): Option[Scope] = {
-    val source = Source.sourceFor(path, new java.io.File(path))
-    val parser = new JSParser(context.getEnv, source, errors)
-    parser.parse match {
-      case null => None
-      case n => MakeTrees.make(n)
+  // support multiple files.
+  def fromFile(paths: String*): Option[Scope] = {
+    val trees = paths map {
+      path =>
+        val source = Source.sourceFor(path, new java.io.File(path))
+        val parser = new JSParser(context.getEnv, source, errors)
+        parser.parse
+    }
+    trees match {
+      case trees if trees.exists(_ == null) => None
+      case trees =>
+        val n = trees.foldLeft(Some(Undefined()): Option[Exp]) {
+          case (Some(result), tree) =>
+            val n = MakeTrees.make(tree)
+            n match {
+              case Some(Scope(p)) => Some(Sequence(result, p))
+              case None => None
+            }
+          case (None, _) => None
+        }
+        n map {
+          n => MakeTrees.desugar(Scope(n))
+        }
     }
   }
 }

@@ -28,17 +28,13 @@ object Residualization {
         seen += v
 
         σ.get(v) match {
-          case Some(Closure(loc1: Loc, _)) =>
+          case Some(LocClosure(loc1: Loc)) =>
             worklist = worklist :+ (path, loc1)
-          case Some(Closure(FunObject(_, proto, _, _, props), _)) =>
-            proto match {
-              case loc1: Loc =>
-                worklist = worklist :+ (Index(path, StringLit("__proto__")), loc1)
-              case _ =>
-            }
+          case Some(ObjClosure(FunObject(_, proto, _, _, props), _)) =>
+            worklist = worklist :+ ((Index(path, StringLit("__proto__")), proto))
             props foreach {
-              case Property(k, loc1: Loc, _, _) =>
-                worklist = worklist :+ (Index(path, k), loc1)
+              case (k, loc1: Loc) =>
+                worklist = worklist :+ ((Index(path, StringLit(k)), loc1))
               case _ =>
             }
           case _ =>
@@ -50,64 +46,64 @@ object Residualization {
     // that we haven't stored in a variable yet.
 
     println(s"NO ACCESS PATH found for $loc with σ = $σ and ρ = $ρ")
-
     Undefined()
-
-    // // If the location stores a value just return it.
-    // σ.get(loc) match {
-    //   case Some(Closure(_: Loc, _)) =>
-    //     Undefined()
-    //   case Some(Closure(Value(v), _)) =>
-    //     v
-    //   case Some(Closure(FunObject(_, proto, params, Some(e), props), _)) =>
-    //     Lambda(params, e)
-    //   case Some(Closure(FunObject(_, proto, Nil, None, props), _)) =>
-    //     proto match {
-    //       case Prim("Object.prototype") =>
-    //         ObjectLit(props flatMap {
-    //           case Property(k, v, _, _) if k == StringLit("__proto__") =>
-    //             Nil
-    //           case p @ Property(k, v, _, _) =>
-    //             Property(k, reify(v)(σ, ρ), None, None)::Nil
-    //         })
-    //       case Prim("Array.prototype") =>
-    //         val kvs = props flatMap {
-    //           case Property(k, v, _, _) if k == StringLit("__proto__") =>
-    //             Nil
-    //           case p @ Property(StringLit("length"), v, _, _) =>
-    //             Nil
-    //           case p @ Property(CvtNum(n), v, _, _) =>
-    //             (n, reify(v)(σ, ρ))::Nil
-    //         }
-    //         val elements = kvs.sortBy(_._1).map(_._2)
-    //         ArrayLit(elements)
-    //       case v =>
-    //         println(s"PROTOTYPE $v")
-    //         Undefined()
-    //     }
-    //   case _ =>
-    //     // No access path was found.
-    //     Undefined()
-    // }
-
-
   }
 
   def reify(e: Exp)(implicit σ: Store, ρ: Env): Exp = {
+    tryReify(e)(σ, ρ) match {
+      case Some(e) => e
+      case None => ???
+    }
+  }
+
+  def tryReify(e: Exp)(implicit σ: Store, ρ: Env): Option[Exp] = {
     import scsc.js.TreeWalk._
 
     object Reify extends Rewriter {
+      var failed = false
+
       override def rewrite(e: Exp): Exp = e match {
         case Residual(e) => super.rewrite(e)
-        case e: Loc => findAccessPath(e, σ, ρ)
+        case Path(_, path) => super.rewrite(path)
+        case e: Loc =>
+          val v = findAccessPath(e, σ, ρ)
+          if (v == Undefined())
+            failed = true
+          v
         case e => super.rewrite(e)
       }
     }
 
-    Reify.rewrite(e) match {
-      case Value(e) => e
-      case e => Residual(e)
+    val r = Reify.rewrite(e)
+
+    if (Reify.failed) {
+      None
     }
+    else {
+      r match {
+        case Value(e) =>
+          Some(e)
+        case Residual(e) =>
+          Some(Residual(e))
+        case e =>
+          Some(Residual(e))
+      }
+    }
+  }
+
+  def reifyState(s: St): St = s match {
+    // Termination conditions
+    case Σ(Value(v), ρ, σ, Nil) => s
+    case Σ(Residual(e), ρ, σ, Nil) => s
+    case Σ(e, ρ, σ, Fail(_)::_) => s
+
+    case Σ(e, ρ, σ, k) =>
+      tryReify(e)(σ, ρ) match {
+        case None =>
+          reifyState(Step.step(s))
+        case Some(e) =>
+          Σ(e, ρ, σ, k)
+      }
   }
 
   def unreify(e: Exp): Exp = {
@@ -123,28 +119,18 @@ object Residualization {
     Unreify.rewrite(e)
   }
 
-  def strongReify(e: Exp)(implicit σ: Store, ρ: Env): Exp = Residual(unreify(e))
+  def strongReify(e: Exp)(implicit σ: Store, ρ: Env): Exp = Residual(unreify(reify(e)(σ, ρ)))
 
   def strongReifyStore(σ: Store, ρ: Env): Store = σ map {
-    case (loc, Closure(v, ρ)) => (loc, Closure(strongReify(v)(σ, ρ), ρ))
+    case (loc, ValClosure(v)) => (loc, ValClosure(strongReify(v)(σ, ρ)))
+    case (loc, ObjClosure(v, ρ)) => (loc, ObjClosure(v, ρ))
+    case (loc, LocClosure(v)) => (loc, LocClosure(v))
+    case (loc, UnknownClosure()) => (loc, UnknownClosure())
   }
 
   def strongReify(s: St): St = s match {
     case Σ(focus, ρ, σ, k) =>
       val focus1 = strongReify(focus)(σ, ρ)
-      val vars: Set[Name] = fv(focus1)
-      val k1 = vars.toList match {
-        case Nil => k
-        case vars =>
-          val vals = vars map {
-            x =>
-              ρ.get(x) match {
-                case Some(v) => unreify(v)
-                case None => Undefined()
-              }
-          }
-          RebuildLet(vars, vals, ρ)::k
-      }
-      Σ(focus1, ρ, strongReifyStore(σ, ρ), k1)
+      Σ(focus1, ρ, σ, k)
   }
 }

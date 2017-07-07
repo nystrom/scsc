@@ -25,14 +25,28 @@ object Continuations {
   case class EvalArgs(thisValue: Exp, todo: List[Exp], ρ: Env) extends ContAction {
     override def toString = s"☐(${todo.map(_.show).mkString(", ")})"
   }
-  case class DoCall(fun: Exp, thisValue: Exp, args: List[Exp], ρ: Env) extends ContAction {
-    override def toString = s"${fun.show}(${args.map(_.show).mkString(", ")}) ☐"
+  case class EvalMoreArgsForNew(fun: Exp, todo: List[Exp], done: List[Exp], ρ: Env) extends ContAction {
+    override def toString = (done, todo) match {
+      case (Nil, Nil) => s"${fun.show}(☐)"
+      case (done, Nil) => s"${fun.show}(${done.map(_.show).mkString(", ")}, ☐)"
+      case (Nil, todo) => s"${fun.show}(☐, ${todo.map(_.show).mkString(", ")})"
+      case (done, todo) => s"${fun.show}(${done.map(_.show).mkString(", ")}, ☐, ${todo.map(_.show).mkString(", ")})"
+    }
+  }
+  case class EvalArgsForNew(todo: List[Exp], ρ: Env) extends ContAction {
+    override def toString = s"☐(${todo.map(_.show).mkString(", ")})"
+  }
+  case class DoCall(fun: Exp, thisValue: Exp, args: List[Exp], residual: Exp, ρ: Env) extends ContAction {
+    override def toString = s"${fun.show}(${args.map(_.show).mkString(", ")})"
   }
   case class Fail(s: String) extends ContAction {
     override def toString = s"FAIL($s)"
   }
+  case class Backup(s: String) extends ContAction {
+    override def toString = s"BACKUP($s)"
+  }
 
-  case class InitProto(loc: Loc, ρ: Env) extends ContAction
+  case class InitProto(fun: Exp, args: List[Exp], ρ: Env) extends ContAction
   case class EvalMethodProperty(methodProp: Exp, args: List[Exp], ρ: Env) extends ContAction
 
   case class CallFrame(ρ: Env) extends ContAction
@@ -89,8 +103,8 @@ object Continuations {
   case class DoThrow() extends ContAction
 
   // Assignment.
-  case class EvalAssignRhs(op: Option[Operator], rhs: Exp, ρ: Env) extends ContAction
-  case class DoAssign(op: Option[Operator], lhs: Loc, ρ: Env) extends ContAction
+  case class EvalAssignRhs(op: Option[Operator], rhs: Exp, lhsPath: Exp, ρ: Env) extends ContAction
+  case class DoAssign(op: Option[Operator], lhs: Path, ρ: Env) extends ContAction
   case class RebuildAssign(op: Option[Operator], lhs: Exp, ρ: Env) extends ContAction
 
   // ++, --, etc.
@@ -112,8 +126,6 @@ object Continuations {
   case class RebuildScope(ρ: Env) extends RebuildCont
 
   case class RebuildVarDef(x: Name, ρ: Env) extends RebuildCont
-  case class RebuildLetDef(x: Name, ρ: Env) extends RebuildCont
-  case class RebuildConstDef(x: Name, ρ: Env) extends RebuildCont
 
   case class RebuildCondTest(s1: Exp, s2: Exp, ρBeforeTest: Env) extends RebuildCont
   case class RebuildCondTrue(test: Exp, s2: Exp, σAfterTest: Store, ρBeforeTest: Env) extends RebuildCont

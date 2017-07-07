@@ -148,7 +148,7 @@ object HE {
       val locs2 = σ2.keySet
       (locs1 subsetOf locs2) && locs1.exists {
         loc =>
-          ExpHE.he(σ1(loc).e, σ2(loc).e)
+          ExpHE.he(σ1(loc), σ2(loc))
       }
     }
   }
@@ -161,6 +161,11 @@ object HE {
   }
 
   object ExpHE {
+    def he(v1: Closure, v2: Closure): Boolean = (v1, v2) match {
+      case (ValClosure(v1), ValClosure(v2)) => he(v1, v2)
+      case _ => false
+    }
+
     def he(e1: Exp, e2: Exp): Boolean = diving(e1, e2) || coupling(e1, e2)
 
     def he(e1: Option[Exp], e2: Option[Exp]): Boolean = (e1, e2) match {
@@ -186,7 +191,8 @@ object HE {
           case LocalAddr(_) => e
           case Return(None) | Yield(None) => e
           case Prim(_) => e
-          case Loc(_) => e
+          // case Loc(_) => e
+          case Path(_, _) => e
           case e if yes => e
           case e if e eq t2 => e // skip t2 to avoid infinite loop
           case e =>
@@ -244,8 +250,6 @@ object HE {
       case (TryFinally(a1, c1), TryFinally(a2, c2)) => he(a1, a2) && he(c1, c2)
       case (Throw(e1), Throw(e2)) => he(e1, e2)
       case (VarDef(_, e1), VarDef(_, e2)) => he(e1, e2)
-      case (LetDef(_, e1), LetDef(_, e2)) => he(e1, e2)
-      case (ConstDef(_, e1), ConstDef(_, e2)) => he(e1, e2)
       case (While(label1, a1, i1), While(label2, a2, i2)) => label1 == label2 && he(a1, a2) && he(i1, i2)
       case (DoWhile(label1, a1, i1), DoWhile(label2, a2, i2)) => label1 == label2 && he(a1, a2) && he(i1, i2)
       case (With(a1, i1), With(a2, i2)) => he(a1, a2) && he(i1, i2)
@@ -256,7 +260,8 @@ object HE {
       // This ensures we eventually stop if the numbers grow without
       // bound and nothing else changes.
       case (Num(k1), Num(k2)) => k1 == k2 || (k1.abs > 25 && k2.abs > 25)
-      case (Loc(k1), Loc(k2)) => true
+      // case (Loc(k1), Loc(k2)) => true
+      case (Path(k1, _), Path(k2, _)) => true
 
       case (e1, Residual(e2)) => coupling(e1, e2)
       case (Residual(e1), e2) => coupling(e1, e2)

@@ -9,15 +9,21 @@ object Eval {
   import Residualization._
   import Context.{ρempty, σempty}
 
+  def getPrimAddress(p: Prim): Loc = {
+    Context.σ0 foreach {
+      case (loc, ValClosure(q)) if p == q =>
+        return loc
+      case _ =>
+    }
+    assert(false)
+    ???
+  }
+
   def getPropertyAddress(loc: Loc, i: Exp, σ: Store) = {
     σ.get(loc) match {
-      case Some(Closure(FunObject(typeof, proto, xs, body, props), _)) =>
-        val v = props collectFirst {
-          case Property(k, v: Loc, g, s) if evalOp(Binary.==, k, i) == Bool(true) => v
-        }
-        v match {
-          case Some(v) => Some(v)
-          case None => None
+      case Some(ObjClosure(FunObject(typeof, proto, xs, body, props), _)) =>
+        props collectFirst {
+          case (k, v: Loc) if evalOp(Binary.==, StringLit(k), i) == Bool(true) => v
         }
       case _ => None
     }
@@ -26,21 +32,17 @@ object Eval {
   // Fix this! This is too simple and doesn't handle coercions corretctly.
   // Let's look at the spec.
   def evalOp(op: Operator, v1: Exp, v2: Exp): Exp = (op, v1, v2) match {
+    case (Binary.+, StringLit(n1), StringLit(n2)) => StringLit(n1 + n2)
+    case (Binary.+, StringLit(n1), CvtString(n2)) => StringLit(n1 + n2)
+    case (Binary.+, CvtString(n1), StringLit(n2)) => StringLit(n1 + n2)
+
     case (Binary.+, CvtNum(n1), CvtNum(n2)) => Num(n1 + n2)
+    case (Binary.+, CvtString(n1), CvtString(n2)) => StringLit(n1 + n2)
+
     case (Binary.-, CvtNum(n1), CvtNum(n2)) => Num(n1 - n2)
     case (Binary.*, CvtNum(n1), CvtNum(n2)) => Num(n1 * n2)
-    // case (Binary./, CvtNum(n1), CvtNum(0)) =>
-    //   println("ERROR: div by 0: ${Binary(op, v1, v2).show}")
-    //   reify(Binary(op, v1, v2))(σempty, ρempty)
-    // case (Binary.%, CvtNum(n1), CvtNum(0)) =>
-    //   println("ERROR: mod by 0: ${Binary(op, v1, v2).show}")
-    //   reify(Binary(op, v1, v2))(σempty, ρempty)
-
-    // div by 0 is allowed (returns NaN or +/-Inf)
     case (Binary./, CvtNum(n1), CvtNum(n2)) => Num(n1 / n2)
     case (Binary.%, CvtNum(n1), CvtNum(n2)) => Num(n1 % n2)
-
-    case (Binary.+, CvtString(n1), CvtString(n2)) => StringLit(n1 + n2)
 
     case (Binary.&, CvtNum(n1), CvtNum(n2)) => Num(n1.toLong & n2.toLong)
     case (Binary.|, CvtNum(n1), CvtNum(n2)) => Num(n1.toLong | n2.toLong)
@@ -99,10 +101,10 @@ object Eval {
     case (Binary.==, Num(n1), v2 @ CvtNum(n2)) if v2.isInstanceOf[Bool] => Bool(n1 == n2)
     case (Binary.==, v1 @ CvtNum(n1), Num(n2)) if v1.isInstanceOf[Bool] => Bool(n1 == n2)
 
-    case (Binary.==, Loc(n1), Loc(n2)) if n1 == n2 => Bool(true)
+    case (Binary.==, Path(n1, _), Path(n2, _)) if n1 == n2 => Bool(true)
     // We don't handle object literals, so just reify.
-    case (Binary.==, v1 @ Loc(n1), v2) => reify(Binary(Binary.==, v1, v2))(σempty, ρempty)
-    case (Binary.==, v1, v2 @ Loc(n2)) => reify(Binary(Binary.==, v1, v2))(σempty, ρempty)
+    case (Binary.==, v1 @ Path(n1, _), v2) => reify(Binary(Binary.==, v1, v2))(σempty, ρempty)
+    case (Binary.==, v1, v2 @ Path(n2, _)) => reify(Binary(Binary.==, v1, v2))(σempty, ρempty)
 
     // for other cases, just use ===.
     case (Binary.==, v1, v2) => evalOp(Binary.===, v1, v2) match {
@@ -116,7 +118,7 @@ object Eval {
     case (Binary.===, Num(n1), Num(n2)) => Bool(n1 == n2)
     case (Binary.===, StringLit(n1), StringLit(n2)) => Bool(n1 == n2)
     case (Binary.===, Bool(n1), Bool(n2)) => Bool(n1 == n2)
-    case (Binary.===, Loc(n1), Loc(n2)) => Bool(n1 == n2) // same object
+    case (Binary.===, Path(n1, _), Path(n2, _)) => Bool(n1 == n2) // same object
     case (Binary.===, v1, v2) => Bool(false) // all other cases should be false (residuals are handled above)
 
     // Failure
@@ -165,10 +167,109 @@ object Eval {
       r map { v => Num(v) }
     case _ => None
   }
-}
 
-// TODO: to perform reification, need to incorporate the environment better.
-// When we add something to the environment, we should add a rebuild continuation
-// that basically adds a let if needed. We should have a let binding for each
-// free variable in the residualized focus when we get to the Done continuation.
-// But, then need to order the lets to make the environments work out correctly.
+  def simulateStore(e: Exp)(σ0: Store, ρ: Env): Store = {
+    object Simulator extends scsc.js.TreeWalk.Rewriter {
+      var σ = σ0
+      override def rewrite(e: Exp) = e match {
+        case Assign(op, left, right) =>
+          σ = invalidateLocation(left)(σ, ρ)
+          super.rewrite(e)
+        case IncDec(op, left) =>
+          σ = invalidateLocation(left)(σ, ρ)
+          super.rewrite(e)
+        case Delete(left) =>
+          σ = invalidateLocation(left)(σ, ρ)
+          super.rewrite(e)
+        case Call(f, args) =>
+          σ = invalidateHeap(σ, ρ)
+          e
+        case NewCall(f, args) =>
+          σ = invalidateHeap(σ, ρ)
+          e
+        case Lambda(params, body) =>
+          // do nothing
+          e
+        case With(exp, body) =>
+          σ = invalidateHeap(σ, ρ)
+          super.rewrite(e)
+        case e =>
+          super.rewrite(e)
+      }
+    }
+    Simulator.rewrite(e)
+    Simulator.σ
+  }
+
+  def invalidateHeap(σ: Store, ρ: Env): Store = {
+    σ collect {
+      case (loc, v) if ρ.exists { case (x, loc1) => loc == loc1 } => (loc, v)
+    }
+  }
+
+  def invalidateLocation(e: Exp)(σ: Store, ρ: Env): Store = e match {
+    case Residual(e) =>
+      invalidateLocation(e)(σ, ρ)
+
+    case Path(address, path) =>
+      // Remove the location
+      σ + (Loc(address) -> UnknownClosure())
+
+    case Local(x) =>
+      ρ.get(x) match {
+        case Some(loc) => σ + (loc -> UnknownClosure())
+        case None => σ
+      }
+
+    case LocalAddr(x) =>
+      ρ.get(x) match {
+        case Some(loc) => σ + (loc -> UnknownClosure())
+        case None => σ
+      }
+
+    case Index(a, StringLit(i)) =>
+      // Remove all properties named i
+      val addrs: Iterable[Loc] = σ flatMap {
+        case (_, ObjClosure(FunObject(_, _, _, _, props), _)) =>
+          props collect {
+            case (k, loc) if k == i => loc
+          }
+        case _ => Nil
+      }
+
+      addrs.foldLeft(σ) {
+        case (σ, loc) => σ + (loc -> UnknownClosure())
+      }
+
+    case IndexAddr(a, StringLit(i)) =>
+      // Remove all properties named i
+      val addrs: Iterable[Loc] = σ flatMap {
+        case (_, ObjClosure(FunObject(_, _, _, _, props), _)) =>
+          props collect {
+            case (k, loc) if k == i => loc
+          }
+        case _ => Nil
+      }
+
+      addrs.foldLeft(σ) {
+        case (σ, loc) => σ + (loc -> UnknownClosure())
+      }
+
+    case IndexAddr(a, i) =>
+      // Remove ALL properties in the store
+      val addrs: Iterable[Loc] = σ flatMap {
+        case (_, ObjClosure(FunObject(_, _, _, _, props), _)) =>
+          props map {
+            case (k, loc) => loc
+          }
+        case _ => Nil
+      }
+
+      addrs.foldLeft(σ) {
+        case (σ, loc) => σ + (loc -> UnknownClosure())
+      }
+
+    case _ =>
+      σ
+  }
+}

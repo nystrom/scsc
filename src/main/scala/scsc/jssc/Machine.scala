@@ -60,18 +60,45 @@ object Machine {
   ////////////////////////////////////////////////////////////////
 
   // The heap stores closures.
-  case class Closure(e: Exp, ρ: Env)
+  // We also store an access path for each location in the heap so we can residualize.
+  sealed trait Closure
+  case class ObjClosure(e: FunObject, ρ: Env) extends Closure
+  case class ValClosure(e: Exp) extends Closure   // literals, prims, residuals
+  case class LocClosure(e: Loc) extends Closure
+  // represents missing information (the location is legal, but inconsistent)
+  case class UnknownClosure() extends Closure
 
   type Store = Map[Loc, Closure]
 
   lazy val σ0: Store = Context.σ0
 
   implicit class StoreOps(σ: Store) {
-    def assign(lhs: Loc, rhs: Exp, ρ: Env) = {
-      σ + (lhs -> Closure(rhs, ρ))
+    def assign(lhs: Loc, rhs: FunObject, ρ: Env): Store = {
+      σ + (lhs -> ObjClosure(rhs, ρ))
     }
 
-    def sanitize: Store = σ
+    def assign(lhs: Path, rhs: FunObject, ρ: Env): Store = {
+      assign(Loc(lhs.address), rhs, ρ)
+    }
+
+    def assign(lhs: Loc, rhs: Exp, ρ: Env): Store = {
+      rhs match {
+        case rhs1: Lit =>
+          σ + (lhs -> ValClosure(rhs1))
+        case Path(a, p) =>
+          σ + (lhs -> LocClosure(Loc(a)))
+        case rhs1: Residual =>
+          σ + (lhs -> ValClosure(rhs1))
+        case rhs1: Prim =>
+          σ + (lhs -> ValClosure(rhs1))
+        case _ =>
+          ???
+      }
+    }
+
+    def assign(lhs: Path, rhs: Exp, ρ: Env): Store = {
+      assign(Loc(lhs.address), rhs, ρ)
+    }
 
     def sanitize(ρ: Env): Store = {
       import scala.collection.mutable.MapBuilder
@@ -89,7 +116,7 @@ object Machine {
       σnew.result
     }
 
-    def merge(σ2: Store): Store = {
+    def merge(σ2: Store, ρ: Env): Store = {
       val σ1 = σ
 
       if (σ1 eq σ2) {
@@ -100,13 +127,18 @@ object Machine {
 
       val σnew: MapBuilder[Loc, Closure, Store] = new MapBuilder(σ0)
 
-      for ((loc1, v1) <- σ1) {
-        σ2.get(loc1) match {
-          case Some(v2) if v1 == v2 =>
-            σnew += (loc1 -> v2)
-          case None =>
+      // The paths should be the same.
+      // When assigning to a path, need to change all the reachable paths.
+      σ1 foreach {
+        case (loc1, v1) =>
+          σ2.get(loc1) match {
+            case Some(v2) if v1 == v2 =>
+              σnew += (loc1 -> v2)
+            case Some(v2) =>
+              σnew += (loc1 -> UnknownClosure())
+            case None =>
+          }
         }
-      }
 
       σnew.result
     }
@@ -127,17 +159,17 @@ object Machine {
         if (! seen.contains(loc)) {
           seen += loc
           σ.get(loc) match {
-            case Some(v @ Closure(FunObject(_, proto, _, _, props), _)) =>
+            case Some(v @ ObjClosure(FunObject(_, proto, _, _, props), _)) =>
               σnew += (loc -> v)
-              proto match {
-                case loc1: Loc =>
-                  worklist = worklist :+ loc1
-              }
+              worklist = worklist :+ proto
               props foreach {
-                case Property(k, loc1: Loc, _, _) =>
+                case (k, loc1) =>
                   worklist = worklist :+ loc1
                 case _ =>
               }
+            case Some(v @ LocClosure(loc1)) =>
+              σnew += (loc -> v)
+              worklist = worklist :+ loc1
             case Some(v) =>
               σnew += (loc -> v)
             case None =>

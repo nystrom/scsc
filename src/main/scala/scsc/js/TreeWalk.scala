@@ -20,8 +20,8 @@ object TreeWalk {
     def rewrite(e: Exp): Exp = e match {
       case Prim(name) =>
         Prim(name)
-      case Loc(address) =>
-        Loc(address)
+      case Path(address, path) =>
+        Path(address, rewrite(path))
       case Residual(e) =>
         Residual(rewrite(e))
       case Unary(op, e) =>
@@ -112,18 +112,17 @@ object TreeWalk {
         TryFinally(rewrite(e), rewrite(fin))
       case VarDef(x, init) =>
         VarDef(x, rewrite(init))
-      case LetDef(x, init) =>
-        LetDef(x, rewrite(init))
-      case ConstDef(x, init) =>
-        ConstDef(x, rewrite(init))
       case While(label, cond, body) =>
         While(label, rewrite(cond), rewrite(body))
       case DoWhile(label, body, cond) =>
         DoWhile(label, rewrite(body), rewrite(cond))
       case With(exp, body) =>
         With(rewrite(exp), rewrite(body))
-      case FunObject(typeof, proto, params, body, props) =>
-        FunObject(typeof, rewrite(proto), params, rewrite(body), rewrite(props))
+
+      // case Loc(address) =>
+      //   Loc(address)
+      // case FunObject(typeof, proto, params, body, props) =>
+      //   FunObject(typeof, rewrite(proto), params, rewrite(body), props map { case (x, e) => (x, rewrite(e).asInstanceOf[Loc]) })
     }
   }
 }

@@ -36,7 +36,9 @@ object Trees {
       case Null() => Some(false)
       case Num(v) => Some(v != 0 && ! v.isNaN)
       case StringLit(v) => Some(v != "")
-      case Loc(_) => Some(true)
+      case Path(_, _) => Some(true)
+      case XML(_) => Some(true)
+      case Regex(_, _) => Some(true)
       case v => None
     }
   }
@@ -48,13 +50,17 @@ object Trees {
       case Null() => Some(0)
       case Bool(false) => Some(0)
       case Bool(true) => Some(1)
+
+      // same as CvtStrictNum but more returns NaN more often
       case StringLit(v) =>
         try {
           Some(java.lang.Double.parseDouble(v))
         }
         catch {
-          case ex: java.lang.NumberFormatException => None
+          case ex: java.lang.NumberFormatException =>
+            Some(Double.NaN)
         }
+      case Path(_, _) => Some(Double.NaN)
       case v => None
     }
   }
@@ -75,13 +81,6 @@ object Trees {
   object Value {
     def unapply(e: Exp) = e match {
       case v if v.isValue => Some(v)
-      case _ => None
-    }
-  }
-
-  object HeapValue {
-    def unapply(e: Exp) = e match {
-      case v if v.isHeapValue => Some(v)
       case _ => None
     }
   }
@@ -114,13 +113,10 @@ object Trees {
         case t @ Lambda(xs, e) =>
           vars ++= (fv(e) -- xs)
           t
-        case t @ LetDef(x, _) =>
-          defs += x
-          super.rewrite(t)
+        case t @ Scope(e) =>
+          vars ++= fv(e)
+          t
         case t @ VarDef(x, _) =>
-          defs += x
-          super.rewrite(t)
-        case t @ ConstDef(x, _) =>
           defs += x
           super.rewrite(t)
         case t =>
@@ -130,13 +126,21 @@ object Trees {
 
     val t = new FV()
     t.rewrite(n)
-    t.getVars
+    t.getVars -- t.getDefs
   }
+
+  // FIXME: FunObject and Loc should not be expressions.
+  // They live only in the heap
 
   // FIXME: Prim("foo.bar") should just be Residual(Index(Local("foo"), StringLit("bar")))
   case class Prim(name: String) extends Exp
-  case class Loc(address: Int) extends Exp
+  case class Path(address: Int, path: Exp) extends Exp
   case class Residual(e: Exp) extends Exp
+
+  // This is either a function object or a JS object in the heap.
+  // Properties should be a list of Property(value, loc)
+  case class Loc(address: Int)
+  case class FunObject(typeof: String, proto: Loc, params: List[Name], body: Option[Exp], properties: List[(Name, Loc)])
 
   import org.bitbucket.inkytonik.kiama.util.Counter
 
@@ -174,7 +178,7 @@ object Trees {
           case _: Return | _: Yield | _: Throw | _: Catch | _: TryCatch | _: TryFinally =>
             pure = false
             e
-          case _: VarDef | _: LetDef | _: ConstDef =>
+          case _: VarDef =>
             pure = false
             e
           case _: Break | _: Continue =>
@@ -202,9 +206,11 @@ object Trees {
       case Num(_) => true
       case Undefined() => true
       case Null() => true
-      case Loc(_) => true
+      case Path(_, _) => true
       // Empty is the void value
       case Empty() => true
+      // Primitives are values as far as we're concerned
+      case Prim(_) => true
       case _ => false
     }
 
@@ -212,11 +218,6 @@ object Trees {
       case Residual(_) => true
       case Prim(_) => true
       case v => v.isValue
-    }
-
-    def isHeapValue: Boolean = e match {
-      case FunObject(_, _, _, _, _) => true
-      case v => v.isValueOrResidual
     }
   }
 
@@ -229,10 +230,6 @@ object Trees {
       }
     }
   }
-
-  // This is either a function object or a JS object in the heap.
-  // Properties should be a list of Property(value, loc)
-  case class FunObject(typeof: String, proto: Exp, params: List[Name], body: Option[Exp], properties: List[Exp]) extends Exp
 
   sealed trait Operator
 
@@ -325,8 +322,6 @@ object Trees {
   case class TryCatch(e: Exp, catches: List[Exp]) extends Exp
   case class TryFinally(e: Exp, fin: Exp) extends Exp
   case class VarDef(x: Name, init: Exp) extends Exp
-  case class LetDef(x: Name, init: Exp) extends Exp  // MISSING
-  case class ConstDef(x: Name, init: Exp) extends Exp  // MISSING
   case class While(label: Option[Name], cond: Exp, body: Exp) extends Exp
   case class DoWhile(label: Option[Name], body: Exp, cond: Exp) extends Exp
   case class With(exp: Exp, body: Exp) extends Exp  // MISSING

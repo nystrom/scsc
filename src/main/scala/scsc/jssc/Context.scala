@@ -10,43 +10,50 @@ object Context {
   lazy val ρ0: Env = globalEnv._1
   lazy val σ0: Store = globalEnv._2
 
-  lazy val globalEnv: (Env, Store) = defs.foldLeft((ρempty, σempty)) {
-    case ((ρ, σ), ("", propMap0)) =>
-      val ρ1 = ρ
-      val σ2 = σ
+  lazy val globalEnv: (Env, Store) = {
+    val functionPrototypeAddress = FreshLoc()
+    defs.foldLeft((ρempty, σempty)) {
+      case ((ρ, σ), ("", propMap0)) =>
+        val ρ1 = ρ
+        val σ2 = σ
 
-      val propMap = propMap0.toList
-      val locs = propMap map { _ => FreshLoc() }
-      val ρ2 = (propMap zip locs).foldLeft(ρ1) {
-        case (ρ, ((x, v), loc)) =>
-          ρ + (x -> loc)
-      }
-      val σ3 = (propMap zip locs).foldLeft(σ2) {
-        case (σ, ((x, v), loc)) =>
-          σ.assign(loc, v, ρempty)
-      }
+        val propMap = propMap0.toList
+        val locs = propMap map { _ => FreshLoc() }
+        val ρ2 = (propMap zip locs).foldLeft(ρ1) {
+          case (ρ, ((x, v), loc)) =>
+            ρ + (x -> loc)
+        }
+        val σ3 = (propMap zip locs).foldLeft(σ2) {
+          case (σ, ((x, v), propLoc)) =>
+            val vloc = FreshLoc()
+            σ + (propLoc -> LocClosure(vloc)) + (vloc -> ValClosure(v))
+        }
 
-      (ρ2, σ3)
+        (ρ2, σ3)
 
-    case ((ρ, σ), (k, propMap0)) =>
-      val localLoc = FreshLoc()
-      val objLoc = FreshLoc()
-      val propMap = propMap0.toList
-      val props = propMap map {
-        case (x, v) =>
-          val xloc = FreshLoc()
-          Property(StringLit(x), xloc, None, None)
-      }
-      val σ1 = (props zip propMap).foldLeft(σ) {
-        case (σ, (Property(k, vloc: Loc, None, None), (x, v))) =>
-          σ.assign(vloc, v, ρempty)
-      }
-      val obj = FunObject("function", Prim("Function.prototype"), Nil, None, props)
+      case ((ρ, σ), (k0, propMap0)) =>
+        val localLoc = FreshLoc()
+        val objLoc = FreshLoc()
+        val propMap = propMap0.toList
+        val props = propMap map {
+          case (x, v) =>
+            (x, FreshLoc())
+        }
+        val σ1 = (props zip propMap).foldLeft(σ) {
+          case (σ, ((k, propLoc: Loc), (x, v @ Prim("Function.prototype")))) =>
+            val vloc = functionPrototypeAddress
+            σ + (propLoc -> LocClosure(vloc)) + (vloc -> ValClosure(v))
+          case (σ, ((k, propLoc: Loc), (x, v))) =>
+            val vloc = FreshLoc()
+            σ + (propLoc -> LocClosure(vloc)) + (vloc -> ValClosure(v))
+        }
+        val obj = FunObject("function", functionPrototypeAddress, Nil, None, props)
 
-      val ρ1 = ρ + (k -> localLoc)
-      val σ2 = σ1.assign(localLoc, objLoc, ρempty).assign(objLoc, obj, ρempty)
+        val ρ1 = ρ + (k0 -> localLoc)
+        val σ2 = σ1 + (localLoc -> LocClosure(objLoc)) + (objLoc -> ObjClosure(obj, ρempty))
 
-      (ρ1, σ2)
+        (ρ1, σ2)
+    }
   }
 
   // Prims are the functions implemented by the partial evaluator.
@@ -64,6 +71,9 @@ object Context {
     "String" -> Map("indexOf" -> Prim("String.indexOf"),
                     "charAt" -> Prim("String.charAt")
     ),
+    "Array" -> Map("prototype" -> Prim("Array.prototype")),
+    "Function" -> Map("prototype" -> Prim("Function.prototype")),
+    "Object" -> Map("prototype" -> Prim("Object.prototype")),
     "Math" -> Map("min" -> Prim("Math.min"),
                     "max" -> Prim("Math.max"),
                     "sin" -> Prim("Math.sin"),
