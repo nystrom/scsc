@@ -2,7 +2,7 @@ package scsc.jssc
 
 import org.scalatest._
 
-class JSSCSpec extends FlatSpec with Matchers {
+class SCSpec extends FlatSpec with Matchers {
 
   import scsc.js._
   import scsc.js.Trees._
