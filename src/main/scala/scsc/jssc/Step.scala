@@ -24,6 +24,12 @@ object Step {
   // to a subexpression.
   // A Co state has a value in the focus and dispatches on the continuation.
   case class Ev(e: Exp, ρ: Env, σ: Store, k: Cont) extends State {
+    override def toString = s"""Ev
+  e = $e
+  ρ = ${ρ.toVector.sortBy(_._1).mkString("{", "\n       ", "}")}
+  σ = ${σ.toVector.sortBy(_._1.address).mkString("{", "\n       ", "}")}
+  k = ${k.mkString("[", "\n       ", "]")}"""
+
     def step = e match {
 
       // For any value, just run the continuation.
@@ -191,7 +197,7 @@ object Step {
       case VarDef(x, e) =>
         ρ.get(x) match {
           case Some(loc) =>
-            Co(e, σ, DoAssign(None, Path(loc.address, Local(x)), ρ)::RebuildLet(x::Nil, Undefined()::Nil, ρ)::k)
+            Ev(e, ρ, σ, DoAssign(None, Path(loc.address, Local(x)), ρ)::RebuildLet(x::Nil, Undefined()::Nil, ρ)::k)
           case None =>
             Co(e, σ, Fail(s"variable $x not found")::k)
         }
@@ -322,7 +328,7 @@ object Step {
         val v = FunObject("object", Eval.getPrimAddress(Prim("Object.prototype")), Nil, None, Nil)
         Co(loc, σ.assign(loc, v, ρ), k)
 
-      case ObjectLit(p::ps) =>
+      case ObjectLit(ps) =>
         val x = FreshVar()
         val seq = ps.foldLeft(Assign(None, LocalAddr(x), ObjectLit(Nil)): Exp) {
           case (seq, Property(prop, value, _, _)) =>
@@ -375,6 +381,11 @@ object Step {
 
   case class Co(v: Exp, σ: Store, k: Cont) extends State {
     require(v.isValueOrResidual)
+
+    override def toString = s"""Co
+  v = $v
+  σ = ${σ.toVector.sortBy(_._1.address).mkString("{", "\n       ", "}")}
+  k = ${k.mkString("[", "\n       ", "]")}"""
 
     def step = k match {
       // Done!
@@ -663,7 +674,11 @@ object Step {
             Co(Undefined(), σ, k)
 
           case Residual(e) =>
-            Co(Residual(e), Eval.simulateStore(e)(σ, ρ1), k)
+            Co(Residual(e), σ, k)
+
+          case e =>
+            val v = reify(e)(σ, ρ1)
+            Co(v, Eval.simulateStore(v)(σ, ρ1), k)
         }
 
       case DoTypeof(ρ1)::k =>
@@ -692,8 +707,9 @@ object Step {
               case None =>
                 Co(Residual(Typeof(path)), σ, k)
             }
-          case v =>
-            Co(reify(Typeof(v))(σ, ρ1), σ, k)
+          case e =>
+            val v = reify(Typeof(e))(σ, ρ1)
+            Co(v, Eval.simulateStore(v)(σ, ρ1), k)
         }
 
       case DoUnaryOp(op, ρ1)::k =>

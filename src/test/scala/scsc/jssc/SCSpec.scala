@@ -31,7 +31,7 @@ class SCSpec extends FlatSpec with Matchers {
   }
 
   "JSSC" should "eval object literals" in {
-    val e = Parser.fromString("{ var o = {x:3}; o.x }")
+    val e = Parser.fromString("var o = {x:3}; o.x")
     e match {
       case Some(e) =>
         val result = CESK.eval(e, 100)
@@ -72,7 +72,7 @@ class SCSpec extends FlatSpec with Matchers {
     }
   }
 
-  "JSSC" should "supercompile map inc" in {
+  "JSSC" should "supercompile map inc" ignore {
     val e = Parser.fromString("""{
       function cons(head, tail) {
           this.head = head;
@@ -90,10 +90,54 @@ class SCSpec extends FlatSpec with Matchers {
       map(inc, ys)
     }
     """)
+    val expected = Parser.fromString("""{
+      function map1(xs) {
+          if (xs == null)
+            return null
+          else
+            cons(xs.head + 1, map1(xs.tail))
+      }
+      map1(ys)
+    }
+    """)
     e match {
       case Some(e) =>
         val result = CESK.eval(e, 100)
-        result shouldBe (Num(3.0))
+        result shouldBe (expected)
+      case None =>
+        fail
+    }
+  }
+
+  "JSSC" should "supercompile append append" ignore {
+    val e = Parser.fromString("""{
+      function cons(head, tail) {
+          this.head = head;
+          this.tail = tail;
+      }
+      function append(xs, ys) {
+          if (xs == null)
+            return ys
+          else
+            cons(xs.head, append(xs.tail, ys))
+      }
+      append(append(as, bs), cs)
+    }
+    """)
+    val expected = Parser.fromString("""{
+      function append3(xs, ys, zs) {
+          if (xs == null)
+            return append(ys, zs)
+          else
+            cons(xs.head, append3(xs.tail, ys, zs))
+      }
+      append3(as, bs, cs)
+    }
+    """)
+    e match {
+      case Some(e) =>
+        val result = CESK.eval(e, 100)
+        result shouldBe (expected)
       case None =>
         fail
     }
