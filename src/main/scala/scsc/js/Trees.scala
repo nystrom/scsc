@@ -4,7 +4,6 @@ package scsc.js
 
 object Trees {
   type Node = Exp
-  type Stm = Exp
 
   sealed trait Exp extends Product
 
