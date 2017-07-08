@@ -81,6 +81,7 @@ object Context {
                     "tan" -> Prim("Math.tan"),
                     "sqrt" -> Prim("Math.sqrt"),
                     "abs" -> Prim("Math.abs"),
+                    "trunc" -> Prim("Math.trunc"),
                     "floor" -> Prim("Math.floor"),
                     "ceil" -> Prim("Math.ceil"),
                     "round" -> Prim("Math.round"),
