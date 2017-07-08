@@ -9,6 +9,7 @@ object HE {
   import Residualization._
   import CESK._
   import Continuations._
+  import Step._
 
   // In SC / PE, we get stuck when focus is a Var!
   // Add continuations for Bin and for Case, etc.
@@ -27,14 +28,26 @@ object HE {
   def toTerm(s: St): Option[(Exp, Int)] = {
     println("converting to term " + s)
     s match {
-      case Σ(e, ρ, σ, Nil) =>
+      case Co(e, σ, Nil) =>
         val u = unreify(e)
         println("--> " + u)
         Some((u, 0))
-      case Σ(e, ρ, σ, Fail(_)::k) =>
+      case Co(e, σ, Fail(_)::k) =>
         None
-      case Σ(e, ρ, σ, k) =>
-        val s1 = step(Σ(strongReify(e)(σ, ρ), ρ, σ, k))
+      case Co(Residual(v), σ, k) =>
+        val s1 = step(Co(v, σ, k))
+        toTerm(s1) map {
+          case (u, n) => (u, n+1)
+        }
+      case Co(Value(v), σ, k) =>
+        val s1 = step(Co(Residual(v), σ, k))
+        toTerm(s1) map {
+          case (u, n) => (u, n+1)
+        }
+      case Ev(e, ρ, σ, Fail(_)::k) =>
+        None
+      case Ev(e, ρ, σ, k) =>
+        val s1 = step(Ev(strongReify(e)(σ, ρ), ρ, σ, k))
         toTerm(s1) map {
           case (u, n) => (u, n+1)
         }
@@ -271,6 +284,14 @@ object HE {
   }
 
   implicit class StHE(s1: St) {
+    def comparableStates(s1: St, s2: St) = (s1, s2) match {
+      case (s1 @ Ev(e1, ρ1, σ1, k1::_), s2 @ Ev(e2, ρ2, σ2, k2::_)) => e1 == e2 && k1.getClass == k2.getClass
+      case (s1 @ Co(e1, σ1, k1::_), s2 @ Co(e2, σ2, k2::_)) => e1 == e2 && k1.getClass == k2.getClass
+      case (s1 @ Ev(e1, ρ1, σ1, Nil), s2 @ Ev(e2, ρ2, σ2, Nil)) => e1 == e2
+      case (s1 @ Co(e1, σ1, Nil), s2 @ Co(e2, σ2, Nil)) => e1 == e2
+      case _ => false
+    }
+    
     def <<|(s2: St): Boolean = (s1, s2) match {
       // Only compare states if the focus expression is the same and the first continuation
       // is of the same type. That is, we're evaluatnig the same expression in
@@ -280,7 +301,7 @@ object HE {
       // FIXME: currently the whistle blows a bit too often.
       // For instance, with the logarithmic version of pow.
       // Need to incorporate the environment too, perhaps.
-      case (s1 @ Σ(e1, ρ1, σ1, k1), s2 @ Σ(e2, ρ2, σ2, k2)) if e1 == e2 && k1.getClass == k2.getClass =>
+      case (s1, s2) if comparableStates(s1, s2) =>
         (toTerm(s1), toTerm(s2)) match {
           case (Some((t1, n1)), Some((t2, n2))) =>
             println("HE: comparing " + s1)

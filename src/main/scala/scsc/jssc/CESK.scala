@@ -39,6 +39,7 @@ object CESK {
   import Machine._
   import Continuations._
   import Residualization._
+  import Step._
 
   def extendWithCond(test: Exp, σAfterTest: Store, ρ: Env, result: Boolean): Store = {
     test match {
@@ -142,7 +143,7 @@ object CESK {
     }
   }
 
-  def step(s: St): St = Step.step(s)
+  def step(s: St): St = s.step
 
   // Check for termination at these nodes.
   // In SCSC, we only checked at Local nodes, but here we need to check
@@ -183,22 +184,25 @@ object CESK {
       t -= 1
       println(s)
 
-      assert(! s.c.isInstanceOf[Loc])
       // println("term " + toTerm(s).map(_.show).getOrElse("FAIL"))
 
       s match {
         // stop when we have a value with the empty continuation.
-        case Σ(Residual(v), ρ, σ, Nil) =>
+        case Co(Residual(v), σ, Nil) =>
           return v
 
-        case Σ(Value(v), ρ, σ, Nil) =>
-          return unreify(reify(v)(σ, ρ))
+        case Co(Value(v), σ, Nil) =>
+          return unreify(reify(v)(σ, Context.ρempty))
 
-        case Σ(e, _, σ, Fail(s)::k) =>
+        case Ev(e, _, σ, Fail(s)::k) =>
           println(s"FAIL $s")
           return Lambda("error"::Nil, e)
 
-        case s0 @ Σ(e, ρ, σ, k) =>
+        case Co(e, σ, Fail(s)::k) =>
+          println(s"FAIL $s")
+          return Lambda("error"::Nil, e)
+
+        case s0 =>
           s = step(s0)
       }
     }
@@ -214,82 +218,72 @@ object CESK {
       t -= 1
       println(s)
 
-      assert(! s.c.isInstanceOf[Loc])
-
       println("term " + toTerm(s).map { case (u, n) => s"${u.show} in $n steps" }.getOrElse("FAIL"))
 
       s match {
         // stop when we have a value with the empty continuation.
-        case Σ(ValueOrResidual(v), ρ, σ, Nil) =>
-          return unreify(reify(v)(σ, ρ))
+        case Co(ValueOrResidual(v), σ, Nil) =>
+          return unreify(reify(v)(σ, Context.ρempty))
 
-        case Σ(e, ρ, σ, Backup(s)::k) =>
+        case Co(e, σ, Fail(s)::k) =>
           println(s"FAIL $s")
           return Lambda("error"::Nil, e)
 
-        case Σ(e, ρ, σ, Fail(s)::k) =>
-          // If we fail to reify, backup...
-
-          // Idea: it's a partial machine.
-          // Not all expressions can be reified.
-          // If we hit a failure state, we *backup*
-          // to the first state we can reify, then continue from there.
-          // We cannot reify a location that has not yet been stored in
-          // a variable.
-          // OR: we need to append the path to the location.
+        case Ev(e, ρ, σ, Fail(s)::k) =>
           println(s"FAIL $s")
           return Lambda("error"::Nil, e)
 
-        case s0 @ Σ(focus, ρ, σ, k) =>
+
+        case s0 @ Ev(CheckHistory(focus1), ρ1, σ, k1) =>
           val s1 = step(s0)
 
-          s1 match {
-            case Σ(CheckHistory(focus1), ρ1, σ, k1) =>
-              s = hist.foldRight(s1) {
-                case (prev, s_) if s1 == s_ =>
-                  // try to fold, just for debugging purposes now
-                  // tryFold(s1, prev) match {
-                  //   case Some((f, lam, app1, app2)) =>
-                  //     println(s"FOLD $prev")
-                  //     println(s"  lam = ${lam.show}")
-                  //     println(s"  app1 = ${app1.show}")
-                  //     println(s"  app2 = ${app2.show}")
-                  //   case None =>
-                  // }
+          s = hist.foldRight(s1) {
+            case (prev, s_) if s1 == s_ =>
+              // try to fold, just for debugging purposes now
+              // tryFold(s1, prev) match {
+              //   case Some((f, lam, app1, app2)) =>
+              //     println(s"FOLD $prev")
+              //     println(s"  lam = ${lam.show}")
+              //     println(s"  app1 = ${app1.show}")
+              //     println(s"  app2 = ${app2.show}")
+              //   case None =>
+              // }
 
-                  if (prev == s1 || prev <<| s1) {
-                    println(s"WHISTLE $prev")
-                    println(s"    <<| $s1")
+              if (prev == s1 || prev <<| s1) {
+                println(s"WHISTLE $prev")
+                println(s"    <<| $s1")
 
-                    tryFold(s1, prev) match {
-                      case Some((f, lam, app1, app2)) =>
-                        println(s"FOLD $prev")
-                        println(s"  lam = ${lam.show}")
-                        println(s"  app1 = ${app1.show}")
-                        println(s"  app2 = ${app2.show}")
-                      case None =>
-                    }
+                tryFold(s1, prev) match {
+                  case Some((f, lam, app1, app2)) =>
+                    println(s"FOLD $prev")
+                    println(s"  lam = ${lam.show}")
+                    println(s"  app1 = ${app1.show}")
+                    println(s"  app2 = ${app2.show}")
+                  case None =>
+                }
 
-                    toTerm(s1) match {
-                      case Some((t1, _)) =>
-                        return t1
-                      case None =>
-                        return Lambda("error"::Nil, focus1)
-                    }
-                  }
-                  else {
-                    // keep going
-                    s1
-                  }
-                case (prev, s2) =>
-                  s2
+                toTerm(s1) match {
+                  case Some((t1, _)) =>
+                    return t1
+                  case None =>
+                    return Lambda("error"::Nil, focus1)
+                }
               }
-
-              hist += s
-
-            case s1 =>
-              s = s1
+              else {
+                // keep going
+                s1
+              }
+            case (prev, s_) =>
+              s_
           }
+
+          hist += s
+
+        case s0 @ Ev(focus, ρ, σ, k) =>
+          s = step(s0)
+
+        case s0 @ Co(focus, σ, k) =>
+          s = step(s0)
       }
     }
 

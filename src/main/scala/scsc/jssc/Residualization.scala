@@ -6,6 +6,7 @@ import scsc.js.Trees._
 object Residualization {
   import Machine._
   import Continuations._
+  import Step._
 
   def findAccessPath(loc: Loc, σ: Store, ρ: Env): Exp = {
     import scala.collection.mutable.HashSet
@@ -50,60 +51,23 @@ object Residualization {
   }
 
   def reify(e: Exp)(implicit σ: Store, ρ: Env): Exp = {
-    tryReify(e)(σ, ρ) match {
-      case Some(e) => e
-      case None => ???
-    }
-  }
-
-  def tryReify(e: Exp)(implicit σ: Store, ρ: Env): Option[Exp] = {
     import scsc.js.TreeWalk._
 
     object Reify extends Rewriter {
-      var failed = false
-
       override def rewrite(e: Exp): Exp = e match {
         case Residual(e) => super.rewrite(e)
         case Path(_, path) => super.rewrite(path)
-        case e: Loc =>
-          val v = findAccessPath(e, σ, ρ)
-          if (v == Undefined())
-            failed = true
-          v
         case e => super.rewrite(e)
       }
     }
 
     val r = Reify.rewrite(e)
 
-    if (Reify.failed) {
-      None
+    r match {
+      case Value(e) => e
+      case Residual(e) => Residual(e)
+      case e => Residual(e)
     }
-    else {
-      r match {
-        case Value(e) =>
-          Some(e)
-        case Residual(e) =>
-          Some(Residual(e))
-        case e =>
-          Some(Residual(e))
-      }
-    }
-  }
-
-  def reifyState(s: St): St = s match {
-    // Termination conditions
-    case Σ(Value(v), ρ, σ, Nil) => s
-    case Σ(Residual(e), ρ, σ, Nil) => s
-    case Σ(e, ρ, σ, Fail(_)::_) => s
-
-    case Σ(e, ρ, σ, k) =>
-      tryReify(e)(σ, ρ) match {
-        case None =>
-          reifyState(Step.step(s))
-        case Some(e) =>
-          Σ(e, ρ, σ, k)
-      }
   }
 
   def unreify(e: Exp): Exp = {
@@ -129,8 +93,11 @@ object Residualization {
   }
 
   def strongReify(s: St): St = s match {
-    case Σ(focus, ρ, σ, k) =>
+    case Co(focus, σ, k) =>
+      val focus1 = strongReify(focus)(σ, Context.ρ0)
+      Co(focus1, σ, k)
+    case Ev(focus, ρ, σ, k) =>
       val focus1 = strongReify(focus)(σ, ρ)
-      Σ(focus1, ρ, σ, k)
+      Ev(focus1, ρ, σ, k)
   }
 }

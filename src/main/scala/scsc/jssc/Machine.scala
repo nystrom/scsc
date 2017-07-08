@@ -6,14 +6,10 @@ object Machine {
   import Continuations._
 
   // The state of the CESK machine:
-  case class Σ(c: Exp, e: Env, s: Store, k: Cont) {
-    override def toString = s"Σ(e = ${c.show}, ρ = $e, σ = $s, k = $k)"
-  }
-
-  type St = Σ
+  type St = Step.State
 
   // Inject a term into the machine.
-  def inject(e: Exp): St = Σ(e, ρ0, σ0, Nil)
+  def inject(e: Exp): St = Step.Ev(e, ρ0, σ0, Nil)
 
   ////////////////////////////////////////////////////////////////
   // ENVIRONMENTS
