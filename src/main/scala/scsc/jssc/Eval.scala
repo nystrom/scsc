@@ -71,10 +71,10 @@ object Eval {
 
     case (Binary.BIND, v1, v2) =>
       println("ERROR: unimplemented ${Binary(op, v1, v2).show}")
-      reify(Binary(op, v1, v2))(σempty, ρempty)
+      reify(Binary(op, v1, v2))
 
-    case (op, v1, v2 @ Residual(e2)) => reify(Binary(op, v1, v2))(σempty, ρempty)
-    case (op, v1 @ Residual(e1), v2) => reify(Binary(op, v1, v2))(σempty, ρempty)
+    case (op, v1, v2 @ Residual(e2)) => reify(Binary(op, v1, v2))
+    case (op, v1 @ Residual(e1), v2) => reify(Binary(op, v1, v2))
 
     case (Binary.COMMALEFT, v1, v2) => v1
     case (Binary.COMMARIGHT, v1, v2) => v2
@@ -84,14 +84,14 @@ object Eval {
 
     case (Binary.!=, v1, v2) => evalOp(Binary.==, v1, v2) match {
       case Bool(v) => Bool(!v)
-      case Residual(Binary(Binary.==, v1, v2)) => reify(Binary(Binary.!=, v1, v2))(σempty, ρempty)
-      case r => reify(Binary(Binary.!=, v1, v2))(σempty, ρempty)
+      case Residual(Binary(Binary.==, v1, v2)) => reify(Binary(Binary.!=, v1, v2))
+      case r => reify(Binary(Binary.!=, v1, v2))
     }
 
     case (Binary.!==, v1, v2) => evalOp(Binary.===, v1, v2) match {
       case Bool(v) => Bool(!v)
-      case Residual(Binary(Binary.===, v1, v2)) => reify(Binary(Binary.!==, v1, v2))(σempty, ρempty)
-      case r => reify(Binary(Binary.!==, v1, v2))(σempty, ρempty)
+      case Residual(Binary(Binary.===, v1, v2)) => reify(Binary(Binary.!==, v1, v2))
+      case r => reify(Binary(Binary.!==, v1, v2))
     }
 
     case (Binary.==, Null(), Undefined()) => Bool(true)
@@ -103,14 +103,14 @@ object Eval {
 
     case (Binary.==, Path(n1, _), Path(n2, _)) if n1 == n2 => Bool(true)
     // We don't handle object literals, so just reify.
-    case (Binary.==, v1 @ Path(n1, _), v2) => reify(Binary(Binary.==, v1, v2))(σempty, ρempty)
-    case (Binary.==, v1, v2 @ Path(n2, _)) => reify(Binary(Binary.==, v1, v2))(σempty, ρempty)
+    case (Binary.==, v1 @ Path(n1, _), v2) => reify(Binary(Binary.==, v1, v2))
+    case (Binary.==, v1, v2 @ Path(n2, _)) => reify(Binary(Binary.==, v1, v2))
 
     // for other cases, just use ===.
     case (Binary.==, v1, v2) => evalOp(Binary.===, v1, v2) match {
       case Bool(v) => Bool(v)
-      case Residual(Binary(Binary.===, v1, v2)) => reify(Binary(Binary.==, v1, v2))(σempty, ρempty)
-      case r => reify(Binary(Binary.==, v1, v2))(σempty, ρempty)
+      case Residual(Binary(Binary.===, v1, v2)) => reify(Binary(Binary.==, v1, v2))
+      case r => reify(Binary(Binary.==, v1, v2))
     }
 
     case (Binary.===, Undefined(), Undefined()) => Bool(true)
@@ -124,7 +124,7 @@ object Eval {
     // Failure
     case (op, v1, v2) =>
       println("ERROR: cannot apply ${Binary(op, v1, v2).show}")
-      reify(Binary(op, v1, v2))(σempty, ρempty)
+      reify(Binary(op, v1, v2))
   }
 
   def evalPrim(fun: String, args: List[Exp]): Option[Exp] = (fun, args) match {

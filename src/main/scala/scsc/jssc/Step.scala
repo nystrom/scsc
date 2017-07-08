@@ -24,6 +24,13 @@ object Step {
     def step: State
   }
 
+  case class Halt(v: Exp, φ: Effect) extends State {
+    def step = ???
+  }
+  case class Err(message: String, st: State) extends State {
+    def step = ???
+  }
+
   case class Ev(e: Exp, ρ: Env, σ: Store, φ: Effect, k: Cont) extends State {
     override def toString = s"""Ev
   e = $e
@@ -193,7 +200,7 @@ object Step {
 
             Ev(s2, ρ, σ2, φ, k)
           case None =>
-            Co(e, σ, φ, Fail(s"variable $x not found")::k)
+            Err(s"variable $x not found", this)
         }
 
       case VarDef(x, e) =>
@@ -201,7 +208,7 @@ object Step {
           case Some(loc) =>
             Ev(e, ρ, σ, φ, DoAssign(None, Path(loc.address, Local(x)), ρ)::RebuildLet(x::Nil, Undefined()::Nil, ρ)::k)
           case None =>
-            Co(e, σ, φ, Fail(s"variable $x not found")::k)
+            Err(s"variable $x not found", this)
         }
 
       ////////////////////////////////////////////////////////////////
@@ -369,14 +376,14 @@ object Step {
 
       // Don't implement with.
       case With(exp, body) =>
-        reify(With(exp, body))(σ, ρ) match {
+        reify(With(exp, body)) match {
           case v =>
             Co(v, Eval.simulateStore(v)(σ, ρ), φ, k)
         }
 
 
       case _ =>
-        Co(e, σ, φ, Fail("no rule for $this")::k)
+        Err("no rule for $this", this)
 
     }
   }
@@ -392,10 +399,7 @@ object Step {
 
     def step = k match {
       // Done!
-      case Nil => this
-
-      // Fail!
-      case Fail(_)::k => this
+      case Nil => Halt(v, φ)
 
       case RebuildScope(ρ1)::k =>
         v match {
@@ -410,9 +414,8 @@ object Step {
           case Residual(e) => Co(v, σ, φ, kr ++ k)
           case Value(e) =>
             // this should not happen
-            reify(e)(σ, ρ) match {
-              case e =>
-                Co(e, Eval.simulateStore(e)(σ, ρ), φ, kr ++ k)
+            reify(e) match {
+              case e => Co(e, Eval.simulateStore(e)(σ, ρ), φ, kr ++ k)
             }
         }
 
@@ -432,7 +435,7 @@ object Step {
       case RebuildCondTrue(test, s2, σAfterTest, ρ0)::k =>
         val s1 = v
         val σ1 = σ
-        reify(s1)(σ1, ρ0) match {
+        reify(s1) match {
           case s1 =>
             val σ = extendWithCond(test, σAfterTest, ρ0, false)
             Ev(s2, ρ0, σ, φ, RebuildCondFalse(test, s1, σ1, ρ0)::k)
@@ -442,7 +445,7 @@ object Step {
       case RebuildCondFalse(test, s1, σ1, ρ0)::k =>
         val s2 = v
         val σ2 = σ
-        reify(s2)(σ2, ρ0) match {
+        reify(s2) match {
           case s2 =>
             Co(Residual(Cond(test, s1, s2)), σ1.merge(σ2, ρ0), φ, k)
         }
@@ -458,7 +461,7 @@ object Step {
       case RebuildIfElseTrue(test, s2, σAfterTest, ρ0)::k =>
         val s1 = v
         val σ1 = σ
-        reify(s1)(σ1, ρ0) match {
+        reify(s1) match {
           case s1 =>
             val σ = extendWithCond(test, σAfterTest, ρ0, false)
             Ev(s2, ρ0, σ, φ, RebuildIfElseFalse(test, s1, σ1, ρ0)::k)
@@ -468,14 +471,14 @@ object Step {
       case RebuildIfElseFalse(test, s1, σ1, ρ0)::k =>
         val s2 = v
         val σ2 = σ
-        reify(s2)(σ2, ρ0) match {
+        reify(s2) match {
           case s2 =>
             Co(Residual(IfElse(test, s1, s2)), σ1.merge(σ2, ρ0), φ, k)
         }
 
       case RebuildForIn(label, init, iter, ρ1)::k =>
         val body = v
-        reify(ForIn(label, init, iter, body))(σ, ρ1) match {
+        reify(ForIn(label, init, iter, body)) match {
           case s =>
             Co(s, Eval.simulateStore(s)(σ, ρ1), φ, k)
         }
@@ -490,14 +493,14 @@ object Step {
 
       case RebuildForIter(label, body1, test1, test0, Empty(), body0, ρ1)::k =>
         val iter1 = v
-        reify(IfElse(test1, Seq(body1, Seq(iter1, While(label, test0, body0))), Undefined()))(σ, ρ1) match {
+        reify(IfElse(test1, Seq(body1, Seq(iter1, While(label, test0, body0))), Undefined())) match {
           case s =>
             Co(s, Eval.simulateStore(s)(σ, ρ1), φ, k)
         }
 
       case RebuildForIter(label, body1, test1, test0, iter0, body0, ρ1)::k =>
         val iter1 = v
-        reify(IfElse(test1, Seq(body1, Seq(iter1, For(label, Empty(), test0, iter0, body0))), Undefined()))(σ, ρ1) match {
+        reify(IfElse(test1, Seq(body1, Seq(iter1, For(label, Empty(), test0, iter0, body0))), Undefined())) match {
           case s =>
             Co(s, Eval.simulateStore(s)(σ, ρ1), φ, k)
         }
@@ -550,7 +553,7 @@ object Step {
       case RebuildSeq(s1, ρ1)::k =>
         v match {
           case Value(s2) =>
-            reify(s2)(σ, ρ1) match {
+            reify(s2) match {
               case s2 =>
                 Co(Residual(Seq(s1, s2)), σ, φ, k)
             }
@@ -616,7 +619,7 @@ object Step {
       case DoAssign(op, lhs, ρ1)::k =>
         val rhs = v
 
-        reify(lhs)(σ, ρ1) match {
+        reify(lhs) match {
           case lhs =>
             Co(Residual(Assign(op, lhs, rhs)), Eval.simulateStore(Assign(op, lhs, rhs))(σ, ρ1), φ, k)
         }
@@ -647,7 +650,7 @@ object Step {
             }
 
           case Value(e) =>
-            reify(e)(σ, ρ1) match {
+            reify(e) match {
               case e =>
                 Co(Residual(IncDec(op, e)), Eval.simulateStore(IncDec(op, e))(σ, ρ1), φ, k)
             }
@@ -670,7 +673,7 @@ object Step {
               case Some(UnknownClosure()) =>
                 Co(Residual(path), σ, φ, k)
               case None =>
-                Co(loc, σ, φ, Fail(s"could not load location $loc")::k)
+                Err(s"could not load location $loc", this)
             }
 
           case Undefined() =>
@@ -680,7 +683,7 @@ object Step {
             Co(Residual(e), σ, φ, k)
 
           case e =>
-            val v = reify(e)(σ, ρ1)
+            val v = reify(e)
             Co(v, Eval.simulateStore(v)(σ, ρ1), φ, k)
         }
 
@@ -711,7 +714,7 @@ object Step {
                 Co(Residual(Typeof(path)), σ, φ, k)
             }
           case e =>
-            val v = reify(Typeof(e))(σ, ρ1)
+            val v = reify(Typeof(e))
             Co(v, Eval.simulateStore(v)(σ, ρ1), φ, k)
         }
 
@@ -726,7 +729,7 @@ object Step {
           case (Prefix.-, CvtNum(v)) =>
             Co(Num(-v), σ, φ, k)
           case (op, Value(v)) =>
-            reify(v)(σ, ρ1) match {
+            reify(v) match {
               case v =>
                 Co(Residual(Unary(op, v)), Eval.simulateStore(Unary(op, v))(σ, ρ1), φ, k)
             }
@@ -836,17 +839,17 @@ object Step {
                 // Use Ev, not Co... the prim might be eval and return the expression to eval.
                 Ev(e, ρ1, σ, φ, k)
               case None =>
-                Co(reify(residual)(σ, ρ1), σ, φ, k)
+                Co(reify(residual), σ, φ, k)
             }
 
           case _ =>
-            Co(reify(residual)(σ, ρ1), σ, φ, k)
+            Co(reify(residual), σ, φ, k)
         }
 
       // The function is not a lambda. Residualize the call. Clear the store since we have no idea what the function
       // will do to the store.
       case DoCall(fun, thisValue, args, residual, ρ1)::k =>
-        Co(reify(residual)(σ, ρ1), σ, φ, k)
+        Co(reify(residual), σ, φ, k)
 
 
       ////////////////////////////////////////////////////////////////
@@ -909,7 +912,7 @@ object Step {
               case (x, e) if ! v.isInstanceOf[Path] && (fv(v) contains x) => VarDef(x, e)
             }
             if (ss.nonEmpty) {
-              reify(v)(σ, ρ1) match {
+              reify(v) match {
                 case v =>
                   val block = ss.foldRight(v) {
                     case (s1, s2) => Seq(s1, s2)
@@ -982,10 +985,10 @@ object Step {
             val xloc = FreshLoc()
             val ρ2 = ρ1 + (x -> xloc)
 
-            Co(Undefined(), σ.assign(xloc, loc, ρ2).assign(loc, obj, ρ2), φ, DoCall(fun, Local(x), args, Local(x), ρ2)::SeqCont(Local(x), ρ2)::RebuildLet(x::Nil, reify(loc)(σ, ρ1)::Nil, ρ1)::k)
+            Co(Undefined(), σ.assign(xloc, loc, ρ2).assign(loc, obj, ρ2), φ, DoCall(fun, Local(x), args, Local(x), ρ2)::SeqCont(Local(x), ρ2)::RebuildLet(x::Nil, reify(loc)::Nil, ρ1)::k)
 
           case None =>
-            Co(reify(loc)(σ, ρ1), Eval.simulateStore(reify(loc)(σ, ρ1))(σ, ρ1), φ, k)
+            Co(reify(loc), Eval.simulateStore(reify(loc))(σ, ρ1), φ, k)
         }
 
       case EvalPropertyNameForDel(i, ρ1)::k =>
@@ -1014,14 +1017,14 @@ object Step {
               case Some(ValClosure(_)) | Some(LocClosure(_)) =>
                 Co(a, σ, φ, k)
               case Some(UnknownClosure()) | None =>
-                reify(Delete(IndexAddr(a, i)))(σ, ρ1) match {
+                reify(Delete(IndexAddr(a, i))) match {
                   case v =>
                     Co(v, Eval.simulateStore(v)(σ, ρ1), φ, k)
                 }
             }
 
           case (a, i) =>
-            reify(Delete(IndexAddr(a, i)))(σ, ρ1) match {
+            reify(Delete(IndexAddr(a, i))) match {
               case v =>
                 Co(v, Eval.simulateStore(v)(σ, ρ1), φ, k)
             }
@@ -1055,13 +1058,13 @@ object Step {
               case Some(ValClosure(_)) | Some(LocClosure(_)) =>
                 Co(Undefined(), σ, φ, k)
               case Some(UnknownClosure()) | None =>
-                reify(IndexAddr(a, i))(σ, ρ1) match {
+                reify(IndexAddr(a, i)) match {
                   case v =>
                     Co(v, Eval.simulateStore(v)(σ, ρ1), φ, k)
                 }
             }
           case (a, i) =>
-            reify(IndexAddr(a, i))(σ, ρ1) match {
+            reify(IndexAddr(a, i)) match {
               case v =>
                 Co(v, Eval.simulateStore(v)(σ, ρ1), φ, k)
             }
@@ -1100,13 +1103,13 @@ object Step {
               case Some(ValClosure(_)) | Some(LocClosure(_)) =>
                 Co(Undefined(), σ, φ, k)
               case Some(UnknownClosure()) | None =>
-                reify(Index(a, i))(σ, ρ1) match {
+                reify(Index(a, i)) match {
                   case v =>
                     Co(v, Eval.simulateStore(v)(σ, ρ1), φ, k)
                 }
             }
           case (a, i) =>
-            reify(Index(a, i))(σ, ρ1) match {
+            reify(Index(a, i)) match {
               case v =>
                 Co(v, Eval.simulateStore(v)(σ, ρ1), φ, k)
             }

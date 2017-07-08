@@ -188,19 +188,25 @@ object CESK {
 
       s match {
         // stop when we have a value with the empty continuation.
-        case Co(Residual(v), σ, φ, Nil) =>
-          return v
+        case Halt(Residual(v), φ) =>
+          φ match {
+            case Nil =>
+              return v
+            case φs =>
+              return φs.foldRight(v)(Seq)
+          }
 
-        case Co(Value(v), σ, φ, Nil) =>
-          return unreify(reify(v)(σ, Context.ρempty))
+        case Halt(Value(v), φ) =>
+          φ match {
+            case Nil =>
+              return unreify(reify(v))
+            case φs =>
+              return φs.foldRight(unreify(reify(v)))(Seq)
+          }
 
-        case Ev(e, _, σ, φ, Fail(s)::k) =>
-          println(s"FAIL $s")
-          return Lambda("error"::Nil, e)
-
-        case Co(e, σ, φ, Fail(s)::k) =>
-          println(s"FAIL $s")
-          return Lambda("error"::Nil, e)
+        case Err(message, s) =>
+          println(s"FAIL $message in $s")
+          return Undefined()
 
         case s0 =>
           s = step(s0)
@@ -222,17 +228,25 @@ object CESK {
 
       s match {
         // stop when we have a value with the empty continuation.
-        case Co(ValueOrResidual(v), σ, φ, Nil) =>
-          return unreify(reify(v)(σ, Context.ρempty))
+        case Halt(Residual(v), φ) =>
+          φ match {
+            case Nil =>
+              return v
+            case φs =>
+              return φs.foldRight(v)(Seq)
+          }
 
-        case Co(e, σ, φ, Fail(s)::k) =>
-          println(s"FAIL $s")
-          return Lambda("error"::Nil, e)
+        case Halt(Value(v), φ) =>
+          φ match {
+            case Nil =>
+              return unreify(reify(v))
+            case φs =>
+              return φs.foldRight(unreify(reify(v)))(Seq)
+          }
 
-        case Ev(e, ρ, σ, φ, Fail(s)::k) =>
-          println(s"FAIL $s")
-          return Lambda("error"::Nil, e)
-
+        case Err(message, s) =>
+          println(s"FAIL $message in $s")
+          return Undefined()
 
         case s0 @ Ev(CheckHistory(focus1), ρ1, σ, φ, k1) =>
           val s1 = step(s0)
@@ -279,10 +293,7 @@ object CESK {
 
           hist += s
 
-        case s0 @ Ev(focus, ρ, σ, φ, k) =>
-          s = step(s0)
-
-        case s0 @ Co(focus, σ, φ, k) =>
+        case s0 =>
           s = step(s0)
       }
     }

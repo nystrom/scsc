@@ -39,12 +39,6 @@ object Continuations {
   case class DoCall(fun: Exp, thisValue: Exp, args: List[Exp], residual: Exp, ρ: Env) extends ContFrame {
     override def toString = s"${fun.show}(${args.map(_.show).mkString(", ")})"
   }
-  case class Fail(s: String) extends ContFrame {
-    override def toString = s"FAIL($s)"
-  }
-  case class Backup(s: String) extends ContFrame {
-    override def toString = s"BACKUP($s)"
-  }
 
   case class InitProto(fun: Exp, args: List[Exp], ρ: Env) extends ContFrame
   case class EvalMethodProperty(methodProp: Exp, args: List[Exp], ρ: Env) extends ContFrame
@@ -81,7 +75,6 @@ object Continuations {
     override def toString = s"${v1.show} $op ☐"
   }
 
-  case class RebuildSeq(e1: Exp, ρ: Env) extends RebuildCont
   case class SeqCont(e2: Exp, ρ: Env) extends ContFrame // Ev(e2) next
   case class FocusCont(v2: Exp) extends ContFrame  // Co(v2) next
   case class BranchCont(ifTrue: Cont, ifFalse: Cont, ifResidual: Cont, ρ: Env) extends ContFrame {
@@ -107,6 +100,22 @@ object Continuations {
   // typeof
   case class DoTypeof(ρ: Env) extends ContFrame
 
+  case class InitObject(loc: Loc, todo: List[Exp], done: List[Exp], ρ: Env) extends ContFrame
+  case class WrapProperty(k: Exp, ρ: Env) extends ContFrame
+  case class EvalPropertyValue(v: Exp, ρ: Env) extends ContFrame
+
+  // delete a[i]
+  case class EvalPropertyNameForDel(i: Exp, ρ: Env) extends ContFrame
+  case class DoDeleteProperty(a: Exp, ρ: Env) extends ContFrame
+
+  // a[i]
+  case class EvalPropertyNameForGet(i: Exp, ρ: Env) extends ContFrame
+  case class GetProperty(a: Exp, ρ: Env) extends ContFrame
+
+  // a[i] = v
+  case class EvalPropertyNameForSet(i: Exp, ρ: Env) extends ContFrame
+  case class GetPropertyAddressOrCreate(a: Exp, ρ: Env) extends ContFrame
+
   // actions on residuals
   sealed trait RebuildCont extends ContFrame
 
@@ -125,25 +134,11 @@ object Continuations {
   case class RebuildIfElseTrue(test: Exp, s2: Exp, σAfterTest: Store, ρBeforeTest: Env) extends RebuildCont
   case class RebuildIfElseFalse(test: Exp, s1: Exp, σAfterS1: Store, ρBeforeTest: Env) extends RebuildCont
 
+  case class RebuildSeq(e1: Exp, ρ: Env) extends RebuildCont
 
   case class RebuildForIn(label: Option[Name], init: Exp, iter: Exp, ρ: Env) extends RebuildCont
   case class RebuildForTest(label: Option[Name], test: Exp, iter: Exp, body: Exp, ρ: Env) extends RebuildCont
   case class RebuildForBody(label: Option[Name], test1: Exp, test: Exp, iter: Exp, body: Exp, ρ: Env) extends RebuildCont
   case class RebuildForIter(label: Option[Name], body1: Exp, test1: Exp, test: Exp, iter: Exp, body: Exp, ρ: Env) extends RebuildCont
 
-  case class InitObject(loc: Loc, todo: List[Exp], done: List[Exp], ρ: Env) extends ContFrame
-  case class WrapProperty(k: Exp, ρ: Env) extends ContFrame
-  case class EvalPropertyValue(v: Exp, ρ: Env) extends ContFrame
-
-  // delete a[i]
-  case class EvalPropertyNameForDel(i: Exp, ρ: Env) extends ContFrame
-  case class DoDeleteProperty(a: Exp, ρ: Env) extends ContFrame
-
-  // a[i]
-  case class EvalPropertyNameForGet(i: Exp, ρ: Env) extends ContFrame
-  case class GetProperty(a: Exp, ρ: Env) extends ContFrame
-
-  // a[i] = v
-  case class EvalPropertyNameForSet(i: Exp, ρ: Env) extends ContFrame
-  case class GetPropertyAddressOrCreate(a: Exp, ρ: Env) extends ContFrame
 }

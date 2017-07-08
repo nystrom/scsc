@@ -50,7 +50,7 @@ object Residualization {
     Undefined()
   }
 
-  def reify(e: Exp)(implicit σ: Store, ρ: Env): Exp = {
+  def reify(e: Exp): Exp = {
     import scsc.js.TreeWalk._
 
     object Reify extends Rewriter {
@@ -83,21 +83,24 @@ object Residualization {
     Unreify.rewrite(e)
   }
 
-  def strongReify(e: Exp)(implicit σ: Store, ρ: Env): Exp = Residual(unreify(reify(e)(σ, ρ)))
-
-  def strongReifyStore(σ: Store, ρ: Env): Store = σ map {
-    case (loc, ValClosure(v)) => (loc, ValClosure(strongReify(v)(σ, ρ)))
-    case (loc, ObjClosure(v, ρ)) => (loc, ObjClosure(v, ρ))
-    case (loc, LocClosure(v)) => (loc, LocClosure(v))
-    case (loc, UnknownClosure()) => (loc, UnknownClosure())
+  def strongReify(e: Exp): (Exp, Effect) = {
+    reify(e) match {
+      case v @ Residual(e) =>
+        val x = scsc.util.FreshVar()
+        (Residual(Local(x)), Assign(None, LocalAddr(x), e)::Nil)
+      case v =>
+        (Residual(v), Nil)
+    }
   }
 
   def strongReify(s: St): St = s match {
     case Co(focus, σ, φ, k) =>
-      val focus1 = strongReify(focus)(σ, Context.ρ0)
-      Co(focus1, σ, φ, k)
+      val (focus1, φ1) = strongReify(focus)
+      Co(focus1, σ, φ ++ φ1, k)
     case Ev(focus, ρ, σ, φ, k) =>
-      val focus1 = strongReify(focus)(σ, ρ)
-      Ev(focus1, ρ, σ, φ, k)
+      val (focus1, φ1) = strongReify(focus)
+      Ev(focus1, ρ, σ, φ ++ φ1, k)
+    case s =>
+      s
   }
 }

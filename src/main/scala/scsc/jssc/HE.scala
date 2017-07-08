@@ -24,18 +24,25 @@ object HE {
   // to avoid repeating we do Residual(x+2).
   // We do this rather than splitting?
 
-  // To convert to a term just reify the focus and run the machine to termination.
+  // To convert to a term, we run the machine until it terminates, reifying
+  // the focus each step.
   def toTerm(s: St): Option[(Exp, Int)] = {
     println("converting to term " + s)
     s match {
-      case Co(e, σ, φ, Nil) =>
+      case Halt(e, φ) =>
         val u = unreify(e)
-        println("--> " + u)
-        Some((u, 0))
-      case Co(e, σ, φ, Fail(_)::k) =>
-        None
+        val t = φ match {
+          case Nil => u
+          case es =>
+            es.foldRight(u) {
+              case (e1, e2) => Seq(e1, e2)
+            }
+        }
+        println("--> " + t)
+        Some((t, 0))
+
       case Co(Residual(v), σ, φ, k) =>
-        val s1 = step(Co(v, σ, φ, k))
+        val s1 = step(Co(Residual(v), σ, φ, k))
         toTerm(s1) map {
           case (u, n) => (u, n+1)
         }
@@ -44,93 +51,22 @@ object HE {
         toTerm(s1) map {
           case (u, n) => (u, n+1)
         }
-      case Ev(e, ρ, σ, φ, Fail(_)::k) =>
-        None
+
       case Ev(e, ρ, σ, φ, k) =>
-        val s1 = step(Ev(strongReify(e)(σ, ρ), ρ, σ, φ, k))
+        val (e1, φ1) = strongReify(e)
+        val s1 = step(Ev(e1, ρ, σ, φ ++ φ1, k))
         toTerm(s1) map {
           case (u, n) => (u, n+1)
         }
+
+      case Err(_, _) =>
+        None
     }
   }
 
   type FoldResult = (Name, Exp, Exp, Exp)
 
   def tryFold(s: St, target: St): Option[FoldResult] = None
-
-/*
-  def tryFold(s: St, target: St): Option[FoldResult] = {
-    (toTerm(s), toTerm(target)) match {
-      case (Some((e1, _)), Some((e2, _))) =>
-        tryFoldExp(e1, e2) match {
-          case Some(u) => return Some(u)
-          case None =>
-        }
-      case _ =>
-    }
-
-    target match {
-      case Σ(e, ρ, σ, Done) =>
-        tryFoldStVsExp(s, e)
-      case Σ(e, ρ, σ, Fail(_)) =>
-        None
-      case Σ(e, ρ, σ, k: RebuildCont) =>
-        tryFoldStVsExp(s, e) match {
-          case Some(u) =>
-            println("--> " + u)
-            Some(u)
-          case None =>
-            val target1 = step(Σ(strongReify(e), ρ, σ, k))
-            tryFold(s, target1)
-        }
-      case Σ(e, ρ, σ, k) =>
-        val target1 = step(Σ(strongReify(e), ρ, σ, k))
-        tryFold(s, target1)
-    }
-  }
-
-  def tryFoldStVsExp(s: St, target: Exp): Option[FoldResult] = {
-    s match {
-      case Σ(e, ρ, σ, Done) =>
-        tryFoldExp(e, target)
-      case Σ(e, ρ, σ, Fail(_)) =>
-        None
-      case Σ(e, ρ, σ, k: RebuildCont) =>
-        tryFoldExp(e, target) match {
-          case Some(u) =>
-            println(s"    ---> ${u}")
-            Some(u)
-          case None =>
-            val s1 = step(Σ(strongReify(e), ρ, σ, k))
-            tryFoldStVsExp(s1, target)
-        }
-      case Σ(e, ρ, σ, k) =>
-        val s1 = step(Σ(strongReify(e), ρ, σ, k))
-        tryFoldStVsExp(s1, target)
-    }
-  }
-
-  def tryFoldExp(e1: Exp, e2: Exp): Option[FoldResult] = {
-    val u1 = unreify(e1)
-    val u2 = unreify(e2)
-
-    // u1 match {
-    //   case Var(_) => return None
-    //   case v if v.isValue => return None
-    //   case _ =>
-    // }
-    //
-    // u2 match {
-    //   case Var(_) => return None
-    //   case v if v.isValue => return None
-    //   case _ =>
-    // }
-
-    println(s"TRY FOLD ${u1.show}")
-    println(s"      vs ${u2.show}")
-    MSG.msgTerms(u1, u2)
-  }
-  */
 
   def size(e: Exp): Int = {
     import scsc.js.TreeWalk._
