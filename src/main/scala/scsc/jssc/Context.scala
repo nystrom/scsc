@@ -90,7 +90,15 @@ object Context {
                     "acos" -> Prim("Math.acos"),
                     "atan" -> Prim("Math.atan"),
                     "atan2" -> Prim("Math.atan2"),
-                    "pow" -> Prim("Math.pow")
+                    "pow" -> Prim("Math.pow"),
+                    "E" -> Prim("Math.E"),
+                    "PI" -> Prim("Math.PI"),
+                    "LN2" -> Prim("Math.LN2"),
+                    "LN10" -> Prim("Math.LN10"),
+                    "LOG10E" -> Prim("Math.LOG10E"),
+                    "LOG2E" -> Prim("Math.LOG2E"),
+                    "SQRT2" -> Prim("Math.SQRT2"),
+                    "SQRT1_2" -> Prim("Math.SQRT1_2")
                     )
   )
 }
