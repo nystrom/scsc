@@ -9,7 +9,12 @@ object Machine {
   type St = Step.State
 
   // Inject a term into the machine.
-  def inject(e: Exp): St = Step.Ev(e, ρ0, σ0, Nil)
+  def inject(e: Exp): St = Step.Ev(e, ρ0, σ0, Φ0, k0)
+
+  val k0: Cont = Nil
+
+  type Effect = List[Exp]
+  val Φ0: Effect = Nil
 
   ////////////////////////////////////////////////////////////////
   // ENVIRONMENTS

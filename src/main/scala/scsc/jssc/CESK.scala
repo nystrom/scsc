@@ -188,17 +188,17 @@ object CESK {
 
       s match {
         // stop when we have a value with the empty continuation.
-        case Co(Residual(v), σ, Nil) =>
+        case Co(Residual(v), σ, φ, Nil) =>
           return v
 
-        case Co(Value(v), σ, Nil) =>
+        case Co(Value(v), σ, φ, Nil) =>
           return unreify(reify(v)(σ, Context.ρempty))
 
-        case Ev(e, _, σ, Fail(s)::k) =>
+        case Ev(e, _, σ, φ, Fail(s)::k) =>
           println(s"FAIL $s")
           return Lambda("error"::Nil, e)
 
-        case Co(e, σ, Fail(s)::k) =>
+        case Co(e, σ, φ, Fail(s)::k) =>
           println(s"FAIL $s")
           return Lambda("error"::Nil, e)
 
@@ -222,19 +222,19 @@ object CESK {
 
       s match {
         // stop when we have a value with the empty continuation.
-        case Co(ValueOrResidual(v), σ, Nil) =>
+        case Co(ValueOrResidual(v), σ, φ, Nil) =>
           return unreify(reify(v)(σ, Context.ρempty))
 
-        case Co(e, σ, Fail(s)::k) =>
+        case Co(e, σ, φ, Fail(s)::k) =>
           println(s"FAIL $s")
           return Lambda("error"::Nil, e)
 
-        case Ev(e, ρ, σ, Fail(s)::k) =>
+        case Ev(e, ρ, σ, φ, Fail(s)::k) =>
           println(s"FAIL $s")
           return Lambda("error"::Nil, e)
 
 
-        case s0 @ Ev(CheckHistory(focus1), ρ1, σ, k1) =>
+        case s0 @ Ev(CheckHistory(focus1), ρ1, σ, φ, k1) =>
           val s1 = step(s0)
 
           s = hist.foldRight(s1) {
@@ -279,10 +279,10 @@ object CESK {
 
           hist += s
 
-        case s0 @ Ev(focus, ρ, σ, k) =>
+        case s0 @ Ev(focus, ρ, σ, φ, k) =>
           s = step(s0)
 
-        case s0 @ Co(focus, σ, k) =>
+        case s0 @ Co(focus, σ, φ, k) =>
           s = step(s0)
       }
     }

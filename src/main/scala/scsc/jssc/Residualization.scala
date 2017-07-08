@@ -93,11 +93,11 @@ object Residualization {
   }
 
   def strongReify(s: St): St = s match {
-    case Co(focus, σ, k) =>
+    case Co(focus, σ, φ, k) =>
       val focus1 = strongReify(focus)(σ, Context.ρ0)
-      Co(focus1, σ, k)
-    case Ev(focus, ρ, σ, k) =>
+      Co(focus1, σ, φ, k)
+    case Ev(focus, ρ, σ, φ, k) =>
       val focus1 = strongReify(focus)(σ, ρ)
-      Ev(focus1, ρ, σ, k)
+      Ev(focus1, ρ, σ, φ, k)
   }
 }

@@ -28,26 +28,26 @@ object HE {
   def toTerm(s: St): Option[(Exp, Int)] = {
     println("converting to term " + s)
     s match {
-      case Co(e, σ, Nil) =>
+      case Co(e, σ, φ, Nil) =>
         val u = unreify(e)
         println("--> " + u)
         Some((u, 0))
-      case Co(e, σ, Fail(_)::k) =>
+      case Co(e, σ, φ, Fail(_)::k) =>
         None
-      case Co(Residual(v), σ, k) =>
-        val s1 = step(Co(v, σ, k))
+      case Co(Residual(v), σ, φ, k) =>
+        val s1 = step(Co(v, σ, φ, k))
         toTerm(s1) map {
           case (u, n) => (u, n+1)
         }
-      case Co(Value(v), σ, k) =>
-        val s1 = step(Co(Residual(v), σ, k))
+      case Co(Value(v), σ, φ, k) =>
+        val s1 = step(Co(Residual(v), σ, φ, k))
         toTerm(s1) map {
           case (u, n) => (u, n+1)
         }
-      case Ev(e, ρ, σ, Fail(_)::k) =>
+      case Ev(e, ρ, σ, φ, Fail(_)::k) =>
         None
-      case Ev(e, ρ, σ, k) =>
-        val s1 = step(Ev(strongReify(e)(σ, ρ), ρ, σ, k))
+      case Ev(e, ρ, σ, φ, k) =>
+        val s1 = step(Ev(strongReify(e)(σ, ρ), ρ, σ, φ, k))
         toTerm(s1) map {
           case (u, n) => (u, n+1)
         }
@@ -285,13 +285,13 @@ object HE {
 
   implicit class StHE(s1: St) {
     def comparableStates(s1: St, s2: St) = (s1, s2) match {
-      case (s1 @ Ev(e1, ρ1, σ1, k1::_), s2 @ Ev(e2, ρ2, σ2, k2::_)) => e1 == e2 && k1.getClass == k2.getClass
-      case (s1 @ Co(e1, σ1, k1::_), s2 @ Co(e2, σ2, k2::_)) => e1 == e2 && k1.getClass == k2.getClass
-      case (s1 @ Ev(e1, ρ1, σ1, Nil), s2 @ Ev(e2, ρ2, σ2, Nil)) => e1 == e2
-      case (s1 @ Co(e1, σ1, Nil), s2 @ Co(e2, σ2, Nil)) => e1 == e2
+      case (s1 @ Ev(e1, ρ1, σ1, φ1, k1::_), s2 @ Ev(e2, ρ2, σ2, φ2, k2::_)) => e1 == e2 && φ1 == φ2 && k1.getClass == k2.getClass
+      case (s1 @ Co(e1, σ1, φ1, k1::_), s2 @ Co(e2, σ2, φ2, k2::_)) => e1 == e2 && φ1 == φ2 && k1.getClass == k2.getClass
+      case (s1 @ Ev(e1, ρ1, σ1, φ1, Nil), s2 @ Ev(e2, ρ2, σ2, φ2, Nil)) => e1 == e2 && φ1 == φ2
+      case (s1 @ Co(e1, σ1, φ1, Nil), s2 @ Co(e2, σ2, φ2, Nil)) => e1 == e2 && φ1 == φ2
       case _ => false
     }
-    
+
     def <<|(s2: St): Boolean = (s1, s2) match {
       // Only compare states if the focus expression is the same and the first continuation
       // is of the same type. That is, we're evaluatnig the same expression in
