@@ -46,6 +46,7 @@ object HE {
         toTerm(s1) map {
           case (u, n) => (u, n+1)
         }
+
       case Co(Value(v), σ, φ, k) =>
         val s1 = step(Co(Residual(v), σ, φ, k))
         toTerm(s1) map {

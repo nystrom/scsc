@@ -89,16 +89,16 @@ object Step {
       // if e then s1 else s2
       case IfElse(e, s1, s2) =>
         Ev(e, ρ, σ, φ, BranchCont(SeqCont(s1, ρ)::Nil,
-                                 SeqCont(s2, ρ)::Nil,
-                                 RebuildIfElseTest(s1, s2, ρ)::Nil,
-                                 ρ)::k)
+                                  SeqCont(s2, ρ)::Nil,
+                                  RebuildIfElseTest(s1, s2, ρ)::Nil,
+                                  ρ)::k)
 
       // e ? s1 : s2
       case Cond(e, s1, s2) =>
         Ev(e, ρ, σ, φ, BranchCont(SeqCont(s1, ρ)::Nil,
-                                 SeqCont(s2, ρ)::Nil,
-                                 RebuildCondTest(s1, s2, ρ)::Nil,
-                                 ρ)::k)
+                                  SeqCont(s2, ρ)::Nil,
+                                  RebuildCondTest(s1, s2, ρ)::Nil,
+                                  ρ)::k)
 
       ////////////////////////////////////////////////////////////////
       // Loops.
@@ -110,10 +110,10 @@ object Step {
 
       case For(label, Empty(), test, iter, body) =>
         Ev(test, ρ, σ, φ, BranchCont(
-                         SeqCont(body, ρ)::ContinueFrame(label)::SeqCont(Seq(iter, For(label, Empty(), test, iter, body)), ρ)::BreakFrame(label)::Nil,
-                         FocusCont(Undefined())::Nil,
-                         RebuildForTest(label, test, iter, body, ρ)::Nil,
-                         ρ)::k)
+                          SeqCont(body, ρ)::ContinueFrame(label)::SeqCont(Seq(iter, For(label, Empty(), test, iter, body)), ρ)::BreakFrame(label)::Nil,
+                          FocusCont(Undefined())::Nil,
+                          RebuildForTest(label, test, iter, body, ρ)::Nil,
+                          ρ)::k)
 
       case For(label, init, test, iter, body) =>
         Ev(Seq(init, For(label, Empty(), test, iter, body)), ρ, σ, φ, k)
