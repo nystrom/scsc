@@ -134,7 +134,7 @@ object Trees {
   // FIXME: Prim("foo.bar") should just be Residual(Index(Local("foo"), StringLit("bar")))
   case class Prim(name: String) extends Exp
   case class Path(address: Int, path: Exp) extends Exp
-  case class Residual(e: Exp) extends Exp
+  case class Residual(name: String) extends Exp
 
   // This is either a function object or a JS object in the heap.
   // Properties should be a list of Property(value, loc)
@@ -154,7 +154,7 @@ object Trees {
       case Value(v) => true
       case Local(_) => true
       case LocalAddr(_) => true
-      case Residual(v) => v.isPure
+      case Residual(x) => true
       case _ => false
     }
 

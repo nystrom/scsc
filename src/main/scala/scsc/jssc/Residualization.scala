@@ -55,19 +55,12 @@ object Residualization {
 
     object Reify extends Rewriter {
       override def rewrite(e: Exp): Exp = e match {
-        case Residual(e) => super.rewrite(e)
         case Path(_, path) => super.rewrite(path)
         case e => super.rewrite(e)
       }
     }
 
-    val r = Reify.rewrite(e)
-
-    r match {
-      case Value(e) => e
-      case Residual(e) => Residual(e)
-      case e => Residual(e)
-    }
+    Reify.rewrite(e)
   }
 
   def unreify(e: Exp): Exp = {
@@ -75,7 +68,7 @@ object Residualization {
 
     object Unreify extends Rewriter {
       override def rewrite(e: Exp): Exp = e match {
-        case Residual(e) => super.rewrite(e)
+        case Residual(x) => Local(x)
         case e => super.rewrite(e)
       }
     }
@@ -83,24 +76,44 @@ object Residualization {
     Unreify.rewrite(e)
   }
 
-  def strongReify(e: Exp): (Exp, Effect) = {
-    reify(e) match {
-      case v @ Residual(e) =>
-        val x = scsc.util.FreshVar()
-        (Residual(Local(x)), Assign(None, LocalAddr(x), e)::Nil)
-      case v =>
-        (Residual(v), Nil)
-    }
-  }
-
   def strongReify(s: St): St = s match {
     case Co(focus, σ, φ, k) =>
-      val (focus1, φ1) = strongReify(focus)
-      Co(focus1, σ, φ ++ φ1, k)
+      Co(focus, σ, φ, k)
     case Ev(focus, ρ, σ, φ, k) =>
-      val (focus1, φ1) = strongReify(focus)
-      Ev(focus1, ρ, σ, φ ++ φ1, k)
+      Co(Undefined(), σ, φ, k).MakeResidual(focus, ρ, k)
     case s =>
       s
+  }
+
+  // To convert to a term, we run the machine until it terminates, reifying
+  // the focus each step.
+  def toTerm(s: St): Option[(Exp, Int)] = {
+    toTermAcc(s, 0)
+  }
+
+  @scala.annotation.tailrec
+  def toTermAcc(s: St, steps: Int): Option[(Exp, Int)] = {
+    println("converting to term " + s)
+    s match {
+      case Halt(e, φ) =>
+        val u = unreify(e)
+        val t = φ match {
+          case Nil => u
+          case es =>
+            es.foldRight(u) {
+              case (e1, e2) => Seq(e1, e2)
+            }
+        }
+        println("--> " + t)
+        Some((t, steps))
+
+      case Err(_, _) =>
+        None
+
+      case s0 =>
+        val s1 = strongReify(s0)
+        val s2 = s1.step
+        toTermAcc(s2, steps+1)
+    }
   }
 }

@@ -24,47 +24,6 @@ object HE {
   // to avoid repeating we do Residual(x+2).
   // We do this rather than splitting?
 
-  // To convert to a term, we run the machine until it terminates, reifying
-  // the focus each step.
-  def toTerm(s: St): Option[(Exp, Int)] = {
-    println("converting to term " + s)
-    s match {
-      case Halt(e, φ) =>
-        val u = unreify(e)
-        val t = φ match {
-          case Nil => u
-          case es =>
-            es.foldRight(u) {
-              case (e1, e2) => Seq(e1, e2)
-            }
-        }
-        println("--> " + t)
-        Some((t, 0))
-
-      case Co(Residual(v), σ, φ, k) =>
-        val s1 = step(Co(Residual(v), σ, φ, k))
-        toTerm(s1) map {
-          case (u, n) => (u, n+1)
-        }
-
-      case Co(Value(v), σ, φ, k) =>
-        val s1 = step(Co(Residual(v), σ, φ, k))
-        toTerm(s1) map {
-          case (u, n) => (u, n+1)
-        }
-
-      case Ev(e, ρ, σ, φ, k) =>
-        val (e1, φ1) = strongReify(e)
-        val s1 = step(Ev(e1, ρ, σ, φ ++ φ1, k))
-        toTerm(s1) map {
-          case (u, n) => (u, n+1)
-        }
-
-      case Err(_, _) =>
-        None
-    }
-  }
-
   type FoldResult = (Name, Exp, Exp, Exp)
 
   def tryFold(s: St, target: St): Option[FoldResult] = None
@@ -210,11 +169,11 @@ object HE {
       // This ensures we eventually stop if the numbers grow without
       // bound and nothing else changes.
       case (Num(k1), Num(k2)) => k1 == k2 || (k1.abs > 25 && k2.abs > 25)
-      // case (Loc(k1), Loc(k2)) => true
-      case (Path(k1, _), Path(k2, _)) => true
 
-      case (e1, Residual(e2)) => coupling(e1, e2)
-      case (Residual(e1), e2) => coupling(e1, e2)
+      // Ignore names for heap locations, residual variables
+      // and also local variables (above)
+      case (Path(k1, _), Path(k2, _)) => true
+      case (Residual(_), Residual(_)) => true
 
       case _ => false
     }

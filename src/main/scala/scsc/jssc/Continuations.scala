@@ -49,6 +49,9 @@ object Continuations {
   case class CatchFrame(cs: List[Exp], ρ: Env) extends ContFrame
   case class FinallyFrame(fin: Exp, ρ: Env) extends ContFrame
 
+  case class Reset(test: Exp, σ2: Store, φ0: Effect, ρ0: Env, kf: Cont) extends ContFrame
+  case class Merge(v1: Exp, σ1: Store, φ1: Effect, test: Exp, φ0: Effect, ρ0: Env) extends ContFrame
+
   // Residualization:
   // For each reduction continuation, i.e., the ones that "Do" something,
   // we need to handle residual values, outputing another residual.
@@ -77,8 +80,8 @@ object Continuations {
 
   case class SeqCont(e2: Exp, ρ: Env) extends ContFrame // Ev(e2) next
   case class FocusCont(v2: Exp) extends ContFrame  // Co(v2) next
-  case class BranchCont(ifTrue: Cont, ifFalse: Cont, ifResidual: Cont, ρ: Env) extends ContFrame {
-    override def toString = s"if (☐) { $ifTrue } else { $ifFalse } [$ifResidual]"
+  case class BranchCont(ifTrue: Cont, ifFalse: Cont, ρ: Env) extends ContFrame {
+    override def toString = s"if (☐) { $ifTrue } else { $ifFalse }"
   }
   case class BreakFrame(label: Option[Name]) extends ContFrame
   case class ContinueFrame(label: Option[Name]) extends ContFrame
@@ -115,30 +118,4 @@ object Continuations {
   // a[i] = v
   case class EvalPropertyNameForSet(i: Exp, ρ: Env) extends ContFrame
   case class GetPropertyAddressOrCreate(a: Exp, ρ: Env) extends ContFrame
-
-  // actions on residuals
-  sealed trait RebuildCont extends ContFrame
-
-  case class RebuildLet(xs: List[Name], vs: List[Exp], ρ: Env) extends RebuildCont {
-    override def toString = s"[[ let $xs = $vs in ☐ ]]"
-  }
-
-  case class RebuildScope(ρ: Env) extends RebuildCont
-
-  case class RebuildVarDef(x: Name, ρ: Env) extends RebuildCont
-
-  case class RebuildCondTest(s1: Exp, s2: Exp, ρBeforeTest: Env) extends RebuildCont
-  case class RebuildCondTrue(test: Exp, s2: Exp, σAfterTest: Store, ρBeforeTest: Env) extends RebuildCont
-  case class RebuildCondFalse(test: Exp, s1: Exp, σAfterS1: Store, ρBeforeTest: Env) extends RebuildCont
-  case class RebuildIfElseTest(s1: Exp, s2: Exp, ρBeforeTest: Env) extends RebuildCont
-  case class RebuildIfElseTrue(test: Exp, s2: Exp, σAfterTest: Store, ρBeforeTest: Env) extends RebuildCont
-  case class RebuildIfElseFalse(test: Exp, s1: Exp, σAfterS1: Store, ρBeforeTest: Env) extends RebuildCont
-
-  case class RebuildSeq(e1: Exp, ρ: Env) extends RebuildCont
-
-  case class RebuildForIn(label: Option[Name], init: Exp, iter: Exp, ρ: Env) extends RebuildCont
-  case class RebuildForTest(label: Option[Name], test: Exp, iter: Exp, body: Exp, ρ: Env) extends RebuildCont
-  case class RebuildForBody(label: Option[Name], test1: Exp, test: Exp, iter: Exp, body: Exp, ρ: Env) extends RebuildCont
-  case class RebuildForIter(label: Option[Name], body1: Exp, test1: Exp, test: Exp, iter: Exp, body: Exp, ρ: Env) extends RebuildCont
-
 }

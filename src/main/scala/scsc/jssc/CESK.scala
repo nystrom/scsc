@@ -43,9 +43,6 @@ object CESK {
 
   def extendWithCond(test: Exp, σAfterTest: Store, ρ: Env, result: Boolean): Store = {
     test match {
-      case Residual(e) =>
-        extendWithCond(e, σAfterTest, ρ, result)
-
       case Binary(Binary.&&, e1, e2) if result =>
         extendWithCond(e2, extendWithCond(e1, σAfterTest, ρ, true), ρ, true)
       case Binary(Binary.||, e1, e2) if ! result =>
@@ -96,6 +93,16 @@ object CESK {
         }
 
       case Local(x) =>
+        ρ.get(x) match {
+          case Some(loc) =>
+            // FIXME should't do this... x is not true, it's something that can
+            // be coerced to true.
+            σAfterTest.assign(loc, Bool(result), ρ)
+          case None =>
+            σAfterTest
+        }
+
+      case Residual(x) =>
         ρ.get(x) match {
           case Some(loc) =>
             // FIXME should't do this... x is not true, it's something that can
@@ -175,6 +182,9 @@ object CESK {
     var t = maxSteps * 100
     var s = inject(e)
 
+    // XXXXXX DEBUG XXXXXX
+    t = 0
+
     // TODO:
     // New termination strategy:
     // Run for maxSteps. If we terminate, great.
@@ -188,20 +198,12 @@ object CESK {
 
       s match {
         // stop when we have a value with the empty continuation.
-        case Halt(Residual(v), φ) =>
+        case Halt(v, φ) =>
           φ match {
             case Nil =>
               return v
             case φs =>
               return φs.foldRight(v)(Seq)
-          }
-
-        case Halt(Value(v), φ) =>
-          φ match {
-            case Nil =>
-              return unreify(reify(v))
-            case φs =>
-              return φs.foldRight(unreify(reify(v)))(Seq)
           }
 
         case Err(message, s) =>
@@ -228,20 +230,12 @@ object CESK {
 
       s match {
         // stop when we have a value with the empty continuation.
-        case Halt(Residual(v), φ) =>
+        case Halt(v, φ) =>
           φ match {
             case Nil =>
               return v
             case φs =>
               return φs.foldRight(v)(Seq)
-          }
-
-        case Halt(Value(v), φ) =>
-          φ match {
-            case Nil =>
-              return unreify(reify(v))
-            case φs =>
-              return φs.foldRight(unreify(reify(v)))(Seq)
           }
 
         case Err(message, s) =>

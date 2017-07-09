@@ -76,10 +76,14 @@ object Step {
           case (σ, loc) => σ.assign(loc, Undefined(), ρ1)
         }
 
+        val defs = bindings map {
+          case (x, e) => VarDef(x, e)
+        }
+
         // MakeTrees ensures builds the tree so that function bindings
         // are evaluated first, so we don't have to initialize them explicitly.
         // Also all bindings should be either to lambdas or to undefined.
-        Ev(s, ρ1, σ1, φ, RebuildLet(bindings.toList.map(_._1), bindings.toList.map(_._2), ρ)::RebuildScope(ρ1)::k)
+        Ev(s, ρ1, σ1, φ ++ defs, k)
 
       ////////////////////////////////////////////////////////////////
       // Conditionals
@@ -90,14 +94,12 @@ object Step {
       case IfElse(e, s1, s2) =>
         Ev(e, ρ, σ, φ, BranchCont(SeqCont(s1, ρ)::Nil,
                                   SeqCont(s2, ρ)::Nil,
-                                  RebuildIfElseTest(s1, s2, ρ)::Nil,
                                   ρ)::k)
 
       // e ? s1 : s2
       case Cond(e, s1, s2) =>
         Ev(e, ρ, σ, φ, BranchCont(SeqCont(s1, ρ)::Nil,
                                   SeqCont(s2, ρ)::Nil,
-                                  RebuildCondTest(s1, s2, ρ)::Nil,
                                   ρ)::k)
 
       ////////////////////////////////////////////////////////////////
@@ -112,7 +114,6 @@ object Step {
         Ev(test, ρ, σ, φ, BranchCont(
                           SeqCont(body, ρ)::ContinueFrame(label)::SeqCont(Seq(iter, For(label, Empty(), test, iter, body)), ρ)::BreakFrame(label)::Nil,
                           FocusCont(Undefined())::Nil,
-                          RebuildForTest(label, test, iter, body, ρ)::Nil,
                           ρ)::k)
 
       case For(label, init, test, iter, body) =>
@@ -131,9 +132,11 @@ object Step {
         // FIXME: implement!
         // Eval iter to get an object.
         // Loop through all the properties of that object.
-        Ev(body, ρ, σ, φ, RebuildForIn(label, init, iter, ρ)::k)
+        Co(Undefined(), σ, φ, k).MakeResidual(ForIn(label, init, iter, body), ρ, k)
 
+      ////////////////////////////////////////////////////////////////
       // Break and continue.
+      ////////////////////////////////////////////////////////////////
 
       case Break(label) =>
         Co(Undefined(), σ, φ, Breaking(label)::k)
@@ -206,7 +209,7 @@ object Step {
       case VarDef(x, e) =>
         ρ.get(x) match {
           case Some(loc) =>
-            Ev(e, ρ, σ, φ, DoAssign(None, Path(loc.address, Local(x)), ρ)::RebuildLet(x::Nil, Undefined()::Nil, ρ)::k)
+            Ev(e, ρ, σ, φ, DoAssign(None, Path(loc.address, Local(x)), ρ)::k)
           case None =>
             Err(s"variable $x not found", this)
         }
@@ -243,7 +246,7 @@ object Step {
             Co(loc, σ.assign(loc, Undefined(), ρ), φ, k)
           case None =>
             println(s"variable $x not found... residualizing")
-            Co(Residual(Local(x)), σ, φ, k)
+            Co(Residual(x), σ, φ, k)
         }
 
       case Local(x) =>
@@ -357,7 +360,7 @@ object Step {
         val protoLoc = Path(FreshLoc().address, Index(Local(x), StringLit("prototype")))
         val v2 = FunObject("object", Eval.getPrimAddress(Prim("Object.prototype")), Nil, None, Nil)
         val ρ2 = ρ + (x -> Loc(xloc.address))
-        Co(loc, σ.assign(xloc, loc, ρ2).assign(loc, v, ρ2).assign(protoLoc, v2, ρ2), φ, RebuildLet(x::Nil, Undefined()::Nil, ρ2)::k)
+        Co(loc, σ.assign(xloc, loc, ρ2).assign(loc, v, ρ2).assign(protoLoc, v2, ρ2), φ, k)
 
       // Array literals desugar to objects
       case ArrayLit(es) =>
@@ -376,11 +379,9 @@ object Step {
 
       // Don't implement with.
       case With(exp, body) =>
-        reify(With(exp, body)) match {
-          case v =>
-            Co(v, Eval.simulateStore(v)(σ, ρ), φ, k)
-        }
-
+        val x = FreshVar()
+        val a = Assign(None, LocalAddr(x), With(exp, body))
+        Co(Undefined(), σ, φ, k).MakeResidual(With(exp, body), ρ, k)
 
       case _ =>
         Err("no rule for $this", this)
@@ -388,8 +389,13 @@ object Step {
     }
   }
 
+  def block(φ: List[Exp]): Exp = φ match {
+    case Nil => Undefined()
+    case φ::φs => φs.foldLeft(φ)(Seq)
+  }
+
   case class Co(v: Exp, σ: Store, φ: Effect, k: Cont) extends State {
-    require(v.isValueOrResidual)
+    require(v.isValueOrResidual, s"$v is not a value or residual")
 
     override def toString = s"""Co
   v = $v
@@ -397,112 +403,69 @@ object Step {
   φ = ${φ.mkString("[", "\n       ", "]")}
   k = ${k.mkString("[", "\n       ", "]")}"""
 
+    def MakeResidual(e: Exp, ρ1: Env, k: Cont) = {
+      val x = FreshVar()
+      reify(e) match {
+        case e @ Assign(op, lhs, rhs) =>
+          Co(Residual(x), Eval.simulateStore(e)(σ, ρ1), φ :+ e :+ Assign(None, LocalAddr(x), lhs), k)
+        case e =>
+          Co(Residual(x), Eval.simulateStore(e)(σ, ρ1), φ :+ Assign(None, LocalAddr(x), e), k)
+      }
+    }
+
     def step = k match {
       // Done!
       case Nil => Halt(v, φ)
 
-      case RebuildScope(ρ1)::k =>
-        v match {
-          case Residual(e) => Co(Residual(Scope(e)), σ, φ, k)
-          case Value(v) => Co(v, σ, φ, k)
-        }
-
-      case BranchCont(kt, kf, kr, ρ)::k =>
+      case BranchCont(kt, kf, ρ)::k =>
         v match {
           case v @ CvtBool(true) => Co(v, σ, φ, kt ++ k)
           case v @ CvtBool(false) => Co(v, σ, φ, kf ++ k)
-          case Residual(e) => Co(v, σ, φ, kr ++ k)
-          case Value(e) =>
-            // this should not happen
-            reify(e) match {
-              case e => Co(e, Eval.simulateStore(e)(σ, ρ), φ, kr ++ k)
-            }
+
+          case Residual(_) | Value(_) =>
+            // If the result cannot be converted to a boolean, we residualize.
+
+            // We have two options here.
+            // We can either run both continuations to the end
+            // or we can just run them both to the join point
+            // and merge the resulting states and effects.
+            // We choose the latter because it yields a smaller residual
+            // program, although the former might result in better
+            // performance.
+
+            // We first run the true branch, discarding all the effects accumulated so far
+            // and simulating a true test on the store.
+
+            // We then reset the store, this time simulating a false test,
+            // then run the false branch.
+
+            // We then merge the stores.
+
+            val σ1 = extendWithCond(v, σ, ρ, true)
+            val σ2 = extendWithCond(v, σ, ρ, false)
+            Co(v, σ1, Nil, kt ++ (Reset(v, σ2, φ, ρ, kf)::k))
         }
 
-      // Rebuilding ? : and if-else nodes.
-      // The logic is duplicated.
+      case Reset(test, σ2, φ0, ρ0, kf)::k =>
+        Co(test, σ2, Nil, kf ++ (Merge(v, σ, φ, test, φ0, ρ0)::k))
 
-      // Evaluate the test to a (residual) value.
-      // Save the store and evaluate the true branch.
-      case RebuildCondTest(s1, s2, ρ0)::k =>
-        val σAfterTest = σ
-        val test = v
-        val σ1 = extendWithCond(test, σAfterTest, ρ0, true)
-        Ev(s1, ρ0, σ1, φ, RebuildCondTrue(test, s2, σAfterTest, ρ0)::k)
-
-      // Save the evaluated true branch and the store after the true branch.
-      // Restore the post-test store and evaluate the false branch.
-      case RebuildCondTrue(test, s2, σAfterTest, ρ0)::k =>
-        val s1 = v
-        val σ1 = σ
-        reify(s1) match {
-          case s1 =>
-            val σ = extendWithCond(test, σAfterTest, ρ0, false)
-            Ev(s2, ρ0, σ, φ, RebuildCondFalse(test, s1, σ1, ρ0)::k)
-        }
-
-      // Rebuild and merge the post-true and post-false stores.
-      case RebuildCondFalse(test, s1, σ1, ρ0)::k =>
-        val s2 = v
+      case Merge(v1, σ1, φ1, test, φ0, ρ0)::k =>
+        val v2 = v
         val σ2 = σ
-        reify(s2) match {
-          case s2 =>
-            Co(Residual(Cond(test, s1, s2)), σ1.merge(σ2, ρ0), φ, k)
+        val φ2 = φ
+
+        if (v1 == v2) {
+          // If the values are the same, just use them.
+          Co(v1, σ1.merge(σ2, ρ0), φ0 :+ IfElse(test, block(φ1), block(φ2)), k)
         }
-
-      case RebuildIfElseTest(s1, s2, ρ0)::k =>
-        val σAfterTest = σ
-        val test = v
-        val σ1 = extendWithCond(test, σAfterTest, ρ0, true)
-        Ev(s1, ρ0, σ1, φ, RebuildIfElseTrue(test, s2, σAfterTest, ρ0)::k)
-
-      // Save the evaluated true branch and the store after the true branch.
-      // Restore the post-test store and evaluate the false branch.
-      case RebuildIfElseTrue(test, s2, σAfterTest, ρ0)::k =>
-        val s1 = v
-        val σ1 = σ
-        reify(s1) match {
-          case s1 =>
-            val σ = extendWithCond(test, σAfterTest, ρ0, false)
-            Ev(s2, ρ0, σ, φ, RebuildIfElseFalse(test, s1, σ1, ρ0)::k)
-        }
-
-      // Rebuild and merge the post-true and post-false stores.
-      case RebuildIfElseFalse(test, s1, σ1, ρ0)::k =>
-        val s2 = v
-        val σ2 = σ
-        reify(s2) match {
-          case s2 =>
-            Co(Residual(IfElse(test, s1, s2)), σ1.merge(σ2, ρ0), φ, k)
-        }
-
-      case RebuildForIn(label, init, iter, ρ1)::k =>
-        val body = v
-        reify(ForIn(label, init, iter, body)) match {
-          case s =>
-            Co(s, Eval.simulateStore(s)(σ, ρ1), φ, k)
-        }
-
-      case RebuildForTest(label0, test0, iter0, body0, ρ1)::k =>
-        val test = v
-        Ev(body0, ρ1, σ, φ, RebuildForBody(label0, test, test0, iter0, body0, ρ1)::k)
-
-      case RebuildForBody(label0, test1, test0, iter0, body0, ρ1)::k =>
-        val body1 = v
-        Ev(iter0, ρ1, σ, φ, RebuildForIter(label0, body1, test1, test0, iter0, body0, ρ1)::k)
-
-      case RebuildForIter(label, body1, test1, test0, Empty(), body0, ρ1)::k =>
-        val iter1 = v
-        reify(IfElse(test1, Seq(body1, Seq(iter1, While(label, test0, body0))), Undefined())) match {
-          case s =>
-            Co(s, Eval.simulateStore(s)(σ, ρ1), φ, k)
-        }
-
-      case RebuildForIter(label, body1, test1, test0, iter0, body0, ρ1)::k =>
-        val iter1 = v
-        reify(IfElse(test1, Seq(body1, Seq(iter1, For(label, Empty(), test0, iter0, body0))), Undefined())) match {
-          case s =>
-            Co(s, Eval.simulateStore(s)(σ, ρ1), φ, k)
+        else {
+          // Otherwise create a fresh residual variable
+          // and then assign the values at the end of each branch.
+          // cf. removing SSA.
+          val x = FreshVar()
+          val a1 = Assign(None, LocalAddr(x), v1)
+          val a2 = Assign(None, LocalAddr(x), v2)
+          Co(Residual(x), σ1.merge(σ2, ρ0), φ0 :+ IfElse(test, block(φ1 :+ a1), block(φ2 :+ a2)), k)
         }
 
       case Breaking(None)::BreakFrame(_)::k =>
@@ -514,13 +477,6 @@ object Step {
         Co(v, σ, φ, k)
       case Continuing(Some(x))::ContinueFrame(Some(y))::k if x == y =>
         Co(v, σ, φ, k)
-
-      // If we hit a rebuild continuation, we must run it, passing in v
-      // (which is either undefined or a residual) to the rebuild continuation
-      case Breaking(label)::(a: RebuildCont)::k =>
-        Co(v, σ, φ, a::Breaking(label)::k)
-      case Continuing(label)::(a: RebuildCont)::k =>
-        Co(v, σ, φ, a::Continuing(label)::k)
 
       case Breaking(label)::_::k =>
         Co(v, σ, φ, Breaking(label)::k)
@@ -537,42 +493,13 @@ object Step {
       // Blocks.
       ////////////////////////////////////////////////////////////////
 
+      // Discard the value and evaluate the sequel.
       case SeqCont(s2, ρ1)::k =>
-        v match {
-          case Residual(s1) =>
-            Ev(s2, ρ1, σ, φ, RebuildSeq(s1, ρ1)::k)
-          case Value(_) =>
-            // Discard the value and evaluate the sequel.
-            Ev(s2, ρ1, σ, φ, k)
-        }
+        Ev(s2, ρ1, σ, φ, k)
 
       // Change the focus
       case FocusCont(v2)::k =>
         Co(v2, σ, φ, k)
-
-      case RebuildSeq(s1, ρ1)::k =>
-        v match {
-          case Value(s2) =>
-            reify(s2) match {
-              case s2 =>
-                Co(Residual(Seq(s1, s2)), σ, φ, k)
-            }
-          case Residual(s2) =>
-            Co(Residual(Seq(s1, s2)), σ, φ, k)
-        }
-
-      ////////////////////////////////////////////////////////////////
-      // Definitions.
-      ////////////////////////////////////////////////////////////////
-
-      // case Σ(Residual(Assign(None, y, e)), ρ, σ, RebuildVarDef(x, ρ1)::k) if (x == y) =>
-      //   Σ(Residual(VarDef(x, e)), ρ1, σ, k)
-      // case Σ(Residual(v), ρ, σ, RebuildVarDef(x, ρ1)::k) if (fv(v) contains x) =>
-      //   Σ(Residual(VarDef(x, v)), ρ1, σ, k)
-      // case Σ(Residual(v), ρ, σ, RebuildVarDef(x, ρ1)::k) =>
-      //   Σ(Residual(v), ρ1, σ, k)
-      // case Σ(Value(v), ρ, σ, RebuildVarDef(x, ρ1)::k) =>
-      //   Σ(Undefined(), ρ1, σ, k)
 
       ////////////////////////////////////////////////////////////////
       // Assignment.
@@ -583,46 +510,27 @@ object Step {
         Ev(rhs, ρ1, σ, φ, DoAssign(op, lhs, ρ1)::k)
 
       case DoAssign(None, lhs: Path, ρ1)::k =>
-        v match {
-          case Value(rhs) =>
-            // Normal assignment... the result is the rhs value
-            Co(rhs, σ.assign(lhs, rhs, ρ1), φ, k)
-
-          case Residual(rhs) =>
-            // residualize the assignment
-            // and update the store with the residual path
-            // or maybe just map the lhs to nothing forcing
-            // it to get residualized as the path every time?
-            Co(Residual(Assign(None, lhs, rhs)), σ.assign(lhs, Residual(lhs.path), ρ1), φ, k)
-        }
+        // Normal assignment... the result is the rhs value
+        Co(v, σ.assign(lhs, v, ρ1), φ, k)
 
       case DoAssign(Some(op), lhs: Path, ρ1)::k =>
-        v match {
-          case Value(rhs) =>
-            σ.get(Loc(lhs.address)) match {
-              case Some(ValClosure(left)) =>
-                val right = rhs
-                val v = Eval.evalOp(op, left, right)
-                Co(v, σ.assign(lhs, v, ρ1), φ, k)
-              case _ =>
-                Co(Residual(Assign(Some(op), lhs, rhs)), σ.assign(lhs, Residual(lhs.path), ρ1), φ, k)
+        σ.get(Loc(lhs.address)) match {
+          case Some(ValClosure(left)) =>
+            val right = v
+            Eval.evalOp(op, left, right) match {
+              case Some(result) =>
+                Co(result, σ.assign(lhs, result, ρ1), φ, k)
+              case None =>
+                MakeResidual(Assign(Some(op), lhs, right), ρ1, k)
             }
-
-          case Residual(rhs) =>
-            // residualize the assignment
-            // and update the store with the residual path
-            // or maybe just map the lhs to nothing forcing
-            // it to get residualized as the path every time?
-            Co(Residual(Assign(Some(op), lhs, rhs)), σ.assign(lhs, Residual(lhs.path), ρ1), φ, k)
+          case _ =>
+            val rhs = v
+            MakeResidual(Assign(Some(op), lhs, rhs), ρ1, k)
         }
 
       case DoAssign(op, lhs, ρ1)::k =>
         val rhs = v
-
-        reify(lhs) match {
-          case lhs =>
-            Co(Residual(Assign(op, lhs, rhs)), Eval.simulateStore(Assign(op, lhs, rhs))(σ, ρ1), φ, k)
-        }
+        MakeResidual(Assign(op, lhs, rhs), ρ1, k)
 
       case DoIncDec(op, ρ1)::k =>
         v match {
@@ -636,29 +544,26 @@ object Step {
                   case Postfix.-- => Binary.-
                   case _ => ???
                 }
-                val newValue = Eval.evalOp(binOp, oldValue, Num(1))
-                val v = op match {
-                  case Prefix.++ => newValue
-                  case Prefix.-- => newValue
-                  case Postfix.++ => oldValue
-                  case Postfix.-- => oldValue
-                  case _ => ???
+                Eval.evalOp(binOp, oldValue, Num(1)) match {
+                  case Some(newValue) =>
+                    val resultValue = op match {
+                      case Prefix.++ => newValue
+                      case Prefix.-- => newValue
+                      case Postfix.++ => oldValue
+                      case Postfix.-- => oldValue
+                      case _ => ???
+                    }
+                    Co(resultValue, σ.assign(loc, newValue, ρ1), φ, k)
+                  case None =>
+                    MakeResidual(IncDec(op, loc), ρ1, k)
                 }
-                Co(v, σ.assign(loc, newValue, ρ1), φ, k)
               case _ =>
-                Co(Residual(IncDec(op, path)), Eval.simulateStore(IncDec(op, path))(σ, ρ1), φ, k)
+                MakeResidual(IncDec(op, loc), ρ1, k)
             }
 
-          case Value(e) =>
-            reify(e) match {
-              case e =>
-                Co(Residual(IncDec(op, e)), Eval.simulateStore(IncDec(op, e))(σ, ρ1), φ, k)
-            }
-
-          case Residual(e) =>
-            Co(Residual(IncDec(op, e)), Eval.simulateStore(IncDec(op, e))(σ, ρ1), φ, k)
+          case v =>
+            MakeResidual(IncDec(op, v), ρ1, k)
         }
-
 
       case LoadCont(ρ1)::k =>
         v match {
@@ -669,11 +574,11 @@ object Step {
               case Some(ValClosure(v)) =>
                 Co(v, σ, φ, k)
               case Some(ObjClosure(funObject, ρ2)) =>
-                Co(Residual(path), σ, φ, k)
+                MakeResidual(path, ρ1, k)
               case Some(UnknownClosure()) =>
-                Co(Residual(path), σ, φ, k)
+                MakeResidual(path, ρ1, k)
               case None =>
-                Err(s"could not load location $loc", this)
+                MakeResidual(path, ρ1, k)
             }
 
           case Undefined() =>
@@ -683,8 +588,7 @@ object Step {
             Co(Residual(e), σ, φ, k)
 
           case e =>
-            val v = reify(e)
-            Co(v, Eval.simulateStore(v)(σ, ρ1), φ, k)
+            MakeResidual(e, ρ1, k)
         }
 
       case DoTypeof(ρ1)::k =>
@@ -709,13 +613,12 @@ object Step {
                 // The address of an object
                 Co(Path(v, path), σ, φ, DoTypeof(ρ1)::k)
               case Some(UnknownClosure()) =>
-                Co(Residual(Typeof(path)), σ, φ, k)
+                MakeResidual(Typeof(path), ρ1, k)
               case None =>
-                Co(Residual(Typeof(path)), σ, φ, k)
+                MakeResidual(Typeof(path), ρ1, k)
             }
           case e =>
-            val v = reify(Typeof(e))
-            Co(v, Eval.simulateStore(v)(σ, ρ1), φ, k)
+            MakeResidual(Typeof(e), ρ1, k)
         }
 
       case DoUnaryOp(op, ρ1)::k =>
@@ -728,13 +631,8 @@ object Step {
             Co(Num(+v), σ, φ, k)
           case (Prefix.-, CvtNum(v)) =>
             Co(Num(-v), σ, φ, k)
-          case (op, Value(v)) =>
-            reify(v) match {
-              case v =>
-                Co(Residual(Unary(op, v)), Eval.simulateStore(Unary(op, v))(σ, ρ1), φ, k)
-            }
-          case (op, Residual(v)) =>
-            Co(Residual(Unary(op, v)), σ, φ, k)
+          case (op, v) =>
+            MakeResidual(Unary(op, v), ρ1, k)
         }
 
       case EvalBinaryOpRight(op, e2, ρ1)::k =>
@@ -761,7 +659,7 @@ object Step {
                     Co(Bool(false), σ, φ, k)
                 }
               case _ =>
-                Co(Residual(Binary(Binary.IN, i, path)), σ, φ, k)
+                MakeResidual(Binary(Binary.IN, i, path), ρ1, k)
             }
           case (Binary.INSTANCEOF, Null(), Path(_, _)) =>
             Co(Bool(false), σ, φ, k)
@@ -780,11 +678,14 @@ object Step {
               case Some((proto1, proto2)) if proto1 == proto2 =>
                 Co(Bool(true), σ, φ, k)
               case None =>
-                Co(Residual(Binary(Binary.INSTANCEOF, path1, path2)), Eval.simulateStore(v)(σ, ρ1), φ, k)
+                MakeResidual(Binary(Binary.INSTANCEOF, path1, path2), ρ1, k)
             }
 
           case (op, v1, v2) =>
-            Co(Eval.evalOp(op, v1, v2), σ, φ, k)
+            Eval.evalOp(op, v1, v2) match {
+              case Some(v) => Co(v, σ, φ, k)
+              case None => MakeResidual(Binary(op, v1, v2), ρ1, k)
+            }
         }
 
 
@@ -828,10 +729,9 @@ object Step {
               case (seq, (x, a)) => Seq(seq, Assign(None, LocalAddr(x), a))
             }
             val ρ2 = ("this"::xs).foldLeft(ρ1) {
-              case (ρ, x) => ρ + (x -> FreshLoc())
+              case (ρ1, x) => ρ1 + (x -> FreshLoc())
             }
-            val k1 = RebuildLet("this"::xs, (thisValue::args2) map { a => Undefined() }, ρ2)::k
-            Ev(Seq(seq, e), ρ2, σ, φ, CallFrame(ρ1)::k1)  // use ρ1 in the call frame.. this is the env we pop to.
+            Ev(Seq(seq, e), ρ2, σ, φ, CallFrame(ρ1)::k)  // use ρ1 in the call frame.. this is the env we pop to.
 
           case Some(ValClosure(Prim(fun))) =>
             Eval.evalPrim(fun, args) match {
@@ -839,20 +739,19 @@ object Step {
                 // Use Ev, not Co... the prim might be eval and return the expression to eval.
                 Ev(e, ρ1, σ, φ, k)
               case None =>
-                Co(reify(residual), σ, φ, k)
+                MakeResidual(residual, ρ1, k)
             }
 
           case _ =>
-            Co(reify(residual), σ, φ, k)
+            MakeResidual(residual, ρ1, k)
         }
 
       // The function is not a lambda. Residualize the call. Clear the store since we have no idea what the function
       // will do to the store.
       case DoCall(fun, thisValue, args, residual, ρ1)::k =>
-        Co(reify(residual), σ, φ, k)
+        MakeResidual(residual, ρ1, k)
 
-
-      ////////////////////////////////////////////////////////////////
+      ///////////////////////////////////////////////////////////////, k/
       // Return. Pop the continuations until we hit the caller.
       ////////////////////////////////////////////////////////////////
 
@@ -863,11 +762,6 @@ object Step {
       // Then pop the call frame using the ValueOrResidual rule.
       case Returning(v)::CallFrame(ρ1)::k =>
         Co(v, σ, φ, k)
-
-      // If we hit a rebuild continuation, we must run it, passing in v
-      // (which is either undefined or a residual) to the rebuild continuation
-      case Returning(v)::(a: RebuildCont)::k =>
-        Co(v, σ, φ, a::FocusCont(v)::DoReturn()::k)
 
       case Returning(e)::_::k =>
         Co(v, σ, φ, Returning(e)::k)
@@ -890,11 +784,6 @@ object Step {
       case Throwing(e)::FinallyFrame(fin, ρ1)::k =>
         Ev(fin, ρ1, σ, φ, Throwing(e)::k)
 
-      // If we hit a rebuild continuation, we must run it, passing in v
-      // (which is either undefined or a residual) to the rebuild continuation
-      case Throwing(e)::(a: RebuildCont)::k =>
-        Co(v, σ, φ, a::Throwing(e)::k)
-
       case Throwing(e)::_::k =>
         Co(v, σ, φ, Throwing(e)::k)
 
@@ -902,42 +791,6 @@ object Step {
       // And pass it to k.
       case FinallyFrame(fin, ρ1)::k =>
         Ev(fin, ρ1, σ, φ, FocusCont(v)::k)
-
-
-      // Wrap v in a let.
-      case RebuildLet(xs, args, ρ1)::k =>
-        v match {
-          case Value(v) =>
-            val ss = (xs zip args) collect {
-              case (x, e) if ! v.isInstanceOf[Path] && (fv(v) contains x) => VarDef(x, e)
-            }
-            if (ss.nonEmpty) {
-              reify(v) match {
-                case v =>
-                  val block = ss.foldRight(v) {
-                    case (s1, s2) => Seq(s1, s2)
-                  }
-                  Co(Residual(block), Eval.simulateStore(block)(σ, ρ1), φ, k)
-              }
-            }
-            else {
-              Co(v, σ, φ, k)
-            }
-
-          case Residual(v) =>
-            val ss = (xs zip args) collect {
-              case (x, e) if (fv(v) contains x) => VarDef(x, e)
-            }
-            if (ss.nonEmpty) {
-              val block = ss.foldRight(v) {
-                case (s1, s2) => Seq(s1, s2)
-              }
-              Co(Residual(block), Eval.simulateStore(block)(σ, ρ1), φ, k)
-            }
-            else {
-              Co(Residual(v), Eval.simulateStore(v)(σ, ρ1), φ, k)
-            }
-        }
 
       ////////////////////////////////////////////////////////////////
       // Objects and arrays.
@@ -985,10 +838,10 @@ object Step {
             val xloc = FreshLoc()
             val ρ2 = ρ1 + (x -> xloc)
 
-            Co(Undefined(), σ.assign(xloc, loc, ρ2).assign(loc, obj, ρ2), φ, DoCall(fun, Local(x), args, Local(x), ρ2)::SeqCont(Local(x), ρ2)::RebuildLet(x::Nil, reify(loc)::Nil, ρ1)::k)
+            Co(Undefined(), σ.assign(xloc, loc, ρ2).assign(loc, obj, ρ2), φ, DoCall(fun, Local(x), args, Local(x), ρ2)::SeqCont(Local(x), ρ2)::k)
 
           case None =>
-            Co(reify(loc), Eval.simulateStore(reify(loc))(σ, ρ1), φ, k)
+            MakeResidual(loc.path, ρ1, k)
         }
 
       case EvalPropertyNameForDel(i, ρ1)::k =>
@@ -1017,17 +870,11 @@ object Step {
               case Some(ValClosure(_)) | Some(LocClosure(_)) =>
                 Co(a, σ, φ, k)
               case Some(UnknownClosure()) | None =>
-                reify(Delete(IndexAddr(a, i))) match {
-                  case v =>
-                    Co(v, Eval.simulateStore(v)(σ, ρ1), φ, k)
-                }
+                MakeResidual(Delete(IndexAddr(a, i)), ρ1, k)
             }
 
           case (a, i) =>
-            reify(Delete(IndexAddr(a, i))) match {
-              case v =>
-                Co(v, Eval.simulateStore(v)(σ, ρ1), φ, k)
-            }
+            MakeResidual(Delete(IndexAddr(a, i)), ρ1, k)
         }
       case EvalPropertyNameForSet(i, ρ1)::k =>
         val a = v
@@ -1058,16 +905,10 @@ object Step {
               case Some(ValClosure(_)) | Some(LocClosure(_)) =>
                 Co(Undefined(), σ, φ, k)
               case Some(UnknownClosure()) | None =>
-                reify(IndexAddr(a, i)) match {
-                  case v =>
-                    Co(v, Eval.simulateStore(v)(σ, ρ1), φ, k)
-                }
+                MakeResidual(IndexAddr(a, i), ρ1, k)
             }
           case (a, i) =>
-            reify(IndexAddr(a, i)) match {
-              case v =>
-                Co(v, Eval.simulateStore(v)(σ, ρ1), φ, k)
-            }
+            MakeResidual(IndexAddr(a, i), ρ1, k)
         }
 
       case EvalPropertyNameForGet(i, ρ1)::k =>
@@ -1103,16 +944,10 @@ object Step {
               case Some(ValClosure(_)) | Some(LocClosure(_)) =>
                 Co(Undefined(), σ, φ, k)
               case Some(UnknownClosure()) | None =>
-                reify(Index(a, i)) match {
-                  case v =>
-                    Co(v, Eval.simulateStore(v)(σ, ρ1), φ, k)
-                }
+                MakeResidual(Index(a, i), ρ1, k)
             }
           case (a, i) =>
-            reify(Index(a, i)) match {
-              case v =>
-                Co(v, Eval.simulateStore(v)(σ, ρ1), φ, k)
-            }
+            MakeResidual(Index(a, i), ρ1, k)
         }
 
       /////////////////

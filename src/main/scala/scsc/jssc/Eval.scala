@@ -31,100 +31,92 @@ object Eval {
 
   // Fix this! This is too simple and doesn't handle coercions corretctly.
   // Let's look at the spec.
-  def evalOp(op: Operator, v1: Exp, v2: Exp): Exp = (op, v1, v2) match {
-    case (Binary.+, StringLit(n1), StringLit(n2)) => StringLit(n1 + n2)
-    case (Binary.+, StringLit(n1), CvtString(n2)) => StringLit(n1 + n2)
-    case (Binary.+, CvtString(n1), StringLit(n2)) => StringLit(n1 + n2)
+  def evalOp(op: Operator, v1: Exp, v2: Exp): Option[Exp] = (op, v1, v2) match {
+    case (Binary.+, StringLit(n1), StringLit(n2)) => Some(StringLit(n1 + n2))
+    case (Binary.+, StringLit(n1), CvtString(n2)) => Some(StringLit(n1 + n2))
+    case (Binary.+, CvtString(n1), StringLit(n2)) => Some(StringLit(n1 + n2))
 
-    case (Binary.+, CvtNum(n1), CvtNum(n2)) => Num(n1 + n2)
-    case (Binary.+, CvtString(n1), CvtString(n2)) => StringLit(n1 + n2)
+    case (Binary.+, CvtNum(n1), CvtNum(n2)) => Some(Num(n1 + n2))
+    case (Binary.+, CvtString(n1), CvtString(n2)) => Some(StringLit(n1 + n2))
 
-    case (Binary.-, CvtNum(n1), CvtNum(n2)) => Num(n1 - n2)
-    case (Binary.*, CvtNum(n1), CvtNum(n2)) => Num(n1 * n2)
-    case (Binary./, CvtNum(n1), CvtNum(n2)) => Num(n1 / n2)
-    case (Binary.%, CvtNum(n1), CvtNum(n2)) => Num(n1 % n2)
+    case (Binary.-, CvtNum(n1), CvtNum(n2)) => Some(Num(n1 - n2))
+    case (Binary.*, CvtNum(n1), CvtNum(n2)) => Some(Num(n1 * n2))
+    case (Binary./, CvtNum(n1), CvtNum(n2)) => Some(Num(n1 / n2))
+    case (Binary.%, CvtNum(n1), CvtNum(n2)) => Some(Num(n1 % n2))
 
-    case (Binary.&, CvtNum(n1), CvtNum(n2)) => Num(n1.toLong & n2.toLong)
-    case (Binary.|, CvtNum(n1), CvtNum(n2)) => Num(n1.toLong | n2.toLong)
-    case (Binary.^, CvtNum(n1), CvtNum(n2)) => Num(n1.toLong ^ n2.toLong)
-    case (Binary.>>, CvtNum(n1), CvtNum(n2)) => Num(n1.toLong >> n2.toLong)
-    case (Binary.<<, CvtNum(n1), CvtNum(n2)) => Num(n1.toLong << n2.toLong)
-    case (Binary.>>>, CvtNum(n1), CvtNum(n2)) => Num(n1.toLong >>> n2.toLong)
+    case (Binary.&, CvtNum(n1), CvtNum(n2)) => Some(Num(n1.toLong & n2.toLong))
+    case (Binary.|, CvtNum(n1), CvtNum(n2)) => Some(Num(n1.toLong | n2.toLong))
+    case (Binary.^, CvtNum(n1), CvtNum(n2)) => Some(Num(n1.toLong ^ n2.toLong))
+    case (Binary.>>, CvtNum(n1), CvtNum(n2)) => Some(Num(n1.toLong >> n2.toLong))
+    case (Binary.<<, CvtNum(n1), CvtNum(n2)) => Some(Num(n1.toLong << n2.toLong))
+    case (Binary.>>>, CvtNum(n1), CvtNum(n2)) => Some(Num(n1.toLong >>> n2.toLong))
 
-    case (Binary.<, CvtPrim(StringLit(n1)), CvtPrim(StringLit(n2))) => Bool(n1 < n2)
-    case (Binary.<=, CvtPrim(StringLit(n1)), CvtPrim(StringLit(n2))) => Bool(n1 <= n2)
-    case (Binary.>, CvtPrim(StringLit(n1)), CvtPrim(StringLit(n2))) => Bool(n1 > n2)
-    case (Binary.>=, CvtPrim(StringLit(n1)), CvtPrim(StringLit(n2))) => Bool(n1 >= n2)
+    case (Binary.<, CvtPrim(StringLit(n1)), CvtPrim(StringLit(n2))) => Some(Bool(n1 < n2))
+    case (Binary.<=, CvtPrim(StringLit(n1)), CvtPrim(StringLit(n2))) => Some(Bool(n1 <= n2))
+    case (Binary.>, CvtPrim(StringLit(n1)), CvtPrim(StringLit(n2))) => Some(Bool(n1 > n2))
+    case (Binary.>=, CvtPrim(StringLit(n1)), CvtPrim(StringLit(n2))) => Some(Bool(n1 >= n2))
 
-    case (Binary.<, CvtPrim(Num(n1)), CvtPrim(Num(n2))) if n1.isNaN || n2.isNaN => Undefined()
-    case (Binary.<=, CvtPrim(Num(n1)), CvtPrim(Num(n2))) if n1.isNaN || n2.isNaN => Undefined()
-    case (Binary.>, CvtPrim(Num(n1)), CvtPrim(Num(n2))) if n1.isNaN || n2.isNaN => Undefined()
-    case (Binary.>=, CvtPrim(Num(n1)), CvtPrim(Num(n2))) if n1.isNaN || n2.isNaN => Undefined()
+    case (Binary.<, CvtPrim(Num(n1)), CvtPrim(Num(n2))) if n1.isNaN || n2.isNaN => Some(Undefined())
+    case (Binary.<=, CvtPrim(Num(n1)), CvtPrim(Num(n2))) if n1.isNaN || n2.isNaN => Some(Undefined())
+    case (Binary.>, CvtPrim(Num(n1)), CvtPrim(Num(n2))) if n1.isNaN || n2.isNaN => Some(Undefined())
+    case (Binary.>=, CvtPrim(Num(n1)), CvtPrim(Num(n2))) if n1.isNaN || n2.isNaN => Some(Undefined())
 
-    case (Binary.<, CvtPrim(Num(n1)), CvtPrim(Num(n2))) => Bool(n1 < n2)
-    case (Binary.<=, CvtPrim(Num(n1)), CvtPrim(Num(n2))) => Bool(n1 <= n2)
-    case (Binary.>, CvtPrim(Num(n1)), CvtPrim(Num(n2))) => Bool(n1 > n2)
-    case (Binary.>=, CvtPrim(Num(n1)), CvtPrim(Num(n2))) => Bool(n1 >= n2)
+    case (Binary.<, CvtPrim(Num(n1)), CvtPrim(Num(n2))) => Some(Bool(n1 < n2))
+    case (Binary.<=, CvtPrim(Num(n1)), CvtPrim(Num(n2))) => Some(Bool(n1 <= n2))
+    case (Binary.>, CvtPrim(Num(n1)), CvtPrim(Num(n2))) => Some(Bool(n1 > n2))
+    case (Binary.>=, CvtPrim(Num(n1)), CvtPrim(Num(n2))) => Some(Bool(n1 >= n2))
 
-    case (Binary.&&, CvtBool(n1), CvtBool(n2)) => Bool(n1 && n2)
-    case (Binary.||, CvtBool(n1), CvtBool(n2)) => Bool(n1 || n2)
+    case (Binary.&&, CvtBool(n1), CvtBool(n2)) => Some(Bool(n1 && n2))
+    case (Binary.||, CvtBool(n1), CvtBool(n2)) => Some(Bool(n1 || n2))
 
     case (Binary.BIND, v1, v2) =>
       println("ERROR: unimplemented ${Binary(op, v1, v2).show}")
-      reify(Binary(op, v1, v2))
+      None
 
-    case (op, v1, v2 @ Residual(e2)) => reify(Binary(op, v1, v2))
-    case (op, v1 @ Residual(e1), v2) => reify(Binary(op, v1, v2))
+    case (op, v1, v2 @ Residual(x2)) => None
+    case (op, v1 @ Residual(x1), v2) => None
 
-    case (Binary.COMMALEFT, v1, v2) => v1
-    case (Binary.COMMARIGHT, v1, v2) => v2
+    case (Binary.COMMALEFT, v1, v2) => Some(v1)
+    case (Binary.COMMARIGHT, v1, v2) => Some(v2)
 
     // Equality operators should not work on residuals.
     // So match after the above.
 
-    case (Binary.!=, v1, v2) => evalOp(Binary.==, v1, v2) match {
+    case (Binary.!=, v1, v2) => evalOp(Binary.==, v1, v2) map {
       case Bool(v) => Bool(!v)
-      case Residual(Binary(Binary.==, v1, v2)) => reify(Binary(Binary.!=, v1, v2))
-      case r => reify(Binary(Binary.!=, v1, v2))
     }
 
-    case (Binary.!==, v1, v2) => evalOp(Binary.===, v1, v2) match {
+    case (Binary.!==, v1, v2) => evalOp(Binary.===, v1, v2) map {
       case Bool(v) => Bool(!v)
-      case Residual(Binary(Binary.===, v1, v2)) => reify(Binary(Binary.!==, v1, v2))
-      case r => reify(Binary(Binary.!==, v1, v2))
     }
 
-    case (Binary.==, Null(), Undefined()) => Bool(true)
-    case (Binary.==, Undefined(), Null()) => Bool(true)
-    case (Binary.==, Num(n1), v2 @ CvtNum(n2)) if v2.isInstanceOf[StringLit] => Bool(n1 == n2)
-    case (Binary.==, v1 @ CvtNum(n1), Num(n2)) if v1.isInstanceOf[StringLit] => Bool(n1 == n2)
-    case (Binary.==, Num(n1), v2 @ CvtNum(n2)) if v2.isInstanceOf[Bool] => Bool(n1 == n2)
-    case (Binary.==, v1 @ CvtNum(n1), Num(n2)) if v1.isInstanceOf[Bool] => Bool(n1 == n2)
+    case (Binary.==, Null(), Undefined()) => Some(Bool(true))
+    case (Binary.==, Undefined(), Null()) => Some(Bool(true))
+    case (Binary.==, Num(n1), v2 @ CvtNum(n2)) if v2.isInstanceOf[StringLit] => Some(Bool(n1 == n2))
+    case (Binary.==, v1 @ CvtNum(n1), Num(n2)) if v1.isInstanceOf[StringLit] => Some(Bool(n1 == n2))
+    case (Binary.==, Num(n1), v2 @ CvtNum(n2)) if v2.isInstanceOf[Bool] => Some(Bool(n1 == n2))
+    case (Binary.==, v1 @ CvtNum(n1), Num(n2)) if v1.isInstanceOf[Bool] => Some(Bool(n1 == n2))
 
-    case (Binary.==, Path(n1, _), Path(n2, _)) if n1 == n2 => Bool(true)
+    case (Binary.==, Path(n1, _), Path(n2, _)) if n1 == n2 => Some(Bool(true))
     // We don't handle object literals, so just reify.
-    case (Binary.==, v1 @ Path(n1, _), v2) => reify(Binary(Binary.==, v1, v2))
-    case (Binary.==, v1, v2 @ Path(n2, _)) => reify(Binary(Binary.==, v1, v2))
+    case (Binary.==, v1 @ Path(n1, _), v2) => None
+    case (Binary.==, v1, v2 @ Path(n2, _)) => None
 
     // for other cases, just use ===.
-    case (Binary.==, v1, v2) => evalOp(Binary.===, v1, v2) match {
-      case Bool(v) => Bool(v)
-      case Residual(Binary(Binary.===, v1, v2)) => reify(Binary(Binary.==, v1, v2))
-      case r => reify(Binary(Binary.==, v1, v2))
-    }
+    case (Binary.==, v1, v2) => evalOp(Binary.===, v1, v2)
 
-    case (Binary.===, Undefined(), Undefined()) => Bool(true)
-    case (Binary.===, Null(), Null()) => Bool(true)
-    case (Binary.===, Num(n1), Num(n2)) => Bool(n1 == n2)
-    case (Binary.===, StringLit(n1), StringLit(n2)) => Bool(n1 == n2)
-    case (Binary.===, Bool(n1), Bool(n2)) => Bool(n1 == n2)
-    case (Binary.===, Path(n1, _), Path(n2, _)) => Bool(n1 == n2) // same object
-    case (Binary.===, v1, v2) => Bool(false) // all other cases should be false (residuals are handled above)
+    case (Binary.===, Undefined(), Undefined()) => Some(Bool(true))
+    case (Binary.===, Null(), Null()) => Some(Bool(true))
+    case (Binary.===, Num(n1), Num(n2)) => Some(Bool(n1 == n2))
+    case (Binary.===, StringLit(n1), StringLit(n2)) => Some(Bool(n1 == n2))
+    case (Binary.===, Bool(n1), Bool(n2)) => Some(Bool(n1 == n2))
+    case (Binary.===, Path(n1, _), Path(n2, _)) => Some(Bool(n1 == n2)) // same object
+    case (Binary.===, v1, v2) => Some(Bool(false)) // all other cases should be false (residuals are handled above)
 
     // Failure
     case (op, v1, v2) =>
       println("ERROR: cannot apply ${Binary(op, v1, v2).show}")
-      reify(Binary(op, v1, v2))
+      None
   }
 
   def evalPrim(fun: String, args: List[Exp]): Option[Exp] = (fun, args) match {
@@ -208,8 +200,8 @@ object Eval {
   }
 
   def invalidateLocation(e: Exp)(σ: Store, ρ: Env): Store = e match {
-    case Residual(e) =>
-      invalidateLocation(e)(σ, ρ)
+    case Residual(x) =>
+      invalidateLocation(Local(x))(σ, ρ)
 
     case Path(address, path) =>
       // Remove the location

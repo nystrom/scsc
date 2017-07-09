@@ -22,8 +22,8 @@ object TreeWalk {
         Prim(name)
       case Path(address, path) =>
         Path(address, rewrite(path))
-      case Residual(e) =>
-        Residual(rewrite(e))
+      case Residual(x) =>
+        Residual(x)
       case Unary(op, e) =>
         Unary(op, rewrite(e))
       case IncDec(op, e) =>
