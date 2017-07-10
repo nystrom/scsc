@@ -96,7 +96,7 @@ object Step {
         // MakeTrees ensures builds the tree so that function bindings
         // are evaluated first, so we don't have to initialize them explicitly.
         // Also all bindings should be either to lambdas or to undefined.
-        Ev(s, ρ1, σ1, Effect(φ.vars, defs.foldLeft(φ.body)(Sequence)), k)
+        Ev(s, ρ1, σ1, Effect(φ.vars, defs.foldLeft(φ.body)(Sequence.apply)), k)
 
       ////////////////////////////////////////////////////////////////
       // Conditionals
