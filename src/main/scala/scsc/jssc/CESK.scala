@@ -143,13 +143,6 @@ object CESK {
     }
   }
 
-  object Pure {
-    def unapply(e: Exp) = e match {
-      case v if v.isPure => Some(v)
-      case _ => None
-    }
-  }
-
   def step(s: St): St = s.step
 
   // Check for termination at these nodes.
@@ -177,13 +170,8 @@ object CESK {
   // Evaluator.
   // Step until either the whistle blows or we reach the Done continuation with a value.
   def eval(e: Exp, maxSteps: Int): Exp = {
-    import HE._
-
-    var t = maxSteps * 100
+    var t = maxSteps * 10
     var s = inject(e)
-
-    // XXXXXX DEBUG XXXXXX
-    t = 0
 
     // TODO:
     // New termination strategy:
@@ -198,13 +186,8 @@ object CESK {
 
       s match {
         // stop when we have a value with the empty continuation.
-        case Halt(v, φ) =>
-          φ match {
-            case Nil =>
-              return v
-            case φs =>
-              return φs.foldRight(v)(Seq)
-          }
+        case s @ Halt(v, φ) =>
+          return s.residual
 
         case Err(message, s) =>
           println(s"FAIL $message in $s")
@@ -226,73 +209,85 @@ object CESK {
       t -= 1
       println(s)
 
-      println("term " + toTerm(s).map { case (u, n) => s"${u.show} in $n steps" }.getOrElse("FAIL"))
+      println("term " + toTerm(s).map { case (e, φ, n) => s"${e.show} in $n steps" }.getOrElse("FAIL"))
 
       s match {
         // stop when we have a value with the empty continuation.
-        case Halt(v, φ) =>
-          φ match {
-            case Nil =>
-              return v
-            case φs =>
-              return φs.foldRight(v)(Seq)
-          }
+        case s @ Halt(v, φ) =>
+          return s.residual
 
         case Err(message, s) =>
           println(s"FAIL $message in $s")
           return Undefined()
 
-        case s0 @ Ev(CheckHistory(focus1), ρ1, σ, φ, k1) =>
+        case s0 =>
           val s1 = step(s0)
-
-          s = hist.foldRight(s1) {
-            case (prev, s_) if s1 == s_ =>
-              // try to fold, just for debugging purposes now
-              // tryFold(s1, prev) match {
-              //   case Some((f, lam, app1, app2)) =>
-              //     println(s"FOLD $prev")
-              //     println(s"  lam = ${lam.show}")
-              //     println(s"  app1 = ${app1.show}")
-              //     println(s"  app2 = ${app2.show}")
-              //   case None =>
-              // }
-
-              if (prev == s1 || prev <<| s1) {
-                println(s"WHISTLE $prev")
-                println(s"    <<| $s1")
-
-                tryFold(s1, prev) match {
-                  case Some((f, lam, app1, app2)) =>
-                    println(s"FOLD $prev")
-                    println(s"  lam = ${lam.show}")
-                    println(s"  app1 = ${app1.show}")
-                    println(s"  app2 = ${app2.show}")
-                  case None =>
-                }
-
-                toTerm(s1) match {
-                  case Some((t1, _)) =>
-                    return t1
-                  case None =>
-                    return Lambda("error"::Nil, focus1)
-                }
-              }
-              else {
-                // keep going
-                s1
-              }
-            case (prev, s_) =>
-              s_
-          }
-
+          s = checkHistory(hist, s1)
           hist += s
 
-        case s0 =>
-          s = step(s0)
       }
     }
 
     throw new RuntimeException("unreachable")
+  }
+
+  def checkHistory(hist: ListBuffer[St], s: St): St = s match {
+    // TODO:
+    // the residual is the code that happens _before_ the current state.
+    // so don't look at the residual for the HE test.
+
+    // associate a binding with each state
+    // if we reach a similar state (focus, env, store, k), generate a residual call
+    // and reduce to a term.
+
+    // the problem is the continuation.
+    // with splitting, we CUT the continuation when we SC the split
+
+    // if the current residual is embedded in an older residual, generalize
+    // change the residual to a function call, then continue.
+    //
+    case s1 @ Ev(CheckHistory(focus1), ρ1, σ, φ, k1) =>
+      import HE._
+
+      hist.foldRight(s1) {
+        case (prev, s_) if s1 == s_ =>
+          // try to fold, just for debugging purposes now
+          // tryFold(s1, prev) match {
+          //   case Some((f, lam, app1, app2)) =>
+          //     println(s"FOLD $prev")
+          //     println(s"  lam = ${lam.show}")
+          //     println(s"  app1 = ${app1.show}")
+          //     println(s"  app2 = ${app2.show}")
+          //   case None =>
+          // }
+
+          if (prev == s1 || prev <<| s1) {
+            println(s"WHISTLE $prev")
+            println(s"    <<| $s1")
+
+            tryFold(s1, prev) match {
+              case Some((f, lam, app1, app2)) =>
+                println(s"FOLD $prev")
+                println(s"  lam = ${lam.show}")
+                println(s"  app1 = ${app1.show}")
+                println(s"  app2 = ${app2.show}")
+              case None =>
+            }
+
+            toTerm(s1) match {
+              case Some((t1, φ1, _)) =>
+                return Halt(t1, φ1)
+              case None =>
+                return Err(s"could not convert $s1 to term", s1)
+            }
+          }
+          else {
+            // keep going
+            s1
+          }
+        case (prev, s_) =>
+          s_
+      }
   }
 }
 

@@ -87,25 +87,18 @@ object Residualization {
 
   // To convert to a term, we run the machine until it terminates, reifying
   // the focus each step.
-  def toTerm(s: St): Option[(Exp, Int)] = {
+  def toTerm(s: St): Option[(Val, Effect, Int)] = {
     toTermAcc(s, 0)
   }
 
   @scala.annotation.tailrec
-  def toTermAcc(s: St, steps: Int): Option[(Exp, Int)] = {
+  def toTermAcc(s: St, steps: Int): Option[(Val, Effect, Int)] = {
     println("converting to term " + s)
     s match {
-      case Halt(e, φ) =>
-        val u = unreify(e)
-        val t = φ match {
-          case Nil => u
-          case es =>
-            es.foldRight(u) {
-              case (e1, e2) => Seq(e1, e2)
-            }
-        }
+      case s @ Halt(e, φ) =>
+        val t = s.residual
         println("--> " + t)
-        Some((t, steps))
+        Some((e, φ, steps))
 
       case Err(_, _) =>
         None

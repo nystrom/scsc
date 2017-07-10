@@ -199,7 +199,7 @@ object HE {
       // Need to incorporate the environment too, perhaps.
       case (s1, s2) if comparableStates(s1, s2) =>
         (toTerm(s1), toTerm(s2)) match {
-          case (Some((t1, n1)), Some((t2, n2))) =>
+          case (Some((t1, φ1, n1)), Some((t2, φ2, n2))) =>
             println("HE: comparing " + s1)
             println("           vs " + s2)
             println("HE:     terms " + t1.show)

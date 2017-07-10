@@ -78,14 +78,14 @@ object Trees {
   }
 
   object Value {
-    def unapply(e: Exp) = e match {
+    def unapply(e: Val) = e match {
       case v if v.isValue => Some(v)
       case _ => None
     }
   }
 
   object ValueOrResidual {
-    def unapply(e: Exp) = e match {
+    def unapply(e: Val) = e match {
       case v if v.isValueOrResidual => Some(v)
       case _ => None
     }
@@ -132,69 +132,14 @@ object Trees {
   // They live only in the heap
 
   // FIXME: Prim("foo.bar") should just be Residual(Index(Local("foo"), StringLit("bar")))
-  case class Prim(name: String) extends Exp
-  case class Path(address: Int, path: Exp) extends Exp
-  case class Residual(name: String) extends Exp
-
-  // This is either a function object or a JS object in the heap.
-  // Properties should be a list of Property(value, loc)
-  case class Loc(address: Int)
-  case class FunObject(typeof: String, proto: Loc, params: List[Name], body: Option[Exp], properties: List[(Name, Loc)])
-
-  import org.bitbucket.inkytonik.kiama.util.Counter
-
-  object FreshLoc extends Counter {
-    def apply(): Loc = Loc(next())
-  }
+  sealed trait Val extends Exp
+  case class Prim(name: String) extends Lit
+  case class Path(address: Int, path: Exp) extends Val
+  case class Residual(name: String) extends Val
 
   type Name = String
 
   implicit class IV(e: Exp) {
-    def isPure: Boolean = e match {
-      case Value(v) => true
-      case Local(_) => true
-      case LocalAddr(_) => true
-      case Residual(x) => true
-      case _ => false
-    }
-
-    def isPure2: Boolean = {
-      import scsc.js.TreeWalk._
-      object Purity extends Rewriter {
-        var pure = true
-
-        override def rewrite(e: Exp): Exp = e match {
-          case _: Call | _: NewCall | _: New =>
-            pure = false
-            e
-          case _: While | _: DoWhile | _: For | _: ForIn | _: ForEach =>
-            // might diverge (but not for-in or for-each)
-            pure = false
-            e
-          case _: Assign | _: IncDec =>
-            pure = false
-            e
-          case _: Return | _: Yield | _: Throw | _: Catch | _: TryCatch | _: TryFinally =>
-            pure = false
-            e
-          case _: VarDef =>
-            pure = false
-            e
-          case _: Break | _: Continue =>
-            pure = false
-            e
-          case _: Delete | _: New =>
-            pure = false
-            e
-          case e if pure => super.rewrite(e)
-          case e => e
-        }
-      }
-
-      Purity.rewrite(e)
-      Purity.pure
-    }
-
     // JavaScript values (no control-flow, no residuals)
     // Locations are the values for objects and functions.
     def isValue: Boolean = e match {
@@ -276,7 +221,15 @@ object Trees {
     case object || extends Operator
   }
 
-  sealed trait Lit extends Exp
+  sealed trait Lit extends Val
+  case class Bool(v: Boolean) extends Lit
+  case class Num(v: Double) extends Lit
+  case class StringLit(v: String) extends Lit
+  case class XML(v: String) extends Lit
+  case class Regex(v: String, opts: String) extends Lit
+  case class Null() extends Lit
+  case class Undefined() extends Lit
+
   case class Unary(op: Operator, e: Exp) extends Exp
   case class IncDec(op: Operator, e: Exp) extends Exp
   case class Delete(e: Exp) extends Exp // HACKED
@@ -304,13 +257,7 @@ object Trees {
   case class Index(a: Exp, i: Exp) extends Exp
   case class IndexAddr(a: Exp, i: Exp) extends Exp
   case class ArrayLit(es: List[Exp]) extends Exp  // HACKED (prototype missing)
-  case class Bool(v: Boolean) extends Lit
-  case class Num(v: Double) extends Lit
-  case class StringLit(v: String) extends Lit
-  case class XML(v: String) extends Lit
-  case class Regex(v: String, opts: String) extends Lit
-  case class Null() extends Lit
-  case class Undefined() extends Lit
+
   case class ObjectLit(es: List[Exp]) extends Exp // HACKED (prototype missing)
   case class Property(k: Exp, v: Exp, getter: Option[Exp], setter: Option[Exp]) extends Exp // HACKED, no getter, setter
   case class Return(e: Option[Exp]) extends Exp

@@ -24,9 +24,22 @@ object Step {
     def step: State
   }
 
-  case class Halt(v: Exp, φ: Effect) extends State {
+  case class Halt(v: Val, φ: Effect) extends State {
     def step = ???
+
+    def residual: Exp = φ match {
+      case Effect(_, Undefined()) => v
+      case Effect(vars, e) =>
+        val body = e match {
+          case Undefined() => v
+          case e => Seq(e, v)
+        }
+        vars.foldRight(body) {
+          case (x, e) => Seq(VarDef(x, Undefined()), e)
+        }
+    }
   }
+
   case class Err(message: String, st: State) extends State {
     def step = ???
   }
@@ -36,14 +49,13 @@ object Step {
   e = $e
   ρ = ${ρ.toVector.sortBy(_._1).mkString("{", "\n       ", "}")}
   σ = ${σ.toVector.sortBy(_._1.address).mkString("{", "\n       ", "}")}
-  φ = ${φ.mkString("[", "\n       ", "]")}
+  φ = $φ
   k = ${k.mkString("[", "\n       ", "]")}"""
 
     def step = e match {
 
-      // For any value, just run the continuation.
-      case Value(v) => Co(v, σ, φ, k)
-      case v @ Residual(e) => Co(v, σ, φ, k)
+      // For any value (or residual), just run the continuation.
+      case v: Val => Co(v, σ, φ, k)
 
       ////////////////////////////////////////////////////////////////
       // Scopes.
@@ -58,7 +70,7 @@ object Step {
             case VarDef(x, e) =>
               bindings = bindings :+ ((x, e))
               super.rewrite(e)
-            case _: Lambda | _: Residual | _: Scope =>
+            case _: Lambda | _: Scope =>
               // don't recurse on these
               e
             case e =>
@@ -77,13 +89,14 @@ object Step {
         }
 
         val defs = bindings map {
-          case (x, e) => VarDef(x, e)
+          case (x, e @ Lambda(xs, body)) => VarDef(x, e)
+          case (x, e) => VarDef(x, Undefined())
         }
 
         // MakeTrees ensures builds the tree so that function bindings
         // are evaluated first, so we don't have to initialize them explicitly.
         // Also all bindings should be either to lambdas or to undefined.
-        Ev(s, ρ1, σ1, φ ++ defs, k)
+        Ev(s, ρ1, σ1, Effect(φ.vars, defs.foldLeft(φ.body)(Sequence)), k)
 
       ////////////////////////////////////////////////////////////////
       // Conditionals
@@ -150,10 +163,6 @@ object Step {
 
       case Empty() =>
         Co(Undefined(), σ, φ, k)
-
-      // reassociate to reduce the size of the residual.
-      case Seq(Seq(s1, s2), s3) =>
-        Ev(Seq(s1, Seq(s2, s3)), ρ, σ, φ, k)
 
       case Seq(s1, s2) =>
         Ev(s1, ρ, σ, φ, SeqCont(s2, ρ)::k)
@@ -394,22 +403,73 @@ object Step {
     case φ::φs => φs.foldLeft(φ)(Seq)
   }
 
-  case class Co(v: Exp, σ: Store, φ: Effect, k: Cont) extends State {
+  case class Co(v: Val, σ: Store, φ: Effect, k: Cont) extends State {
     require(v.isValueOrResidual, s"$v is not a value or residual")
 
     override def toString = s"""Co
   v = $v
   σ = ${σ.toVector.sortBy(_._1.address).mkString("{", "\n       ", "}")}
-  φ = ${φ.mkString("[", "\n       ", "]")}
+  φ = $φ
   k = ${k.mkString("[", "\n       ", "]")}"""
 
     def MakeResidual(e: Exp, ρ1: Env, k: Cont) = {
-      val x = FreshVar()
+      lazy val x = FreshVar()
       reify(e) match {
+        // Don't residualize values
+        case e: Val =>
+          Co(e, σ, φ, k)
         case e @ Assign(op, lhs, rhs) =>
-          Co(Residual(x), Eval.simulateStore(e)(σ, ρ1), φ :+ e :+ Assign(None, LocalAddr(x), lhs), k)
+          println(s"simulating $e")
+          println(s"initial σ = $σ")
+          println(s"  final σ = ${Eval.simulateStore(e)(σ, ρ1)}")
+          Co(Residual(x), Eval.simulateStore(e)(σ, ρ1), φ.extend(x::Nil, Seq(e, Assign(None, Residual(x), lhs))), k)
         case e =>
-          Co(Residual(x), Eval.simulateStore(e)(σ, ρ1), φ :+ Assign(None, LocalAddr(x), e), k)
+          println(s"simulating $e")
+          println(s"initial σ = $σ")
+          println(s"  final σ = ${Eval.simulateStore(e)(σ, ρ1)}")
+          Co(Residual(x), Eval.simulateStore(e)(σ, ρ1), φ.extend(x::Nil, Assign(None, Residual(x), e)), k)
+      }
+    }
+
+    def doCall(fun: Val, thisValue: Val, args: List[Val], residual: Exp, result: Option[Val], ρ1: Env, k: Cont) = {
+      fun match {
+        case Path(addr, path) =>
+          σ.get(Loc(addr)) match {
+            case Some(ObjClosure(FunObject(_, _, xs, Some(body), _), ρ2)) =>
+              // Pad the arguments with undefined.
+              def pad(params: List[Name], args: List[Exp]): List[Exp] = (params, args) match {
+                case (Nil, _) => Nil
+                case (_::params, Nil) => Undefined()::pad(params, Nil)
+                case (_::params, arg::args) => arg::pad(params, args)
+              }
+              val args2 = pad(xs, args)
+              val seq = (xs zip args2).foldLeft(Assign(None, LocalAddr("this"), thisValue): Exp) {
+                case (seq, (x, a)) => Seq(seq, Assign(None, LocalAddr(x), a))
+              }
+              val ρ2 = ("this"::xs).foldLeft(ρ1) {
+                case (ρ1, x) => ρ1 + (x -> FreshLoc())
+              }
+              result match {
+                case Some(result) =>
+                  Ev(Seq(Seq(seq, body), result), ρ2, σ, φ, CallFrame(ρ1)::k)  // use ρ1 in the call frame.. this is the env we pop to.
+                case None =>
+                  Ev(Seq(seq, body), ρ2, σ, φ, CallFrame(ρ1)::k)  // use ρ1 in the call frame.. this is the env we pop to.
+              }
+
+            case Some(ValClosure(Prim(fun))) =>
+              Eval.evalPrim(fun, args) match {
+                case Some(e) =>
+                  // Use Ev, not Co... the prim might be eval and return the expression to eval.
+                  Ev(e, ρ1, σ, φ, k)
+                case None =>
+                  MakeResidual(residual, ρ1, k)
+              }
+
+            case _ =>
+              MakeResidual(residual, ρ1, k)
+          }
+        case _ =>
+          MakeResidual(residual, ρ1, k)
       }
     }
 
@@ -421,33 +481,37 @@ object Step {
         v match {
           case v @ CvtBool(true) => Co(v, σ, φ, kt ++ k)
           case v @ CvtBool(false) => Co(v, σ, φ, kf ++ k)
-
-          case Residual(_) | Value(_) =>
+          case _ =>
             // If the result cannot be converted to a boolean, we residualize.
+            // We first run the true branch, discarding all the effects accumulated so far
+            // and simulating a true test on the store.
+            // We then Reset the store, this time simulating a false test,
+            // then run the false branch.
+            // We then Merge the stores and effects, prepending the effects so far.
 
             // We have two options here.
-            // We can either run both continuations to the end
-            // or we can just run them both to the join point
+            // - LONG_CONTINUATIONS.
+            //   We run both continuations to the end of the program and then merge
+            // - !LONG_CONTINUATIONS.
+            //   We run both continuations to the join point, then merge
             // and merge the resulting states and effects.
             // We choose the latter because it yields a smaller residual
             // program, although the former might result in better
             // performance.
 
-            // We first run the true branch, discarding all the effects accumulated so far
-            // and simulating a true test on the store.
-
-            // We then reset the store, this time simulating a false test,
-            // then run the false branch.
-
-            // We then merge the stores.
-
             val σ1 = extendWithCond(v, σ, ρ, true)
             val σ2 = extendWithCond(v, σ, ρ, false)
-            Co(v, σ1, Nil, kt ++ (Reset(v, σ2, φ, ρ, kf)::k))
+
+            val LONG_CONTINUATIONS = false
+
+            if (LONG_CONTINUATIONS)
+              Co(v, σ1, Machine.φ0, kt ++ (Reset(v, σ2, φ, ρ, kf)::k))
+            else
+              Co(v, σ1, Machine.φ0, (kt ++ k) :+ Reset(v, σ2, φ, ρ, kf ++ k))
         }
 
       case Reset(test, σ2, φ0, ρ0, kf)::k =>
-        Co(test, σ2, Nil, kf ++ (Merge(v, σ, φ, test, φ0, ρ0)::k))
+        Co(test, σ2, Machine.φ0, kf ++ (Merge(v, σ, φ, test, φ0, ρ0)::k))
 
       case Merge(v1, σ1, φ1, test, φ0, ρ0)::k =>
         val v2 = v
@@ -456,16 +520,19 @@ object Step {
 
         if (v1 == v2) {
           // If the values are the same, just use them.
-          Co(v1, σ1.merge(σ2, ρ0), φ0 :+ IfElse(test, block(φ1), block(φ2)), k)
+          val φ = φ0.extend(φ1.vars ++ φ2.vars, IfElse(test, φ1.body, φ2.body))
+          Co(v1, σ1.merge(σ2, ρ0), φ, k)
         }
         else {
           // Otherwise create a fresh residual variable
           // and then assign the values at the end of each branch.
           // cf. removing SSA.
           val x = FreshVar()
-          val a1 = Assign(None, LocalAddr(x), v1)
-          val a2 = Assign(None, LocalAddr(x), v2)
-          Co(Residual(x), σ1.merge(σ2, ρ0), φ0 :+ IfElse(test, block(φ1 :+ a1), block(φ2 :+ a2)), k)
+          val a1 = Assign(None, Residual(x), v1)
+          val a2 = Assign(None, Residual(x), v2)
+
+          val φ = φ0.extend(φ1.vars ++ φ2.vars, IfElse(test, Seq(φ1.body, a1), Seq(φ2.body, a2)))
+          Co(Residual(x), σ1.merge(σ2, ρ0), φ, k)
         }
 
       case Breaking(None)::BreakFrame(_)::k =>
@@ -648,7 +715,7 @@ object Step {
 
       case DoBinaryOp(op, v1, ρ1)::k =>
         (op, v1, v) match {
-          case (Binary.IN, Value(i), loc @ Path(addr, path)) =>
+          case (Binary.IN, i, loc @ Path(addr, path)) =>
             // Does the property i exist in loc?
             σ.get(Loc(addr)) match {
               case Some(ObjClosure(_, _)) =>
@@ -702,7 +769,7 @@ object Step {
 
       case EvalArgs(thisValue, Nil, ρ1)::k =>
         val fun = v
-        Co(Undefined(), σ, φ, DoCall(fun, thisValue, Nil, Call(fun, Nil), ρ1)::k)
+        doCall(fun, thisValue, Nil, Call(fun, Nil), None, ρ1, k)
 
       case EvalArgs(thisValue, arg::args, ρ1)::k =>
         val fun = v
@@ -712,44 +779,7 @@ object Step {
         Ev(arg, ρ1, σ, φ, EvalMoreArgs(fun, thisValue, args, done :+ v, ρ1)::k)
 
       case EvalMoreArgs(fun, thisValue, Nil, done, ρ1)::k =>
-        Co(Undefined(), σ, φ, DoCall(fun, thisValue, done :+ v, Call(fun, done :+ v), ρ1)::k)
-
-      case DoCall(fun @ Path(addr, path), thisValue, args, residual, ρ1)::k =>
-        // HACK
-        σ.get(Loc(addr)) match {
-          case Some(ObjClosure(FunObject(_, _, xs, Some(e), _), ρ2)) =>
-            // Pad the arguments with undefined.
-            def pad(params: List[Name], args: List[Exp]): List[Exp] = (params, args) match {
-              case (Nil, _) => Nil
-              case (_::params, Nil) => Undefined()::pad(params, Nil)
-              case (_::params, arg::args) => arg::pad(params, args)
-            }
-            val args2 = pad(xs, args)
-            val seq = (xs zip args2).foldLeft(Assign(None, LocalAddr("this"), thisValue): Exp) {
-              case (seq, (x, a)) => Seq(seq, Assign(None, LocalAddr(x), a))
-            }
-            val ρ2 = ("this"::xs).foldLeft(ρ1) {
-              case (ρ1, x) => ρ1 + (x -> FreshLoc())
-            }
-            Ev(Seq(seq, e), ρ2, σ, φ, CallFrame(ρ1)::k)  // use ρ1 in the call frame.. this is the env we pop to.
-
-          case Some(ValClosure(Prim(fun))) =>
-            Eval.evalPrim(fun, args) match {
-              case Some(e) =>
-                // Use Ev, not Co... the prim might be eval and return the expression to eval.
-                Ev(e, ρ1, σ, φ, k)
-              case None =>
-                MakeResidual(residual, ρ1, k)
-            }
-
-          case _ =>
-            MakeResidual(residual, ρ1, k)
-        }
-
-      // The function is not a lambda. Residualize the call. Clear the store since we have no idea what the function
-      // will do to the store.
-      case DoCall(fun, thisValue, args, residual, ρ1)::k =>
-        MakeResidual(residual, ρ1, k)
+        doCall(fun, thisValue, done :+ v, Call(fun, done :+ v), None, ρ1, k)
 
       ///////////////////////////////////////////////////////////////, k/
       // Return. Pop the continuations until we hit the caller.
@@ -759,15 +789,22 @@ object Step {
         Co(Undefined(), σ, φ, Returning(v)::k)
 
       // Once we hit the call frame, evaluate the return value.
-      // Then pop the call frame using the ValueOrResidual rule.
-      case Returning(v)::CallFrame(ρ1)::k =>
-        Co(v, σ, φ, k)
+      case Returning(v1)::CallFrame(ρ1)::k =>
+        Co(v1, σ, φ, k)
 
-      case Returning(e)::_::k =>
-        Co(v, σ, φ, Returning(e)::k)
+      // If we hit a reset frame, we had the following situation:
+      // f() { if (...) return 1 else ... }
+      // rather than residualizing the return, what we do is extend
+      // the continuation.
+
+      // Push reset continuations out past the call frame.
+      case Returning(v1)::Reset(test, σ2, φ0, ρ0, kf)::k2::k =>
+        Co(v, σ, φ, Returning(v1)::k2::Reset(test, σ2, φ0, ρ0, kf :+ k2)::k)
+
+      case Returning(v1)::_::k =>
+        Co(v, σ, φ, Returning(v1)::k)
 
       // If we run off the end of the function body, act like we returned normally.
-      // This also runs after evaluating the return value after a return.
       case CallFrame(ρ1)::k =>
         Co(v, σ, φ, k)
 
@@ -788,7 +825,6 @@ object Step {
         Co(v, σ, φ, Throwing(e)::k)
 
       // Run the finally block, if any. Then restore the value.
-      // And pass it to k.
       case FinallyFrame(fin, ρ1)::k =>
         Ev(fin, ρ1, σ, φ, FocusCont(v)::k)
 
@@ -838,7 +874,7 @@ object Step {
             val xloc = FreshLoc()
             val ρ2 = ρ1 + (x -> xloc)
 
-            Co(Undefined(), σ.assign(xloc, loc, ρ2).assign(loc, obj, ρ2), φ, DoCall(fun, Local(x), args, Local(x), ρ2)::SeqCont(Local(x), ρ2)::k)
+            doCall(fun, loc, args, NewCall(fun, args), Some(loc), ρ2, k)
 
           case None =>
             MakeResidual(loc.path, ρ1, k)
@@ -854,7 +890,7 @@ object Step {
             σ.get(Loc(addr)) match {
               case Some(ObjClosure(FunObject(typeof, proto, xs, body, props), ρ2)) =>
                 val v = props collectFirst {
-                  case (k, v: Loc) if Eval.evalOp(Binary.==, StringLit(k), i) == Bool(true) => v
+                  case (k, v: Loc) if Eval.evalOp(Binary.==, StringLit(k), i) == Some(Bool(true)) => v
                 }
                 v match {
                   case Some(v) =>
@@ -886,7 +922,7 @@ object Step {
             σ.get(Loc(addr)) match {
               case Some(ObjClosure(FunObject(typeof, proto, xs, body, props), ρ2)) =>
                 val v = props collectFirst {
-                  case (k, v: Loc) if Eval.evalOp(Binary.==, StringLit(k), i) == Bool(true) => v
+                  case (k, v: Loc) if Eval.evalOp(Binary.==, StringLit(k), i) == Some(Bool(true)) => v
                 }
                 v match {
                   case Some(v) =>
@@ -919,12 +955,12 @@ object Step {
       // otherwise, a[f()] will result in undefined rather than a reified access
       case GetProperty(a, ρ1)::k =>
         (a, v) match {
-          case (a @ Path(addr, path), Value(i)) =>
+          case (a @ Path(addr, path), i) =>
             σ.get(Loc(addr)) match {
               case Some(ObjClosure(FunObject(typeof, proto, xs, body, props), ρ2)) =>
                 println(s"looking for $i in $props")
                 val propAddr = props collectFirst {
-                  case (k, v: Loc) if Eval.evalOp(Binary.==, StringLit(k), i) == Bool(true) => v
+                  case (k, v: Loc) if Eval.evalOp(Binary.==, StringLit(k), i) == Some(Bool(true)) => v
                 }
                 println(s"looking for $i in $props: found $propAddr")
                 propAddr match {
@@ -932,7 +968,7 @@ object Step {
                     println(s"looking for $i in $props: loading $propAddr")
                     Co(Path(propAddr.address, Index(path, i)), σ, φ, LoadCont(ρ1)::k)
                   case None =>
-                    if (body != None && Eval.evalOp(Binary.==, StringLit("length"), i) == Bool(true)) {
+                    if (body != None && Eval.evalOp(Binary.==, StringLit("length"), i) == Some(Bool(true))) {
                       Co(Num(xs.length), σ, φ, k)
                     }
                     else {

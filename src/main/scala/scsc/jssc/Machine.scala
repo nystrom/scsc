@@ -9,12 +9,21 @@ object Machine {
   type St = Step.State
 
   // Inject a term into the machine.
-  def inject(e: Exp): St = Step.Ev(e, ρ0, σ0, Φ0, k0)
+  def inject(e: Exp): St = Step.Ev(e, ρ0, σ0, φ0, k0)
 
   val k0: Cont = Nil
 
-  type Effect = List[Exp]
-  val Φ0: Effect = Nil
+  case class Effect(vars: List[Name], body: Exp) {
+    def extend(vars1: List[Name], body1: Exp) = body match {
+      case Undefined() => Effect(vars ++ vars1, body1)
+      case body => body1 match {
+        case Undefined() => Effect(vars ++ vars1, body)
+        case body1 => Effect(vars ++ vars1, Seq(body, body1))
+      }
+    }
+  }
+  
+  val φ0: Effect = Effect(Nil, Undefined())
 
   ////////////////////////////////////////////////////////////////
   // ENVIRONMENTS
@@ -60,11 +69,22 @@ object Machine {
   // STORES
   ////////////////////////////////////////////////////////////////
 
-  // The heap stores closures.
-  // We also store an access path for each location in the heap so we can residualize.
+  // The store maps locations to closures.
+
+  case class Loc(address: Int)
+
+  import org.bitbucket.inkytonik.kiama.util.Counter
+
+  object FreshLoc extends Counter {
+    def apply(): Loc = Loc(next())
+  }
+
+  // This is either a function object or a JS object in the heap.
+  case class FunObject(typeof: String, proto: Loc, params: List[Name], body: Option[Exp], properties: List[(Name, Loc)])
+
   sealed trait Closure
   case class ObjClosure(e: FunObject, ρ: Env) extends Closure
-  case class ValClosure(e: Exp) extends Closure   // literals, prims, residuals
+  case class ValClosure(e: Val) extends Closure   // literals, prims, residuals
   case class LocClosure(e: Loc) extends Closure
   // represents missing information (the location is legal, but inconsistent)
   case class UnknownClosure() extends Closure
@@ -84,13 +104,9 @@ object Machine {
 
     def assign(lhs: Loc, rhs: Exp, ρ: Env): Store = {
       rhs match {
-        case rhs1: Lit =>
-          σ + (lhs -> ValClosure(rhs1))
         case Path(a, p) =>
           σ + (lhs -> LocClosure(Loc(a)))
-        case rhs1: Residual =>
-          σ + (lhs -> ValClosure(rhs1))
-        case rhs1: Prim =>
+        case rhs1: Val =>
           σ + (lhs -> ValClosure(rhs1))
         case _ =>
           ???

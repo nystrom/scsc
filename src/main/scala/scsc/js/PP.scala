@@ -16,8 +16,8 @@ object PP {
     t match {
       case Prim(name) =>
         text(name)
-      case Residual(x) =>
-        text("/**/") <> text(x)
+      case Residual(name) =>
+        text(name)
       case Unary(op, e) =>
         text(op.toString) <> parens(show(e))
       case IncDec(Prefix.++, e) =>

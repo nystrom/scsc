@@ -19,11 +19,11 @@ object Eval {
     ???
   }
 
-  def getPropertyAddress(loc: Loc, i: Exp, σ: Store) = {
+  def getPropertyAddress(loc: Loc, i: Val, σ: Store) = {
     σ.get(loc) match {
       case Some(ObjClosure(FunObject(typeof, proto, xs, body, props), _)) =>
         props collectFirst {
-          case (k, v: Loc) if evalOp(Binary.==, StringLit(k), i) == Bool(true) => v
+          case (k, v: Loc) if evalOp(Binary.==, StringLit(k), i) == Some(Bool(true)) => v
         }
       case _ => None
     }
@@ -31,7 +31,7 @@ object Eval {
 
   // Fix this! This is too simple and doesn't handle coercions corretctly.
   // Let's look at the spec.
-  def evalOp(op: Operator, v1: Exp, v2: Exp): Option[Exp] = (op, v1, v2) match {
+  def evalOp(op: Operator, v1: Val, v2: Val): Option[Val] = (op, v1, v2) match {
     case (Binary.+, StringLit(n1), StringLit(n2)) => Some(StringLit(n1 + n2))
     case (Binary.+, StringLit(n1), CvtString(n2)) => Some(StringLit(n1 + n2))
     case (Binary.+, CvtString(n1), StringLit(n2)) => Some(StringLit(n1 + n2))
@@ -73,20 +73,17 @@ object Eval {
       println("ERROR: unimplemented ${Binary(op, v1, v2).show}")
       None
 
-    case (op, v1, v2 @ Residual(x2)) => None
-    case (op, v1 @ Residual(x1), v2) => None
-
     case (Binary.COMMALEFT, v1, v2) => Some(v1)
     case (Binary.COMMARIGHT, v1, v2) => Some(v2)
 
     // Equality operators should not work on residuals.
     // So match after the above.
 
-    case (Binary.!=, v1, v2) => evalOp(Binary.==, v1, v2) map {
+    case (Binary.!=, v1, v2) => evalOp(Binary.==, v1, v2) collect {
       case Bool(v) => Bool(!v)
     }
 
-    case (Binary.!==, v1, v2) => evalOp(Binary.===, v1, v2) map {
+    case (Binary.!==, v1, v2) => evalOp(Binary.===, v1, v2) collect {
       case Bool(v) => Bool(!v)
     }
 
@@ -98,9 +95,15 @@ object Eval {
     case (Binary.==, v1 @ CvtNum(n1), Num(n2)) if v1.isInstanceOf[Bool] => Some(Bool(n1 == n2))
 
     case (Binary.==, Path(n1, _), Path(n2, _)) if n1 == n2 => Some(Bool(true))
+
     // We don't handle object literals, so just reify.
     case (Binary.==, v1 @ Path(n1, _), v2) => None
     case (Binary.==, v1, v2 @ Path(n2, _)) => None
+
+    // Residual values can be compared for equality too
+    case (Binary.==, Residual(x1), Residual(x2)) if x1 == x2 => Some(Bool(true))
+    case (Binary.==, v1, v2 @ Residual(x2)) => None
+    case (Binary.==, v1 @ Residual(x1), v2) => None
 
     // for other cases, just use ===.
     case (Binary.==, v1, v2) => evalOp(Binary.===, v1, v2)
@@ -111,7 +114,13 @@ object Eval {
     case (Binary.===, StringLit(n1), StringLit(n2)) => Some(Bool(n1 == n2))
     case (Binary.===, Bool(n1), Bool(n2)) => Some(Bool(n1 == n2))
     case (Binary.===, Path(n1, _), Path(n2, _)) => Some(Bool(n1 == n2)) // same object
-    case (Binary.===, v1, v2) => Some(Bool(false)) // all other cases should be false (residuals are handled above)
+
+    // Residual values can be compared for equality too
+    case (Binary.===, Residual(x1), Residual(x2)) if x1 == x2 => Some(Bool(true))
+    case (Binary.===, v1, v2 @ Residual(x2)) => None
+    case (Binary.===, v1 @ Residual(x1), v2) => None
+
+    case (Binary.===, v1, v2) => Some(Bool(false)) // all other cases should be false
 
     // Failure
     case (op, v1, v2) =>
@@ -119,7 +128,7 @@ object Eval {
       None
   }
 
-  def evalPrim(fun: String, args: List[Exp]): Option[Exp] = (fun, args) match {
+  def evalPrim(fun: String, args: List[Val]): Option[Exp] = (fun, args) match {
     case ("eval", StringLit(code)::_) => scsc.js.Parser.fromString(code)
     case ("eval", Value(v)::_) => Some(v)
     case ("eval", Nil) => Some(Undefined())
@@ -132,11 +141,12 @@ object Eval {
     case ("Regex.exec", Regex(re, opts)::StringLit(s)::Nil) => None /// Some(StringLit(s(i.toInt).toString))
     case ("Math.abs", CvtNum(v)::_) => Some(Num(v.abs))
     case ("Math.sqrt", CvtNum(v)::_) => Some(Num(math.sqrt(v)))
-    case ("Math.floor", CvtNum(v)::_) => None
-    case ("Math.ceil", CvtNum(v)::_) => None
+    case ("Math.floor", CvtNum(v)::_) => Some(Num(math.floor(v)))
+    case ("Math.ceil", CvtNum(v)::_) => Some(Num(math.ceil(v)))
     case ("Math.round", CvtNum(v)::_) => None
+    case ("Math.trunc", CvtNum(v)::_) => None
     case ("Math.exp", CvtNum(v)::_) => Some(Num(math.exp(v)))
-    case ("Math.log", CvtNum(v)::_) => None
+    case ("Math.log", CvtNum(v)::_) => Some(Num(math.log(v)))
     case ("Math.sin", CvtNum(v)::_) => Some(Num(math.sin(v)))
     case ("Math.cos", CvtNum(v)::_) => Some(Num(math.cos(v)))
     case ("Math.tan", CvtNum(v)::_) => Some(Num(math.tan(v)))
@@ -195,6 +205,7 @@ object Eval {
 
   def invalidateHeap(σ: Store, ρ: Env): Store = {
     σ collect {
+      case (loc, v) if (Context.σ0 contains loc) => (loc, v)
       case (loc, v) if ρ.exists { case (x, loc1) => loc == loc1 } => (loc, v)
     }
   }
