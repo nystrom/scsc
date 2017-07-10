@@ -431,7 +431,7 @@ object Step {
       }
     }
 
-    def doCall(fun: Val, thisValue: Val, args: List[Val], residual: Exp, result: Option[Val], ρ1: Env, k: Cont) = {
+    def doCall(fun: Val, thisValue: Val, args: List[Val], residual: Exp, result: Option[Val], ρ1: Env, σ: Store, k: Cont) = {
       fun match {
         case Path(addr, path) =>
           σ.get(Loc(addr)) match {
@@ -769,7 +769,7 @@ object Step {
 
       case EvalArgs(thisValue, Nil, ρ1)::k =>
         val fun = v
-        doCall(fun, thisValue, Nil, Call(fun, Nil), None, ρ1, k)
+        doCall(fun, thisValue, Nil, Call(fun, Nil), None, ρ1, σ, k)
 
       case EvalArgs(thisValue, arg::args, ρ1)::k =>
         val fun = v
@@ -779,7 +779,7 @@ object Step {
         Ev(arg, ρ1, σ, φ, EvalMoreArgs(fun, thisValue, args, done :+ v, ρ1)::k)
 
       case EvalMoreArgs(fun, thisValue, Nil, done, ρ1)::k =>
-        doCall(fun, thisValue, done :+ v, Call(fun, done :+ v), None, ρ1, k)
+        doCall(fun, thisValue, done :+ v, Call(fun, done :+ v), None, ρ1, σ, k)
 
       ///////////////////////////////////////////////////////////////, k/
       // Return. Pop the continuations until we hit the caller.
@@ -867,14 +867,7 @@ object Step {
         protoLoc match {
           case Some(protoLoc) =>
             val obj = FunObject("object", protoLoc, Nil, None, Nil)
-
-            // create a fresh variable for the new object
-            // and introduce a residual NewCall
-            val x = FreshVar()
-            val xloc = FreshLoc()
-            val ρ2 = ρ1 + (x -> xloc)
-
-            doCall(fun, loc, args, NewCall(fun, args), Some(loc), ρ2, k)
+            doCall(fun, loc, args, NewCall(fun, args), Some(loc), ρ1, σ.assign(loc, obj, ρ1), k)
 
           case None =>
             MakeResidual(loc.path, ρ1, k)

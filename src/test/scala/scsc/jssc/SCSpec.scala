@@ -9,33 +9,33 @@ class SCSpec extends FlatSpec with Matchers {
   import scsc.jssc._
 
   "JSSC" should "eval number literals" in {
-    val e = Parser.fromString("3")
+    val e = Parser.fromString("8")
     e match {
       case Some(e) =>
         val result = CESK.eval(e, 100)
-        result shouldBe (Num(3.0))
+        result shouldBe (Num(8.0))
       case None =>
         fail
     }
   }
 
   "JSSC" should "eval arithmetic" in {
-    val e = Parser.fromString("1+2")
+    val e = Parser.fromString("1*2-3+4+5")
     e match {
       case Some(e) =>
         val result = CESK.eval(e, 100)
-        result shouldBe (Num(3.0))
+        result shouldBe (Num(8.0))
       case None =>
         fail
     }
   }
 
   "JSSC" should "eval object literals" in {
-    val e = Parser.fromString("var o = {x:3}; o.x")
+    val e = Parser.fromString("var o = {x:8}; o.x")
     e match {
       case Some(e) =>
         val result = CESK.eval(e, 100)
-        result shouldBe (Num(3.0))
+        result shouldBe (Num(8.0))
       case None =>
         fail
     }
@@ -43,14 +43,14 @@ class SCSpec extends FlatSpec with Matchers {
 
   "JSSC" should "eval new objects prototypes" in {
     val e = Parser.fromString("""{
-      function f() { this.x = 3 } ;
+      function f() { this.x = 8 } ;
       (new f()).x
     }
     """)
     e match {
       case Some(e) =>
         val result = CESK.eval(e, 100)
-        result shouldBe (Num(3.0))
+        result shouldBe (Num(8.0))
       case None =>
         fail
     }
@@ -58,7 +58,7 @@ class SCSpec extends FlatSpec with Matchers {
 
   "JSSC" should "eval new objects with prototypes" in {
     val e = Parser.fromString("""{
-      function f() { this.x = 3 } ;
+      function f() { this.x = 8 } ;
       f.prototype.get = function () { return this.x } ;
       (new f()).get()
     }
@@ -66,7 +66,52 @@ class SCSpec extends FlatSpec with Matchers {
     e match {
       case Some(e) =>
         val result = CESK.eval(e, 100)
-        result shouldBe (Num(3.0))
+        result shouldBe (Num(8.0))
+      case None =>
+        fail
+    }
+  }
+
+  "JSSC" should "optimize pow(2,3) to 8" in {
+    val e = Parser.fromString("""{
+      function pow(x,n) { if (n==0) return 1; else return x*pow(x,n-1) }
+      pow(2,3)
+    }
+    """)
+    e match {
+      case Some(e) =>
+        val result = CESK.eval(e, 100)
+        result shouldBe (Num(8.0))
+      case None =>
+        fail
+    }
+  }
+
+  "JSSC" should "optimize pow(x,3) to x*x*x" in {
+    val e = Parser.fromString("""{
+      function pow(x,n) { if (n==0) return 1; else return x*pow(x,n-1) }
+      pow(x,3)
+    }
+    """)
+    e match {
+      case Some(e) =>
+        val result = CESK.eval(e, 100)
+        result shouldBe {
+          Seq(
+            VarDef("_v0",Undefined()),
+            Seq(
+              VarDef("_v1",Undefined()),
+              Seq(
+                VarDef("_v2",Undefined()),
+                Seq(
+                  Seq(
+                    Seq(
+                      Assign(None,Residual("_v0"),Binary(Binary.*,Residual("x"),Num(1.0))),
+                      Assign(None,Residual("_v1"),Binary(Binary.*,Residual("x"),Residual("_v0")))),
+                    Assign(None,Residual("_v2"),Binary(Binary.*,Residual("x"),Residual("_v1")))),
+                  Residual("_v2")))))
+        }
+
       case None =>
         fail
     }

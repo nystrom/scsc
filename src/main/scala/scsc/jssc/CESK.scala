@@ -167,9 +167,75 @@ object CESK {
     }
   }
 
+  def removeDeadCode(e: Exp): Exp = {
+    var used: Set[Name] = Set()
+    var changed = true
+
+    while (changed) {
+      changed = false
+
+      object CollectUsed extends Rewriter {
+        override def rewrite(e: Exp) = e match {
+          case e @ Local(x) =>
+            if (! (used contains x)) {
+              changed = true
+              used += x
+            }
+            e
+          case e @ LocalAddr(x) =>
+            if (! (used contains x)) {
+              changed = true
+              used += x
+            }
+            e
+          case e @ Residual(x) =>
+            if (! (used contains x)) {
+              changed = true
+              used += x
+            }
+            e
+          case e @ VarDef(x, _) =>
+            // don't recurse on variable definitions
+            // unless the variable is already known to be used
+            if (used contains x) {
+              super.rewrite(e)
+            }
+            else {
+              e
+            }
+          case e =>
+            super.rewrite(e)
+        }
+      }
+      CollectUsed.rewrite(e)
+    }
+
+    object RemoveUnused extends Rewriter {
+      override def rewrite(e: Exp) = super.rewrite(e) match {
+        case e @ VarDef(x, _) =>
+          if (used contains x) {
+            e
+          }
+          else {
+            Undefined()
+          }
+        case Seq(Undefined(), e) =>
+          e
+        case e =>
+          e
+      }
+    }
+
+    RemoveUnused.rewrite(e)
+  }
+
   // Evaluator.
   // Step until either the whistle blows or we reach the Done continuation with a value.
   def eval(e: Exp, maxSteps: Int): Exp = {
+    // Reset the counters so that tests behave the same every run.
+    scsc.util.FreshVar.reset()
+    FreshLoc.reset()
+
     var t = maxSteps * 10
     var s = inject(e)
 
@@ -187,7 +253,7 @@ object CESK {
       s match {
         // stop when we have a value with the empty continuation.
         case s @ Halt(v, φ) =>
-          return s.residual
+          return removeDeadCode(s.residual)
 
         case Err(message, s) =>
           println(s"FAIL $message in $s")
