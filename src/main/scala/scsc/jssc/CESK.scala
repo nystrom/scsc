@@ -41,82 +41,6 @@ object CESK {
   import Residualization._
   import Step._
 
-  def extendWithCond(test: Exp, σAfterTest: Store, ρ: Env, result: Boolean): Store = {
-    test match {
-      case Binary(Binary.&&, e1, e2) if result =>
-        extendWithCond(e2, extendWithCond(e1, σAfterTest, ρ, true), ρ, true)
-      case Binary(Binary.||, e1, e2) if ! result =>
-        extendWithCond(e2, extendWithCond(e1, σAfterTest, ρ, false), ρ, false)
-      case Unary(Prefix.!, e) =>
-        extendWithCond(e, σAfterTest, ρ, ! result)
-
-      case Binary(Binary.===, Local(x), Value(v)) if result =>
-        ρ.get(x) match {
-          case Some(loc) => σAfterTest.assign(loc, v, ρ)
-          case None => σAfterTest
-        }
-      case Binary(Binary.==, Local(x), Value(v)) if result =>
-        ρ.get(x) match {
-          case Some(loc) => σAfterTest.assign(loc, v, ρ)
-          case None => σAfterTest
-        }
-      case Binary(Binary.!==, Local(x), Value(v)) if ! result =>
-        ρ.get(x) match {
-          case Some(loc) => σAfterTest.assign(loc, v, ρ)
-          case None => σAfterTest
-        }
-      case Binary(Binary.!=, Local(x), Value(v)) if ! result =>
-        ρ.get(x) match {
-          case Some(loc) => σAfterTest.assign(loc, v, ρ)
-          case None => σAfterTest
-        }
-
-      case Binary(Binary.===, Value(v), Local(x)) if result =>
-        ρ.get(x) match {
-          case Some(loc) => σAfterTest.assign(loc, v, ρ)
-          case None => σAfterTest
-        }
-      case Binary(Binary.==, Value(v), Local(x)) if result =>
-        ρ.get(x) match {
-          case Some(loc) => σAfterTest.assign(loc, v, ρ)
-          case None => σAfterTest
-        }
-      case Binary(Binary.!==, Value(v), Local(x)) if ! result =>
-        ρ.get(x) match {
-          case Some(loc) => σAfterTest.assign(loc, v, ρ)
-          case None => σAfterTest
-        }
-      case Binary(Binary.!=, Value(v), Local(x)) if ! result =>
-        ρ.get(x) match {
-          case Some(loc) => σAfterTest.assign(loc, v, ρ)
-          case None => σAfterTest
-        }
-
-      case Local(x) =>
-        ρ.get(x) match {
-          case Some(loc) =>
-            // FIXME should't do this... x is not true, it's something that can
-            // be coerced to true.
-            σAfterTest.assign(loc, Bool(result), ρ)
-          case None =>
-            σAfterTest
-        }
-
-      case Residual(x) =>
-        ρ.get(x) match {
-          case Some(loc) =>
-            // FIXME should't do this... x is not true, it's something that can
-            // be coerced to true.
-            σAfterTest.assign(loc, Bool(result), ρ)
-          case None =>
-            σAfterTest
-        }
-
-      case _ =>
-        σAfterTest
-    }
-  }
-
   // Partial evaluation is implemented as follows:
   // We start with normal CEK-style evaluation.
 
@@ -223,12 +147,59 @@ object CESK {
     RemoveUnused.rewrite(e)
   }
 
+  def alpha(e: Exp): Exp = {
+    // rename residual variables in order of occurrence
+
+    object Collector extends Rewriter {
+      var map: Map[Name,Name] = Map()
+
+      override def rewrite(e: Exp) = e match {
+        case VarDef(x, _) =>
+          // if (x.startsWith("_v")) {
+          map += (x -> s"_v${map.size}")
+          // }
+          super.rewrite(e)
+        case e =>
+          super.rewrite(e)
+      }
+    }
+
+    class Renamer(map: Map[Name, Name]) extends Rewriter {
+      override def rewrite(e: Exp) = super.rewrite(e) match {
+        case VarDef(x, b) =>
+          map.get(x) match {
+            case Some(y) => VarDef(y, b)
+            case None => e
+          }
+        case e @ Local(x) =>
+          map.get(x) match {
+            case Some(y) => Local(y)
+            case None => e
+          }
+        case e @ Residual(x) =>
+          map.get(x) match {
+            case Some(y) => Residual(y)
+            case None => e
+          }
+        case e =>
+          e
+      }
+    }
+
+    Collector.rewrite(e)
+
+    val e1 = new Renamer(Collector.map).rewrite(e)
+    // println(s"alpha $e")
+    // println(s"  --> $e1")
+    e1
+  }
+
   // Evaluator.
   // Step until either the whistle blows or we reach the Done continuation with a value.
-  def eval(e: Exp, maxSteps: Int): Exp = {
-    // Reset the counters so that tests behave the same every run.
-    scsc.util.FreshVar.reset()
-    FreshLoc.reset()
+  def eval(e: Exp, maxSteps: Int): Exp = alpha(removeDeadCode(stepper(e, maxSteps)))
+
+  def stepper(e: Exp, maxSteps: Int): Exp = {
+    var absoluteMax = maxSteps * 100
 
     var t = maxSteps * 10
     var s = inject(e)
@@ -247,7 +218,7 @@ object CESK {
       s match {
         // stop when we have a value with the empty continuation.
         case s @ Halt(v, φ) =>
-          return removeDeadCode(s.residual)
+          return s.residual
 
         case Err(message, s) =>
           println(s"FAIL $message in $s")
@@ -259,13 +230,13 @@ object CESK {
     }
 
     // Go again! Performing termination checking as we go.
-    t = maxSteps
+    t = absoluteMax
     s = inject(e)
 
     val hist: ListBuffer[St] = ListBuffer()
     hist += s
 
-    while (true) {
+    while (t > 0) {
       t -= 1
       println(s)
 
@@ -288,7 +259,14 @@ object CESK {
       }
     }
 
-    throw new RuntimeException("unreachable")
+    // timeout
+    toTerm(s) match {
+      case Some((v, φ, n)) =>
+        return Halt(v, φ).residual
+      case None =>
+        println(s"FAIL cannot reduce $s to a term")
+        return Undefined()
+    }
   }
 
   def checkHistory(hist: ListBuffer[St], s: St): St = s match {
