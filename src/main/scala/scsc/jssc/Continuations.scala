@@ -41,7 +41,6 @@ object Continuations {
   case class EvalMethodProperty(methodProp: Exp, args: List[Exp], ρ: Env) extends ContFrame
 
   case class CallFrame(ρ: Env) extends ContFrame
-  case class ThrowFrame() extends ContFrame
   case class CatchFrame(cs: List[Exp], ρ: Env) extends ContFrame
   case class FinallyFrame(fin: Exp, ρ: Env) extends ContFrame
 
