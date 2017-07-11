@@ -198,8 +198,8 @@ object HE {
       case (s1, s2) if comparableStates(s1, s2) =>
         (toTerm(s1), toTerm(s2)) match {
           case (Some((e1, φ1, n1)), Some((e2, φ2, n2))) =>
-            val t1 = Halt(e1, φ1).residual
-            val t2 = Halt(e2, φ2).residual
+            val t1 = Halt(e1, σ0, φ1).residual
+            val t2 = Halt(e2, σ0, φ2).residual
             println("HE: comparing " + s1)
             println("           vs " + s2)
             println("HE:     terms " + t1.show)

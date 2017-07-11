@@ -30,7 +30,7 @@ object Step {
     def step: State
   }
 
-  case class Halt(v: Val, φ: Effect) extends State {
+  case class Halt(v: Val, σ: Store, φ: Effect) extends State {
     def step = ???
 
     def residual: Exp = φ match {
@@ -158,10 +158,10 @@ object Step {
       ////////////////////////////////////////////////////////////////
 
       case Break(label) =>
-        Breaking(Break(label), σ, φ, k)
+        Unwinding(Break(label), σ, φ, k)
 
       case Continue(label) =>
-        Breaking(Continue(label), σ, φ, k)
+        Unwinding(Continue(label), σ, φ, k)
 
       ////////////////////////////////////////////////////////////////
       // Blocks.
@@ -435,7 +435,7 @@ object Step {
         Co(Undefined(), σ, φ, k).MakeResidual(With(exp, body), ρ, k)
 
       case _ =>
-        Err("no rule for $this", this)
+        Err(s"no rule for $this", this)
 
     }
   }
@@ -448,7 +448,7 @@ object Step {
   // We enter a stuck state when a Co state cannot make progress.
   // This happens in a few cases:
   // - a BranchCont where the value is a residual
-  // - Throwing where the exception is a residual
+  // - Unwinding throw where the exception is a residual
   // - when the whistle blows and Meta changes the state to Stuck
   case class Stuck(v: Val, σ: Store, φ: Effect, k: Cont) extends State {
     override def toString = s"""Stuck
@@ -457,33 +457,198 @@ object Step {
   φ = $φ
   k = ${k.mkString("[", "\n       ", "]")}"""
 
+    // stuck states don't advance
     def step = this
+
+    def split: (List[State], PartialFunction[List[State], List[State]]) = k match {
+      case BranchCont(kt, kf, ρ)::k =>
+        // If the result cannot be converted to a boolean, we residualize.
+        // We first run the true branch, discarding all the effects accumulated so far
+        // and simulating a true test on the store.
+        // We then ResetBranch the store, this time simulating a false test,
+        // then run the false branch.
+        // We then MergeBranch the stores and effects, prepending the effects so far.
+
+        // We have two options here.
+        // - LONG_CONTINUATIONS.
+        //   We run both continuations to the end of the program and then merge
+        // - !LONG_CONTINUATIONS.
+        //   We run both continuations to the join point, then merge
+        // We choose the latter because it yields a smaller residual
+        // program, although the former might result in better performance
+        // because of the information loss after the join even through
+        // there's exponential code growth.
+
+        val LONG_CONTINUATIONS = false
+
+        if (LONG_CONTINUATIONS) {
+          splitBranch(ρ, kt ++ k, kf ++ k, Nil)
+        }
+        else {
+          splitBranch(ρ, kt, kf, k)
+        }
+    }
+
+    def splitBranch(ρ: Env, kt: Cont, kf: Cont, k: Cont): (List[State], PartialFunction[List[State], List[State]]) = {
+      val test = v
+      val σ1 = Eval.extendWithCond(test, σ, ρ, true)
+      val σ2 = Eval.extendWithCond(test, σ, ρ, false)
+
+      (
+        List(Co(test, σ1, Machine.φ0, kt), Co(test, σ2, Machine.φ0, kf)), {
+          // Both branches halted normally.
+          // Merge the values and resume conputation with k.
+          case List(Halt(v1, σ1, φ1), Halt(v2, σ2, φ2)) =>
+            if (v1 == v2) {
+              // If the values are the same, just use them.
+              val φ = φ0.extend(φ1.vars ++ φ2.vars, IfElse(test, φ1.body, φ2.body))
+              List(Co(v1, σ1.merge(σ2, ρ0), φ, k))
+            }
+            else {
+              // Otherwise create a fresh residual variable
+              // and then assign the values at the end of each branch.
+              // cf. removing SSA.
+              val x = FreshVar()
+              val a1 = Assign(None, Residual(x), v1)
+              val a2 = Assign(None, Residual(x), v2)
+
+              val φ = φ0.extend(φ1.vars ++ φ2.vars, IfElse(test, Seq(φ1.body, a1), Seq(φ2.body, a2)))
+              List(Co(Residual(x), σ1.merge(σ2, ρ0), φ, k))
+            }
+
+          // Both branches halted abnormally.
+          // We can try to merge the states and continue unwinding the stack.
+          case List(Err(_, Unwinding(jump1, σ1, φ1, Nil)), Err(_, Unwinding(jump2, σ2, φ2, Nil))) =>
+            if (jump1 == jump2) {
+              // exactly the same jump
+              val φ = φ0.extend(φ1.vars ++ φ2.vars, IfElse(test, φ1.body, φ2.body))
+              List(Unwinding(jump1, σ1.merge(σ2, ρ0), φ, k))
+            }
+            else {
+              // try to merge the jumps
+              (jump1, jump2) match {
+                case (Return(Some(v1)), Return(Some(v2))) =>
+                  val x = FreshVar()
+                  val a1 = Assign(None, Residual(x), v1)
+                  val a2 = Assign(None, Residual(x), v2)
+                  val φ = φ0.extend(φ1.vars ++ φ2.vars, IfElse(test, Seq(φ1.body, a1), Seq(φ2.body, a2)))
+                  List(Unwinding(Return(Some(Residual(x))), σ1.merge(σ2, ρ0), φ, k))
+
+                case (Throw(v1), Throw(v2)) =>
+                  val x = FreshVar()
+                  val a1 = Assign(None, Residual(x), v1)
+                  val a2 = Assign(None, Residual(x), v2)
+                  val φ = φ0.extend(φ1.vars ++ φ2.vars, IfElse(test, Seq(φ1.body, a1), Seq(φ2.body, a2)))
+                  List(Unwinding(Throw(Residual(x)), σ1.merge(σ2, ρ0), φ, k))
+
+                case _ =>
+                  // cannot merge the jumps
+                  // pull in a frame from after the merge point
+                  k match {
+                    case k::ks =>
+                      List(Unwinding(jump1, σ1, φ1, k::Nil), Unwinding(jump2, σ2, φ2, k::Nil))
+                    case Nil =>
+                      List(Err(s"cannot merge states for $jump1 and $jump2", this))
+                  }
+              }
+            }
+
+          case List(Err(_, Unwinding(jump1, σ1, φ1, Nil)), Halt(v2, σ2, φ2)) =>
+            // one branch completed abnormally, the other normally.
+            // pull in a frame from after the merge point
+            k match {
+              case k::ks =>
+                List(Unwinding(jump1, σ1, φ1, k::Nil), Co(v2, σ2, φ2, k::Nil))
+              case Nil =>
+                List(Err(s"cannot merge states for $jump1 and $v2", this))
+            }
+
+          case List(Halt(v1, σ2, φ2), Err(_, Unwinding(jump2, σ1, φ1, Nil))) =>
+            // one branch completed abnormally, the other normally.
+            // pull in a frame from after the merge point
+            k match {
+              case k::ks =>
+                List(Co(v1, σ1, φ1, k::Nil), Unwinding(jump2, σ2, φ2, k::Nil))
+              case Nil =>
+                List(Err(s"cannot merge states for $v1 and $jump2", this))
+            }
+
+          // error
+          case List(_, Err(msg, s)) => List(Err(msg, s))
+          case List(Err(msg, s), _) => List(Err(msg, s))
+        }
+      )
+    }
   }
 
-  // The Throwing state just pops continuations until hitting a handler.
-  case class Throwing(v: Val, σ: Store, φ: Effect, k: Cont) extends State {
-    override def toString = s"""Throwing
-  v = $v
+  // The Unwinding state just pops continuations until hitting a call or loop or catch.
+  case class Unwinding(jump: Exp, σ: Store, φ: Effect, k: Cont) extends State {
+    override def toString = s"""Unwinding
+  e = $jump
   σ = ${σ.toVector.sortBy(_._1.address).mkString("{", "\n       ", "}")}
   φ = $φ
   k = ${k.mkString("[", "\n       ", "]")}"""
 
-    def step = k match {
-      // if we hit the bottom of the stack, report an error.
-      case Nil => Err(s"uncaught exception $v", this)
+    def step = (k, jump) match {
+      // if we hit the bottom of the stack, evaluate to undefined.
+      case (Nil, Break(None)) => Err("break outside a loop", this)
+      case (Nil, Continue(None)) => Err("continue outside a loop", this)
+      case (Nil, Break(Some(label))) => Err(s"break outside a loop labeled $label", this)
+      case (Nil, Continue(Some(label))) => Err(s"continue outside a loop labeled $label", this)
+      case (Nil, Return(_)) => Err("return outside a function", this)
+      case (Nil, Throw(v)) => Err(s"uncaught exception $v", this)
 
-      // If we're throwing and we hit a finally block,
-      // evaluate the finally block and then rethrow.
-      case FinallyFrame(fin, ρ1)::k =>
-        Ev(fin, ρ1, σ, φ, FocusCont(v)::DoThrow()::k)
+      // If we're breaking and we hit a finally block,
+      // evaluate the finally block and then rebreak.
+      case (FinallyFrame(fin, ρ1)::k, jump) =>
+        Ev(fin, ρ1, σ, φ, SeqCont(jump, ρ1)::k)
+
+      // Push reset continuations out past the landing frame.
+      case (ResetBranch(test, σ2, φ0, ρ0, kf)::k2::k, jump) =>
+        Unwinding(jump, σ, φ, k2::ResetBranch(test, σ2, φ0, ρ0, kf :+ k2)::k)
+
+      ////////////////////////////////////////////////////////////////
+      // Break
+      ////////////////////////////////////////////////////////////////
+      case (BreakFrame(_)::k, Break(None)) =>
+        Co(Undefined(), σ, φ, k)
+
+      case (BreakFrame(Some(x))::k, Break(Some(y))) if x == y =>
+        Co(Undefined(), σ, φ, k)
+
+      ////////////////////////////////////////////////////////////////
+      // Continue
+      ////////////////////////////////////////////////////////////////
+      case (ContinueFrame(_)::k, Continue(None)) =>
+        Co(Undefined(), σ, φ, k)
+
+      case (ContinueFrame(Some(x))::k, Break(Some(y))) if x == y =>
+        Co(Undefined(), σ, φ, k)
+
+      ////////////////////////////////////////////////////////////////
+      // Return
+      ////////////////////////////////////////////////////////////////
+
+      // Once we hit the call frame, evaluate the return value.
+      case (CallFrame(ρ1)::k, Return(Some(v: Val))) =>
+        Co(v, σ, φ, k)
+
+      case (CallFrame(ρ1)::k, Return(None)) =>
+        Co(Undefined(), σ, φ, k)
+
+      ////////////////////////////////////////////////////////////////
+      // Throw
+      ////////////////////////////////////////////////////////////////
 
       // If we hit an empty catch frame, just keep propagating the exception.
-      case CatchFrame(Nil, ρ1)::k =>
-        Throwing(v, σ, φ, k)
+      case (CatchFrame(Nil, ρ1)::k, Throw(v)) =>
+        Unwinding(Throw(v), σ, φ, k)
 
       // Conditional catch.
-      // We have to be careful to move the remaining catches into the else part of the if below.
-      case CatchFrame(Catch(ex, Some(test), body)::cs, ρ1)::k =>
+      // We have to be careful to move the remaining catches into the else part of the if below rather than
+      // leaving a CatchFrame with the remaining catches in the continuation. This is because if the body
+      // of the catch throws an exception we don't want it caught by later handlers of the same try.
+      case (CatchFrame(Catch(ex, Some(test), body)::cs, ρ1)::k, Throw(v: Val)) =>
         val loc = FreshLoc()
         val path = Path(loc.address, Local(ex))
         val ρ2 = ρ1 + (ex -> loc)
@@ -493,95 +658,16 @@ object Step {
         }
         Co(v, σ.assign(path, Undefined(), ρ2), φ, DoAssign(None, path, ρ2)::SeqCont(IfElse(test, body, rethrow), ρ2)::k)
 
-      // Unconditional catch
-      case CatchFrame(Catch(ex, None, body)::cs, ρ1)::k =>
+      // Unconditional catch.
+      case (CatchFrame(Catch(ex, None, body)::cs, ρ1)::k, Throw(v: Val)) =>
         val loc = FreshLoc()
         val path = Path(loc.address, Local(ex))
         val ρ2 = ρ1 + (ex -> loc)
         Co(v, σ.assign(path, Undefined(), ρ2), φ, DoAssign(None, path, ρ2)::SeqCont(body, ρ2)::k)
 
-      // Push reset continuations out past the catch frame.
-      case ResetBranch(test, σ2, φ0, ρ0, kf)::k2::k =>
-        Throwing(v, σ, φ, k2::ResetBranch(test, σ2, φ0, ρ0, kf :+ k2)::k)
-
-      // In all other cases, just pop the frame.
-      case _::k =>
-        Throwing(v, σ, φ, k)
-    }
-  }
-
-  // The Returning state just pops continuations until hitting a call frame.
-  case class Returning(v: Val, σ: Store, φ: Effect, k: Cont) extends State {
-    override def toString = s"""Returning
-  v = $v
-  σ = ${σ.toVector.sortBy(_._1.address).mkString("{", "\n       ", "}")}
-  φ = $φ
-  k = ${k.mkString("[", "\n       ", "]")}"""
-
-    def step = k match {
-      // if we hit the bottom of the stack, report an error.
-      case Nil => Halt(v, φ)
-
-      // If we're throwing and we hit a finally block,
-      // evaluate the finally block and then rethrow.
-      case FinallyFrame(fin, ρ1)::k =>
-        Ev(fin, ρ1, σ, φ, FocusCont(v)::DoReturn()::k)
-
-      // Once we hit the call frame, evaluate the return value.
-      case CallFrame(ρ1)::k =>
-        Co(v, σ, φ, k)
-
-      // If we hit a reset frame, we had the following situation:
-      // f() { if (...) return 1 else ... }
-      // rather than residualizing the return, we just extend the continuation
-      // to reset past the call.
-
-      // Push reset continuations out past the call frame.
-      case ResetBranch(test, σ2, φ0, ρ0, kf)::k2::k =>
-        Returning(v, σ, φ, k2::ResetBranch(test, σ2, φ0, ρ0, kf :+ k2)::k)
-
-      // In all other cases, just pop the frame.
-      case _::k =>
-        Returning(v, σ, φ, k)
-    }
-  }
-
-  // The Breaking state just pops continuations until hitting a call frame.
-  case class Breaking(jump: Exp, σ: Store, φ: Effect, k: Cont) extends State {
-    override def toString = s"""Breaking
-  e = $jump
-  σ = ${σ.toVector.sortBy(_._1.address).mkString("{", "\n       ", "}")}
-  φ = $φ
-  k = ${k.mkString("[", "\n       ", "]")}"""
-
-    def step = k match {
-      // if we hit the bottom of the stack, evaluate to undefined.
-      case Nil => Err("break or continue outside a loop", this)
-
-      // If we're breaking and we hit a finally block,
-      // evaluate the finally block and then rebreak.
-      case FinallyFrame(fin, ρ1)::k =>
-        Ev(fin, ρ1, σ, φ, SeqCont(jump, ρ1)::k)
-
-      // Push reset continuations out past the loop frame.
-      case ResetBranch(test, σ2, φ0, ρ0, kf)::k2::k =>
-        Breaking(jump, σ, φ, k2::ResetBranch(test, σ2, φ0, ρ0, kf :+ k2)::k)
-
-      case BreakFrame(_)::k if jump == Break(None) =>
-        Co(Undefined(), σ, φ, k)
-
-      case ContinueFrame(_)::k if jump == Continue(None) =>
-        Co(Undefined(), σ, φ, k)
-
-      case BreakFrame(Some(x))::k if jump == Break(Some(x)) =>
-        Co(Undefined(), σ, φ, k)
-
-      case ContinueFrame(Some(x))::k if jump == Break(Some(x)) =>
-        Co(Undefined(), σ, φ, k)
-
-      // In all other cases, just pop the frame.
-      case _::k =>
-        Breaking(jump, σ, φ, k)
+      // In all other cases, just unwind the stack.
+      case (_::k, jump) =>
+        Unwinding(jump, σ, φ, k)
     }
   }
 
@@ -684,7 +770,7 @@ object Step {
 
     def step = k match {
       // Done!
-      case Nil => Halt(v, φ)
+      case Nil => Halt(v, σ, φ)
 
       case BranchCont(kt, kf, ρ)::k =>
         v match {
@@ -747,7 +833,7 @@ object Step {
       // discard useless break and continue frames
       case BreakFrame(_)::k =>
         Co(v, σ, φ, k)
-        
+
       case ContinueFrame(_)::k =>
         Co(v, σ, φ, k)
 
@@ -955,7 +1041,7 @@ object Step {
       ////////////////////////////////////////////////////////////////
 
       case DoReturn()::k =>
-        Returning(v, σ, φ, k)
+        Unwinding(Return(Some(v)), σ, φ, k)
 
       // If we run off the end of the function body, act like we returned normally.
       case CallFrame(ρ1)::k =>
@@ -967,7 +1053,7 @@ object Step {
       ////////////////////////////////////////////////////////////////
 
       case DoThrow()::k =>
-        Throwing(v, σ, φ, k)
+        Unwinding(Throw(v), σ, φ, k)
 
       // Run the finally block, if any. Then restore the value.
       case FinallyFrame(fin, ρ1)::k =>

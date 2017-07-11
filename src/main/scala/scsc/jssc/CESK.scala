@@ -196,77 +196,77 @@ object CESK {
 
   // Evaluator.
   // Step until either the whistle blows or we reach the Done continuation with a value.
-  def eval(e: Exp, maxSteps: Int): Exp = alpha(removeDeadCode(stepper(e, maxSteps)))
+  def eval(e: Exp, maxSteps: Int): Exp = alpha(removeDeadCode(stepper(e, maxSteps*10)))
+
+  // def splitter(s: St): St = s match {
+  //   case Co(Residual(x), σ, φ, BranchCont(_, _, _)::k) =>
+  //     s
+  //   case Ev(Call(fun, args), ρ, σ, φ, DoCall(_, _)::k) =>
+  //     s
+  // }
 
   def stepper(e: Exp, maxSteps: Int): Exp = {
-    var absoluteMax = maxSteps * 100
+    val absoluteMax = maxSteps * 100
 
-    var t = maxSteps * 10
-    var s = inject(e)
-
-    // TODO:
-    // New termination strategy:
     // Run for maxSteps. If we terminate, great.
-    // Otherwise, _restart_ and run with termination checking enabled.
+    // Otherwise, _restart_ and run with termination checking enabled,
+    // which might cause an earlier termination.
 
-    while (t > 0) {
-      t -= 1
-      println(s)
+    var attempt = 1
 
-      // println("term " + toTerm(s).map(_.show).getOrElse("FAIL"))
+    while (true) {
+      var t = if (attempt == 1) maxSteps else absoluteMax
+      var s = inject(e)
 
-      s match {
-        // stop when we have a value with the empty continuation.
-        case s @ Halt(v, φ) =>
-          return s.residual
+      val hist: ListBuffer[St] = ListBuffer()
 
-        case Err(message, s) =>
-          println(s"FAIL $message in $s")
-          return Undefined()
+      if (attempt != 1)
+        hist += s
 
-        case s0 =>
-          s = step(s0)
+      while (t > 0) {
+        t -= 1
+        println(s)
+
+        // println("term " + toTerm(s).map(_.show).getOrElse("FAIL"))
+
+        s match {
+          // stop when we have a value with the empty continuation.
+          case s @ Halt(v, σ, φ) =>
+            return s.residual
+
+          case Err(message, s) =>
+            println(s"FAIL $message in $s")
+            return Undefined()
+
+          case s0 =>
+            val s1 = step(s0)
+            if (attempt == 1) {
+              s = s1
+            }
+            else {
+              s = checkHistory(hist, s1)
+              hist += s
+            }
+        }
       }
-    }
 
-    // Go again! Performing termination checking as we go.
-    t = absoluteMax
-    s = inject(e)
-
-    val hist: ListBuffer[St] = ListBuffer()
-    hist += s
-
-    while (t > 0) {
-      t -= 1
-      println(s)
-
-      println("term " + toTerm(s).map { case (e, φ, n) => s"${e.show} in $n steps" }.getOrElse("FAIL"))
-
-      s match {
-        // stop when we have a value with the empty continuation.
-        case s @ Halt(v, φ) =>
-          return s.residual
-
-        case Err(message, s) =>
-          println(s"FAIL $message in $s")
-          return Undefined()
-
-        case s0 =>
-          val s1 = step(s0)
-          s = checkHistory(hist, s1)
-          hist += s
-
+      if (attempt != 1) {
+        // timeout
+        toTerm(s) match {
+          case Some((v, φ, n)) =>
+            return Halt(v, σ0, φ).residual
+          case None =>
+            println(s"FAIL cannot reduce $s to a term")
+            return Undefined()
+        }
       }
+
+      // Go again! Performing termination checking as we go.
+      attempt += 1
     }
 
-    // timeout
-    toTerm(s) match {
-      case Some((v, φ, n)) =>
-        return Halt(v, φ).residual
-      case None =>
-        println(s"FAIL cannot reduce $s to a term")
-        return Undefined()
-    }
+    println(s"fell off the end")
+    Undefined()
   }
 
   def checkHistory(hist: ListBuffer[St], s: St): St = s match {
@@ -315,7 +315,7 @@ object CESK {
 
             toTerm(s1) match {
               case Some((t1, φ1, _)) =>
-                return Halt(t1, φ1)
+                return Halt(t1, σ0, φ1)
               case None =>
                 return Err(s"could not convert $s1 to term", s1)
             }

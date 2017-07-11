@@ -95,7 +95,7 @@ object Residualization {
   def toTermAcc(s: St, steps: Int): Option[(Val, Effect, Int)] = {
     println("converting to term " + s)
     s match {
-      case s @ Halt(e, φ) =>
+      case s @ Halt(e, σ, φ) =>
         val t = s.residual
         println("--> " + t)
         Some((e, φ, steps))
