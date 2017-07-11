@@ -9,14 +9,89 @@ object Eval {
   import Residualization._
   import Context.{ρempty, σempty}
 
+  def extendWithCond(test: Exp, σAfterTest: Store, ρ: Env, result: Boolean): Store = {
+    test match {
+      case Binary(Binary.&&, e1, e2) if result =>
+        extendWithCond(e2, extendWithCond(e1, σAfterTest, ρ, true), ρ, true)
+      case Binary(Binary.||, e1, e2) if ! result =>
+        extendWithCond(e2, extendWithCond(e1, σAfterTest, ρ, false), ρ, false)
+      case Unary(Prefix.!, e) =>
+        extendWithCond(e, σAfterTest, ρ, ! result)
+
+      case Binary(Binary.===, Local(x), Value(v)) if result =>
+        ρ.get(x) match {
+          case Some(loc) => σAfterTest.assign(loc, v, ρ)
+          case None => σAfterTest
+        }
+      case Binary(Binary.==, Local(x), Value(v)) if result =>
+        ρ.get(x) match {
+          case Some(loc) => σAfterTest.assign(loc, v, ρ)
+          case None => σAfterTest
+        }
+      case Binary(Binary.!==, Local(x), Value(v)) if ! result =>
+        ρ.get(x) match {
+          case Some(loc) => σAfterTest.assign(loc, v, ρ)
+          case None => σAfterTest
+        }
+      case Binary(Binary.!=, Local(x), Value(v)) if ! result =>
+        ρ.get(x) match {
+          case Some(loc) => σAfterTest.assign(loc, v, ρ)
+          case None => σAfterTest
+        }
+
+      case Binary(Binary.===, Value(v), Local(x)) if result =>
+        ρ.get(x) match {
+          case Some(loc) => σAfterTest.assign(loc, v, ρ)
+          case None => σAfterTest
+        }
+      case Binary(Binary.==, Value(v), Local(x)) if result =>
+        ρ.get(x) match {
+          case Some(loc) => σAfterTest.assign(loc, v, ρ)
+          case None => σAfterTest
+        }
+      case Binary(Binary.!==, Value(v), Local(x)) if ! result =>
+        ρ.get(x) match {
+          case Some(loc) => σAfterTest.assign(loc, v, ρ)
+          case None => σAfterTest
+        }
+      case Binary(Binary.!=, Value(v), Local(x)) if ! result =>
+        ρ.get(x) match {
+          case Some(loc) => σAfterTest.assign(loc, v, ρ)
+          case None => σAfterTest
+        }
+
+      case Local(x) =>
+        ρ.get(x) match {
+          case Some(loc) =>
+            // FIXME should't do this... x is not true, it's something that can
+            // be coerced to true.
+            σAfterTest.assign(loc, Bool(result), ρ)
+          case None =>
+            σAfterTest
+        }
+
+      case Residual(x) =>
+        ρ.get(x) match {
+          case Some(loc) =>
+            // FIXME should't do this... x is not true, it's something that can
+            // be coerced to true.
+            σAfterTest.assign(loc, Bool(result), ρ)
+          case None =>
+            σAfterTest
+        }
+
+      case _ =>
+        σAfterTest
+    }
+  }
+
   def getPrimAddress(p: Prim): Loc = {
     Context.σ0 foreach {
       case (loc, ValClosure(q)) if p == q =>
         return loc
       case _ =>
     }
-    assert(false)
-    ???
+    throw new RuntimeException(s"missing primitive $p")
   }
 
   def getPropertyAddress(loc: Loc, i: Val, σ: Store) = {
@@ -124,7 +199,7 @@ object Eval {
 
     // Failure
     case (op, v1, v2) =>
-      println("ERROR: cannot apply ${Binary(op, v1, v2).show}")
+      println(s"ERROR: cannot apply ${Binary(op, v1, v2).show}")
       None
   }
 
@@ -224,12 +299,6 @@ object Eval {
         case None => σ
       }
 
-    case LocalAddr(x) =>
-      ρ.get(x) match {
-        case Some(loc) => σ + (loc -> UnknownClosure())
-        case None => σ
-      }
-
     case Index(a, StringLit(i)) =>
       // Remove all properties named i
       val addrs: Iterable[Loc] = σ flatMap {
@@ -244,21 +313,7 @@ object Eval {
         case (σ, loc) => σ + (loc -> UnknownClosure())
       }
 
-    case IndexAddr(a, StringLit(i)) =>
-      // Remove all properties named i
-      val addrs: Iterable[Loc] = σ flatMap {
-        case (_, ObjClosure(FunObject(_, _, _, _, props), _)) =>
-          props collect {
-            case (k, loc) if k == i => loc
-          }
-        case _ => Nil
-      }
-
-      addrs.foldLeft(σ) {
-        case (σ, loc) => σ + (loc -> UnknownClosure())
-      }
-
-    case IndexAddr(a, i) =>
+    case Index(a, i) =>
       // Remove ALL properties in the store
       val addrs: Iterable[Loc] = σ flatMap {
         case (_, ObjClosure(FunObject(_, _, _, _, props), _)) =>

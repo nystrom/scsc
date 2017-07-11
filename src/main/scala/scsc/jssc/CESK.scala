@@ -182,12 +182,6 @@ object CESK {
               used += x
             }
             e
-          case e @ LocalAddr(x) =>
-            if (! (used contains x)) {
-              changed = true
-              used += x
-            }
-            e
           case e @ Residual(x) =>
             if (! (used contains x)) {
               changed = true
@@ -312,6 +306,7 @@ object CESK {
     // if the current residual is embedded in an older residual, generalize
     // change the residual to a function call, then continue.
     //
+
     case s1 @ Ev(CheckHistory(focus1), ρ1, σ, φ, k1) =>
       import HE._
 
@@ -354,6 +349,7 @@ object CESK {
         case (prev, s_) =>
           s_
       }
+    case s1 => s1
   }
 }
 

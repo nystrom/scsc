@@ -97,7 +97,6 @@ object HE {
           case Break(_) | Continue(_) => e
           case Empty() => e
           case Local(_) => e
-          case LocalAddr(_) => e
           case Return(None) | Yield(None) => e
           case Prim(_) => e
           // case Loc(_) => e
@@ -144,7 +143,6 @@ object HE {
       case (ForIn(label1, a1, b1, c1), ForIn(label2, a2, b2, c2)) => label1 == label2 && he(a1, a2) && he(b1, b2) && he(c1, c2)
       case (Lambda(xs1, e1), Lambda(xs2, e2)) => he(e1, e2)
       case (Local(_), Local(_)) => true
-      case (LocalAddr(_), LocalAddr(_)) => true
       case (Index(a1, i1), Index(a2, i2)) => he(a1, a2) && he(i1, i2)
       case (ArrayLit(ss1), ArrayLit(ss2)) => ss1.length == ss2.length && (ss1 zip ss2).forall({ case (e1, e2) => he(e1, e2) })
       case (Seq(a1, i1), Seq(a2, i2)) => he(a1, a2) && he(i1, i2)
@@ -199,7 +197,9 @@ object HE {
       // Need to incorporate the environment too, perhaps.
       case (s1, s2) if comparableStates(s1, s2) =>
         (toTerm(s1), toTerm(s2)) match {
-          case (Some((t1, φ1, n1)), Some((t2, φ2, n2))) =>
+          case (Some((e1, φ1, n1)), Some((e2, φ2, n2))) =>
+            val t1 = Halt(e1, φ1).residual
+            val t2 = Halt(e2, φ2).residual
             println("HE: comparing " + s1)
             println("           vs " + s2)
             println("HE:     terms " + t1.show)

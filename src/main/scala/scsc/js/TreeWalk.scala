@@ -68,14 +68,10 @@ object TreeWalk {
         Scope(rewrite(body))
       case Local(x) =>
         Local(x)
-      case LocalAddr(x) =>
-        LocalAddr(x)
       case IfElse(test, pass, fail) =>
         IfElse(rewrite(test), rewrite(pass), rewrite(fail))
       case Index(a, i) =>
         Index(rewrite(a), rewrite(i))
-      case IndexAddr(a, i) =>
-        IndexAddr(rewrite(a), rewrite(i))
       case ArrayLit(es) =>
         ArrayLit(rewrite(es))
       case Bool(v) =>

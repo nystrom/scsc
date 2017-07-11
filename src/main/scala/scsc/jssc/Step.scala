@@ -12,6 +12,12 @@ object Step {
   import Residualization._
   import CESK._
 
+  import org.bitbucket.inkytonik.kiama.util.Counter
+
+  object CallCounter extends Counter {
+    def apply(): Int = next()
+  }
+
   // We implement the machine in "apply, eval, continue" form, following:
   // Olivier Danvy. An Analytical Approach to Program as Data Objects.
   // DSc thesis, Department of Computer Science, Aarhus University, 2006.
@@ -198,10 +204,10 @@ object Step {
             // But really these should map to UNKNOWN rather than to nothing.
             // The location is valid (in one heap), just not known.
             val ass = List(
-              Assign(None, LocalAddr(x), lambdaLoc),
-              Assign(None, IndexAddr(lambdaLoc, StringLit("name")), StringLit(x)),
-              Assign(None, IndexAddr(lambdaLoc, StringLit("length")), Num(xs.length)),
-              Assign(None, IndexAddr(lambdaLoc, StringLit("prototype")), protoLoc)
+              Assign(None, Local(x), lambdaLoc),
+              Assign(None, Index(lambdaLoc, StringLit("name")), StringLit(x)),
+              Assign(None, Index(lambdaLoc, StringLit("length")), Num(xs.length)),
+              Assign(None, Index(lambdaLoc, StringLit("prototype")), protoLoc)
             )
 
             val s2 = ass.reverse.foldRight(Undefined(): Exp) {
@@ -227,39 +233,73 @@ object Step {
       // Assignment.
       ////////////////////////////////////////////////////////////////
 
-      // we can assign to undefined. yep, that's right.
+      // We can assign to undefined. yep, that's right.
       case Assign(None, Undefined(), rhs) =>
         Ev(rhs, ρ, σ, φ, k)
 
       case Assign(Some(op), Undefined(), rhs) =>
         Ev(rhs, ρ, σ, φ, DoBinaryOp(op, Undefined(), ρ)::k)
 
-      case Assign(op, lhs, rhs) =>
-        Ev(lhs, ρ, σ, φ, EvalAssignRhs(op, rhs, lhs, ρ)::k)
+      case Assign(op, Local(x), rhs) =>
+        ρ.get(x) match {
+          case Some(Loc(addr)) =>
+            Co(Path(addr, Local(x)), σ, φ, EvalAssignRhs(op, rhs, ρ)::k)
+          case None if x == "undefined" =>
+            // The special global name "undefined" evaluates to "undefined".
+            val loc = Path(FreshLoc().address, Undefined())
+            Co(loc, σ.assign(loc, Undefined(), ρ), φ, EvalAssignRhs(op, rhs, ρ)::k)
+          case None =>
+            println(s"variable $x not found... residualizing")
+            Co(Undefined(), σ, φ, k).MakeResidual(Local(x), ρ, EvalAssignRhs(op, rhs, ρ)::k)
+        }
 
-      case IncDec(op, lhs) =>
-        Ev(lhs, ρ, σ, φ, DoIncDec(op, ρ)::k)
+      case Assign(op, Index(a, i), rhs) =>
+        Ev(a, ρ, σ, φ, EvalPropertyNameForSet(i, ρ)::EvalAssignRhs(op, rhs, ρ)::k)
+
+      case IncDec(op, Local(x)) =>
+        ρ.get(x) match {
+          case Some(Loc(addr)) =>
+            Co(Path(addr, Local(x)), σ, φ, DoIncDec(op, ρ)::k)
+          case None if x == "undefined" =>
+            // The special global name "undefined" evaluates to "undefined".
+            val loc = Path(FreshLoc().address, Undefined())
+            Co(loc, σ.assign(loc, Undefined(), ρ), φ, DoIncDec(op, ρ)::k)
+          case None =>
+            println(s"variable $x not found... residualizing")
+            Co(Undefined(), σ, φ, k).MakeResidual(Local(x), ρ, DoIncDec(op, ρ)::k)
+        }
+
+      case IncDec(op, Index(a, i)) =>
+        Ev(a, ρ, σ, φ, EvalPropertyNameForSet(i, ρ)::DoIncDec(op, ρ)::k)
 
 
       ////////////////////////////////////////////////////////////////
       // Variables. Just lookup the value. If not present, residualize.
       ////////////////////////////////////////////////////////////////
 
-      case LocalAddr(x) =>
+      case Local(x) =>
         ρ.get(x) match {
           case Some(Loc(addr)) =>
-            Co(Path(addr, LocalAddr(x)), σ, φ, k)
+            σ.get(Loc(addr)) match {
+              case Some(LocClosure(Loc(v))) =>
+                Co(Path(v, Local(x)), σ, φ, k)
+              case Some(ValClosure(v)) =>
+                Co(v, σ, φ, k)
+              case Some(ObjClosure(funObject, ρ1)) =>
+                assert(false) // A local variable should never point directly to an object.
+                Co(Undefined(), σ, φ, k).MakeResidual(Local(x), ρ, k)
+              case Some(UnknownClosure()) | None =>
+                Co(Undefined(), σ, φ, k).MakeResidual(Local(x), ρ, k)
+            }
+
           case None if x == "undefined" =>
             // The special global name "undefined" evaluates to "undefined".
-            val loc = Path(FreshLoc().address, Undefined())
-            Co(loc, σ.assign(loc, Undefined(), ρ), φ, k)
+            Co(Undefined(), σ, φ, k)
+
           case None =>
             println(s"variable $x not found... residualizing")
-            Co(Residual(x), σ, φ, k)
+            Co(Undefined(), σ, φ, k).MakeResidual(Local(x), ρ, k)
         }
-
-      case Local(x) =>
-        Ev(LocalAddr(x), ρ, σ, φ, LoadCont(ρ)::k)
 
       case Index(a, i) =>
         Ev(a, ρ, σ, φ, EvalPropertyNameForGet(i, ρ)::k)
@@ -299,9 +339,6 @@ object Step {
       case Call(Index(e, m), args) =>
         Ev(e, ρ, σ, φ, EvalMethodProperty(m, args, ρ)::k)
 
-      case Call(IndexAddr(e, m), args) =>
-        Ev(e, ρ, σ, φ, EvalMethodProperty(m, args, ρ)::k)
-
       // A non-method call "f()" passes "window" as "this"
       case Call(fun, args) =>
         Ev(fun, ρ, σ, φ, EvalArgs(Prim("window"), args, ρ)::k)
@@ -335,11 +372,8 @@ object Step {
 
 
 
-      case Delete(IndexAddr(a, i)) =>
+      case Delete(Index(a, i)) =>
         Ev(a, ρ, σ, φ, EvalPropertyNameForDel(i, ρ)::k)
-
-      case IndexAddr(a, i) =>
-        Ev(a, ρ, σ, φ, EvalPropertyNameForSet(i, ρ)::k)
 
 
       // Create an empty object
@@ -351,9 +385,9 @@ object Step {
 
       case ObjectLit(ps) =>
         val x = FreshVar()
-        val seq = ps.foldLeft(Assign(None, LocalAddr(x), ObjectLit(Nil)): Exp) {
+        val seq = ps.foldLeft(Assign(None, Local(x), ObjectLit(Nil)): Exp) {
           case (seq, Property(prop, value, _, _)) =>
-            Seq(seq, Assign(None, IndexAddr(Local(x), prop), value))
+            Seq(seq, Assign(None, Index(Local(x), prop), value))
           case _ => ???
         }
         Ev(Seq(seq, Local(x)), ρ + (x -> FreshLoc()), σ, φ, k)
@@ -376,11 +410,11 @@ object Step {
         val loc = Path(FreshLoc().address, NewCall(Prim("Array"), Num(es.length)::Nil))
         val v = FunObject("object", Eval.getPrimAddress(Prim("Array.prototype")), Nil, None, Nil)
         val x = FreshVar()
-        val seq = es.zipWithIndex.foldLeft(Assign(None, LocalAddr(x), loc): Exp) {
+        val seq = es.zipWithIndex.foldLeft(Assign(None, Local(x), loc): Exp) {
           case (seq, (value, i)) =>
-            Seq(seq, Assign(None, IndexAddr(Local(x), StringLit(i.toInt.toString)), value))
+            Seq(seq, Assign(None, Index(Local(x), StringLit(i.toInt.toString)), value))
         }
-        Ev(Seq(seq, Seq(Assign(None, IndexAddr(Local(x), StringLit("length")), Num(es.length)), Local(x))), ρ, σ.assign(loc, v, ρ), φ, k)
+        Ev(Seq(seq, Seq(Assign(None, Index(Local(x), StringLit("length")), Num(es.length)), Local(x))), ρ, σ.assign(loc, v, ρ), φ, k)
 
       ////////////////////////////////////////////////////////////////
       // Other cases.
@@ -389,7 +423,7 @@ object Step {
       // Don't implement with.
       case With(exp, body) =>
         val x = FreshVar()
-        val a = Assign(None, LocalAddr(x), With(exp, body))
+        val a = Assign(None, Local(x), With(exp, body))
         Co(Undefined(), σ, φ, k).MakeResidual(With(exp, body), ρ, k)
 
       case _ =>
@@ -413,10 +447,11 @@ object Step {
   k = ${k.mkString("[", "\n       ", "]")}"""
 
     def MakeResidual(e: Exp, ρ1: Env, k: Cont) = {
+      // TODO: if a variable used in e is in ρ1, we have to generate an assignment to it.
       lazy val x = FreshVar()
       reify(e) match {
-        // Don't residualize values
         case e: Val =>
+          // Don't residualize values
           Co(e, σ, φ, k)
         case e @ Assign(op, lhs, rhs) =>
           println(s"simulating $e")
@@ -431,11 +466,39 @@ object Step {
       }
     }
 
+    def callDepth = k.foldLeft(0) {
+      case (n, CallFrame(_)) => n+1
+      case (n, _) => n
+    }
+
+    class Subst(subst: Map[Name,Name]) extends scsc.js.TreeWalk.Rewriter {
+      override def rewrite(e: Exp) = e match {
+        case Local(x) =>
+          subst.get(x) match {
+            case Some(y) => Local(y)
+            case None => Local(x)
+          }
+        case Lambda(xs, e) =>
+          val e1 = new Subst(subst -- xs).rewrite(e)
+          Lambda(xs, e1)
+        case e =>
+          super.rewrite(e)
+      }
+    }
+
     def doCall(fun: Val, thisValue: Val, args: List[Val], residual: Exp, result: Option[Val], ρ1: Env, σ: Store, k: Cont) = {
+      val callNumber = CallCounter()
+
       fun match {
         case Path(addr, path) =>
           σ.get(Loc(addr)) match {
-            case Some(ObjClosure(FunObject(_, _, xs, Some(body), _), ρ2)) =>
+            case Some(ObjClosure(FunObject(_, _, ys, Some(body0), _), ρ2)) =>
+              // HACK (breaks eval): rename the variables to prevent name collisions
+              val xthis = s"this$callNumber"
+              val xs = ys map { y => s"$y$callNumber" }
+              val subst = ("this", xthis) :: (ys zip xs)
+              val body = new Subst(subst.toMap).rewrite(body0)
+
               // Pad the arguments with undefined.
               def pad(params: List[Name], args: List[Exp]): List[Exp] = (params, args) match {
                 case (Nil, _) => Nil
@@ -443,10 +506,10 @@ object Step {
                 case (_::params, arg::args) => arg::pad(params, args)
               }
               val args2 = pad(xs, args)
-              val seq = (xs zip args2).foldLeft(Assign(None, LocalAddr("this"), thisValue): Exp) {
-                case (seq, (x, a)) => Seq(seq, Assign(None, LocalAddr(x), a))
+              val seq = (xs zip args2).foldLeft(Assign(None, Local(xthis), thisValue): Exp) {
+                case (seq, (x, a)) => Seq(seq, Assign(None, Local(x), a))
               }
-              val ρ2 = ("this"::xs).foldLeft(ρ1) {
+              val ρ2 = (xthis::xs).foldLeft(ρ1) {
                 case (ρ1, x) => ρ1 + (x -> FreshLoc())
               }
               result match {
@@ -505,9 +568,9 @@ object Step {
             val LONG_CONTINUATIONS = false
 
             if (LONG_CONTINUATIONS)
-              Co(v, σ1, Machine.φ0, kt ++ (Reset(v, σ2, φ, ρ, kf)::k))
-            else
               Co(v, σ1, Machine.φ0, (kt ++ k) :+ Reset(v, σ2, φ, ρ, kf ++ k))
+            else
+              Co(v, σ1, Machine.φ0, kt ++ (Reset(v, σ2, φ, ρ, kf)::k))
         }
 
       case Reset(test, σ2, φ0, ρ0, kf)::k =>
@@ -572,7 +635,7 @@ object Step {
       // Assignment.
       ////////////////////////////////////////////////////////////////
 
-      case EvalAssignRhs(op, rhs, _, ρ1)::k =>
+      case EvalAssignRhs(op, rhs, ρ1)::k =>
         val lhs = v
         Ev(rhs, ρ1, σ, φ, DoAssign(op, lhs, ρ1)::k)
 
@@ -630,32 +693,6 @@ object Step {
 
           case v =>
             MakeResidual(IncDec(op, v), ρ1, k)
-        }
-
-      case LoadCont(ρ1)::k =>
-        v match {
-          case loc @ Path(addr, path) =>
-            σ.get(Loc(addr)) match {
-              case Some(LocClosure(Loc(v))) =>
-                Co(Path(v, path), σ, φ, k)
-              case Some(ValClosure(v)) =>
-                Co(v, σ, φ, k)
-              case Some(ObjClosure(funObject, ρ2)) =>
-                MakeResidual(path, ρ1, k)
-              case Some(UnknownClosure()) =>
-                MakeResidual(path, ρ1, k)
-              case None =>
-                MakeResidual(path, ρ1, k)
-            }
-
-          case Undefined() =>
-            Co(Undefined(), σ, φ, k)
-
-          case Residual(e) =>
-            Co(Residual(e), σ, φ, k)
-
-          case e =>
-            MakeResidual(e, ρ1, k)
         }
 
       case DoTypeof(ρ1)::k =>
@@ -899,12 +936,13 @@ object Step {
               case Some(ValClosure(_)) | Some(LocClosure(_)) =>
                 Co(a, σ, φ, k)
               case Some(UnknownClosure()) | None =>
-                MakeResidual(Delete(IndexAddr(a, i)), ρ1, k)
+                MakeResidual(Delete(Index(a, i)), ρ1, k)
             }
 
           case (a, i) =>
-            MakeResidual(Delete(IndexAddr(a, i)), ρ1, k)
+            MakeResidual(Delete(Index(a, i)), ρ1, k)
         }
+
       case EvalPropertyNameForSet(i, ρ1)::k =>
         val a = v
         Ev(i, ρ1, σ, φ, GetPropertyAddressOrCreate(a, ρ1)::k)
@@ -934,10 +972,10 @@ object Step {
               case Some(ValClosure(_)) | Some(LocClosure(_)) =>
                 Co(Undefined(), σ, φ, k)
               case Some(UnknownClosure()) | None =>
-                MakeResidual(IndexAddr(a, i), ρ1, k)
+                MakeResidual(Index(a, i), ρ1, k)
             }
           case (a, i) =>
-            MakeResidual(IndexAddr(a, i), ρ1, k)
+            MakeResidual(Index(a, i), ρ1, k)
         }
 
       case EvalPropertyNameForGet(i, ρ1)::k =>
@@ -957,9 +995,20 @@ object Step {
                 }
                 println(s"looking for $i in $props: found $propAddr")
                 propAddr match {
-                  case Some(propAddr) =>
-                    println(s"looking for $i in $props: loading $propAddr")
-                    Co(Path(propAddr.address, Index(path, i)), σ, φ, LoadCont(ρ1)::k)
+                  case Some(loc) =>
+                    println(s"looking for $i in $props: loading $loc")
+                    σ.get(loc) match {
+                      case Some(LocClosure(Loc(v))) =>
+                        Co(Path(v, Index(path, i)), σ, φ, k)
+                      case Some(ValClosure(v)) =>
+                        Co(v, σ, φ, k)
+                      case Some(ObjClosure(funObject, ρ2)) =>
+                        MakeResidual(Index(path, i), ρ1, k)
+                      case Some(UnknownClosure()) =>
+                        MakeResidual(Index(path, i), ρ1, k)
+                      case None =>
+                        MakeResidual(Index(path, i), ρ1, k)
+                    }
                   case None =>
                     if (body != None && Eval.evalOp(Binary.==, StringLit("length"), i) == Some(Bool(true))) {
                       Co(Num(xs.length), σ, φ, k)

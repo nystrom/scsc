@@ -28,71 +28,6 @@ object MakeTrees {
     }
   }
 
-  class Flatten() extends TreeWalk.Rewriter {
-    val hoist: ListBuffer[Exp] = ListBuffer()
-
-    def block(es: List[Exp]) = es match {
-      case Nil => Undefined()
-      case e::es => es.foldLeft(e) {
-        case (e1, e2) => Seq(e1, e2)
-      }
-    }
-
-    override def rewrite(e: Exp) = e match {
-      case Binary(op, e1, e2) =>
-        val t = FreshVar()
-        val t1 = rewrite(e1)
-        val t2 = rewrite(e2)
-        hoist += Assign(None, LocalAddr(t), Binary(op, t1, t2))
-        Local(t)
-      case Unary(op, e1) =>
-        val t = FreshVar()
-        val t1 = rewrite(e1)
-        hoist += Assign(None, LocalAddr(t), Unary(op, t1))
-        Local(t)
-      case Delete(e1) =>
-        val t = FreshVar()
-        val t1 = rewrite(e1)
-        hoist += Assign(None, LocalAddr(t), Delete(t1))
-        Local(t)
-      case Typeof(e1) =>
-        val t = FreshVar()
-        val t1 = rewrite(e1)
-        hoist += Assign(None, LocalAddr(t), Typeof(t1))
-        Local(t)
-      case Void(e1) =>
-        val t = FreshVar()
-        val t1 = rewrite(e1)
-        hoist += Assign(None, LocalAddr(t), Void(t1))
-        Local(t)
-      case Assign(op, e1, e2) =>
-        val t = FreshVar()
-        val t1 = rewrite(e1)
-        val t2 = rewrite(e2)
-        Assign(op, t1, t2)
-      case Cond(e0, e1, e2) =>
-        val t = FreshVar()
-        val t0 = rewrite(e0)
-        val v1 = new Flatten()
-        val v2 = new Flatten()
-        val t1 = v1.rewrite(e1)
-        val t2 = v2.rewrite(e2)
-        hoist += IfElse(t0, block(v1.hoist.toList :+ Assign(None, LocalAddr(t), t1)), block(v2.hoist.toList :+ Assign(None, LocalAddr(t), t2)))
-        Local(t)
-      case IfElse(e0, s1, s2) =>
-        val t0 = rewrite(e0)
-        val v1 = new Flatten()
-        val v2 = new Flatten()
-        val t1 = v1.rewrite(s1)
-        val t2 = v2.rewrite(s2)
-        IfElse(t0, block(v1.hoist.toList :+ t1), block(v2.hoist.toList :+ t2))
-      case Value(v) =>
-        v
-      case e =>
-        super.rewrite(e)
-    }
-  }
-
   // Hoist variable definitions to the top of the scope.
   // Replace variable definitions with assignments or with nothing if a lambda.
   // Add assignments to nodes that might create objects
@@ -117,7 +52,7 @@ object MakeTrees {
         println(s"HOIST var def $e")
         val e2 = super.rewrite(e)
         hoist += VarDef(x, Undefined())
-        Seq(Assign(None, LocalAddr(x), init), Undefined())
+        Seq(Assign(None, Local(x), init), Undefined())
       case e @ Scope(body) =>
         println(s"rewrite scope $e")
         val oldHoist = hoist.toList
@@ -166,12 +101,7 @@ object MakeTrees {
     var stack: List[Exp] = Nil
 
     // Wrap e in an explicit load expression.
-    def lvalue(e: Exp): Exp = e match {
-      // The following expressions evaluate to addresses and should be wrapped in a load.
-      case Local(x) => LocalAddr(x)
-      case Index(a, i) => IndexAddr(a, i)
-      case e => e
-    }
+    def lvalue(e: Exp): Exp = e
 
     def push(e: Exp): Unit = {
       println(s"push $e")
@@ -627,7 +557,7 @@ object MakeTrees {
     //       }
     //       val ss2 = ss map {
     //         case VarDef(x, e) =>
-    //           Assign(None, LocalAddr(x), e)
+    //           Assign(None, Local(x), e)
     //         case s =>
     //           s
     //       }

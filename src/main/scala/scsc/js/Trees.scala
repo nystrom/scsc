@@ -106,9 +106,6 @@ object Trees {
         case t @ Local(x) =>
           vars += x
           t
-        case t @ LocalAddr(x) =>
-          vars += x
-          t
         case t @ Lambda(xs, e) =>
           vars ++= (fv(e) -- xs)
           t
@@ -252,10 +249,8 @@ object Trees {
   case class Lambda(params: List[Name], body: Exp) extends Exp
   case class Scope(body: Exp) extends Exp
   case class Local(x: Name) extends Exp
-  case class LocalAddr(x: Name) extends Exp
   case class IfElse(test: Exp, pass: Exp, fail: Exp) extends Exp
   case class Index(a: Exp, i: Exp) extends Exp
-  case class IndexAddr(a: Exp, i: Exp) extends Exp
   case class ArrayLit(es: List[Exp]) extends Exp  // HACKED (prototype missing)
 
   case class ObjectLit(es: List[Exp]) extends Exp // HACKED (prototype missing)

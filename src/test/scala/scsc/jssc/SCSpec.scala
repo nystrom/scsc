@@ -87,10 +87,10 @@ class SCSpec extends FlatSpec with Matchers {
     }
   }
 
-  "JSSC" should "optimize pow(x,3) to x*x*x" in {
+  "JSSC" should "optimize pow(a,3) to a*a*a" in {
     val e = Parser.fromString("""{
       function pow(x,n) { if (n==0) return 1; else return x*pow(x,n-1) }
-      pow(x,3)
+      pow(a,3)
     }
     """)
     e match {
@@ -104,12 +104,16 @@ class SCSpec extends FlatSpec with Matchers {
               Seq(
                 VarDef("_v2",Undefined()),
                 Seq(
+                  VarDef("_v3",Undefined()),
                   Seq(
                     Seq(
-                      Assign(None,Residual("_v0"),Binary(Binary.*,Residual("x"),Num(1.0))),
-                      Assign(None,Residual("_v1"),Binary(Binary.*,Residual("x"),Residual("_v0")))),
-                    Assign(None,Residual("_v2"),Binary(Binary.*,Residual("x"),Residual("_v1")))),
-                  Residual("_v2")))))
+                      Seq(
+                        Seq(
+                          Assign(None,Residual("_v0"),Local("a")),
+                          Assign(None,Residual("_v1"),Binary(Binary.*,Residual("_v0"),Num(1.0)))),
+                        Assign(None,Residual("_v2"),Binary(Binary.*,Residual("_v0"),Residual("_v1")))),
+                      Assign(None,Residual("_v3"),Binary(Binary.*,Residual("_v0"),Residual("_v2")))),
+                    Residual("_v3"))))))
         }
 
       case None =>

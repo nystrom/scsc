@@ -78,13 +78,9 @@ object PP {
         show(body)
       case Local(x) =>
         text(x)
-      case LocalAddr(x) =>
-        text(x)
       case IfElse(test, pass, fail) =>
         text("if") <+> parens(show(test)) <> line <> nest(braces(show(pass))) <> line <> text("else") <> line <> nest(braces(show(fail))) <> line
       case Index(a, i) =>
-        show(a) <> brackets(show(i))
-      case IndexAddr(a, i) =>
         show(a) <> brackets(show(i))
       case ArrayLit(es) =>
         text("Array") <> parens(hsep(es, comma))

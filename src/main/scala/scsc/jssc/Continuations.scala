@@ -36,9 +36,6 @@ object Continuations {
   case class EvalArgsForNew(todo: List[Exp], ρ: Env) extends ContFrame {
     override def toString = s"☐(${todo.map(_.show).mkString(", ")})"
   }
-  case class DoCall(fun: Val, thisValue: Val, args: List[Val], residual: Exp, ρ: Env) extends ContFrame {
-    override def toString = s"${fun.show}(${args.map(_.show).mkString(", ")})"
-  }
 
   case class InitProto(fun: Val, args: List[Val], ρ: Env) extends ContFrame
   case class EvalMethodProperty(methodProp: Exp, args: List[Exp], ρ: Env) extends ContFrame
@@ -60,10 +57,6 @@ object Continuations {
   // These we _don't_ handle, instead residualization is done during folding.
 
   // Extensions:
-
-  case class LoadCont(ρ: Env) extends ContFrame {
-    override def toString = s"LOAD ☐"
-  }
 
   // Unary operators
   case class DoUnaryOp(op: Operator, ρ: Env) extends ContFrame {
@@ -94,7 +87,7 @@ object Continuations {
   case class DoThrow() extends ContFrame
 
   // Assignment.
-  case class EvalAssignRhs(op: Option[Operator], rhs: Exp, lhsPath: Exp, ρ: Env) extends ContFrame
+  case class EvalAssignRhs(op: Option[Operator], rhs: Exp, ρ: Env) extends ContFrame
   case class DoAssign(op: Option[Operator], lhs: Val, ρ: Env) extends ContFrame
 
   // ++, --, etc.
