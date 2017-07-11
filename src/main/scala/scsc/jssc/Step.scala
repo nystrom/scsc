@@ -31,7 +31,7 @@ object Step {
   }
 
   case class Halt(v: Val, σ: Store, φ: Effect) extends State {
-    def step = ???
+    def step = this
 
     def residual: Exp = φ match {
       case Effect(_, Undefined()) => v
@@ -47,7 +47,7 @@ object Step {
   }
 
   case class Err(message: String, st: State) extends State {
-    def step = ???
+    def step = this
   }
 
   case class Ev(e: Exp, ρ: Env, σ: Store, φ: Effect, k: Cont) extends State {
