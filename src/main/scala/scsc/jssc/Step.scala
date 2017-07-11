@@ -158,10 +158,10 @@ object Step {
       ////////////////////////////////////////////////////////////////
 
       case Break(label) =>
-        Co(Undefined(), σ, φ, Breaking(label)::k)
+        Breaking(Break(label), σ, φ, k)
 
       case Continue(label) =>
-        Co(Undefined(), σ, φ, Continuing(label)::k)
+        Breaking(Continue(label), σ, φ, k)
 
       ////////////////////////////////////////////////////////////////
       // Blocks.
@@ -364,25 +364,33 @@ object Step {
       case Throw(e) =>
         Ev(e, ρ, σ, φ, DoThrow()::k)
 
+      case TryCatch(e, Nil) =>
+        Ev(e, ρ, σ, φ, k)
+
       case TryCatch(e, cs) =>
         Ev(e, ρ, σ, φ, CatchFrame(cs, ρ)::k)
 
       case TryFinally(e, fin) =>
         Ev(e, ρ, σ, φ, FinallyFrame(fin, ρ)::k)
 
-
+      ////////////////////////////////////////////////////////////////
+      // Delete a property
+      ////////////////////////////////////////////////////////////////
 
       case Delete(Index(a, i)) =>
         Ev(a, ρ, σ, φ, EvalPropertyNameForDel(i, ρ)::k)
 
+      ////////////////////////////////////////////////////////////////
+      // Object and array literals and lambdas.
+      ////////////////////////////////////////////////////////////////
 
       // Create an empty object
-      // Initialize a non-empty object.
       case ObjectLit(Nil) =>
         val loc = Path(FreshLoc().address, ObjectLit(Nil))
         val v = FunObject("object", Eval.getPrimAddress(Prim("Object.prototype")), Nil, None, Nil)
         Co(loc, σ.assign(loc, v, ρ), φ, k)
 
+      // Initialize a non-empty object.
       case ObjectLit(ps) =>
         val x = FreshVar()
         val seq = ps.foldLeft(Assign(None, Local(x), ObjectLit(Nil)): Exp) {
@@ -391,6 +399,17 @@ object Step {
           case _ => ???
         }
         Ev(Seq(seq, Local(x)), ρ + (x -> FreshLoc()), σ, φ, k)
+
+      // Array literals desugar to objects
+      case ArrayLit(es) =>
+        val loc = Path(FreshLoc().address, NewCall(Prim("Array"), Num(es.length)::Nil))
+        val v = FunObject("object", Eval.getPrimAddress(Prim("Array.prototype")), Nil, None, Nil)
+        val x = FreshVar()
+        val seq = es.zipWithIndex.foldLeft(Assign(None, Local(x), loc): Exp) {
+          case (seq, (value, i)) =>
+            Seq(seq, Assign(None, Index(Local(x), StringLit(i.toInt.toString)), value))
+        }
+        Ev(Seq(seq, Seq(Assign(None, Index(Local(x), StringLit("length")), Num(es.length)), Local(x))), ρ, σ.assign(loc, v, ρ), φ, k)
 
       // Put a lambda in the heap.
       case lam @ Lambda(xs, e) =>
@@ -404,17 +423,6 @@ object Step {
         val v2 = FunObject("object", Eval.getPrimAddress(Prim("Object.prototype")), Nil, None, Nil)
         val ρ2 = ρ + (x -> Loc(xloc.address))
         Co(loc, σ.assign(xloc, loc, ρ2).assign(loc, v, ρ2).assign(protoLoc, v2, ρ2), φ, k)
-
-      // Array literals desugar to objects
-      case ArrayLit(es) =>
-        val loc = Path(FreshLoc().address, NewCall(Prim("Array"), Num(es.length)::Nil))
-        val v = FunObject("object", Eval.getPrimAddress(Prim("Array.prototype")), Nil, None, Nil)
-        val x = FreshVar()
-        val seq = es.zipWithIndex.foldLeft(Assign(None, Local(x), loc): Exp) {
-          case (seq, (value, i)) =>
-            Seq(seq, Assign(None, Index(Local(x), StringLit(i.toInt.toString)), value))
-        }
-        Ev(Seq(seq, Seq(Assign(None, Index(Local(x), StringLit("length")), Num(es.length)), Local(x))), ρ, σ.assign(loc, v, ρ), φ, k)
 
       ////////////////////////////////////////////////////////////////
       // Other cases.
@@ -437,9 +445,147 @@ object Step {
     case φ::φs => φs.foldLeft(φ)(Seq)
   }
 
-  case class Co(v: Val, σ: Store, φ: Effect, k: Cont) extends State {
-    require(v.isValueOrResidual, s"$v is not a value or residual")
+  // We enter a stuck state when a Co state cannot make progress.
+  // This happens in a few cases:
+  // - a BranchCont where the value is a residual
+  // - Throwing where the exception is a residual
+  // - when the whistle blows and Meta changes the state to Stuck
+  case class Stuck(v: Val, σ: Store, φ: Effect, k: Cont) extends State {
+    override def toString = s"""Stuck
+  v = $v
+  σ = ${σ.toVector.sortBy(_._1.address).mkString("{", "\n       ", "}")}
+  φ = $φ
+  k = ${k.mkString("[", "\n       ", "]")}"""
 
+    def step = this
+  }
+
+  // The Throwing state just pops continuations until hitting a handler.
+  case class Throwing(v: Val, σ: Store, φ: Effect, k: Cont) extends State {
+    override def toString = s"""Throwing
+  v = $v
+  σ = ${σ.toVector.sortBy(_._1.address).mkString("{", "\n       ", "}")}
+  φ = $φ
+  k = ${k.mkString("[", "\n       ", "]")}"""
+
+    def step = k match {
+      // if we hit the bottom of the stack, report an error.
+      case Nil => Err(s"uncaught exception $v", this)
+
+      // If we're throwing and we hit a finally block,
+      // evaluate the finally block and then rethrow.
+      case FinallyFrame(fin, ρ1)::k =>
+        Ev(fin, ρ1, σ, φ, FocusCont(v)::DoThrow()::k)
+
+      // If we hit an empty catch frame, just keep propagating the exception.
+      case CatchFrame(Nil, ρ1)::k =>
+        Throwing(v, σ, φ, k)
+
+      // Conditional catch.
+      // We have to be careful to move the remaining catches into the else part of the if below.
+      case CatchFrame(Catch(ex, Some(test), body)::cs, ρ1)::k =>
+        val loc = FreshLoc()
+        val path = Path(loc.address, Local(ex))
+        val ρ2 = ρ1 + (ex -> loc)
+        val rethrow = cs match {
+          case Nil => Throw(v)
+          case cs => TryCatch(Throw(v), cs)
+        }
+        Co(v, σ.assign(path, Undefined(), ρ2), φ, DoAssign(None, path, ρ2)::SeqCont(IfElse(test, body, rethrow), ρ2)::k)
+
+      // Unconditional catch
+      case CatchFrame(Catch(ex, None, body)::cs, ρ1)::k =>
+        val loc = FreshLoc()
+        val path = Path(loc.address, Local(ex))
+        val ρ2 = ρ1 + (ex -> loc)
+        Co(v, σ.assign(path, Undefined(), ρ2), φ, DoAssign(None, path, ρ2)::SeqCont(body, ρ2)::k)
+
+      // Push reset continuations out past the catch frame.
+      case ResetBranch(test, σ2, φ0, ρ0, kf)::k2::k =>
+        Throwing(v, σ, φ, k2::ResetBranch(test, σ2, φ0, ρ0, kf :+ k2)::k)
+
+      // In all other cases, just pop the frame.
+      case _::k =>
+        Throwing(v, σ, φ, k)
+    }
+  }
+
+  // The Returning state just pops continuations until hitting a call frame.
+  case class Returning(v: Val, σ: Store, φ: Effect, k: Cont) extends State {
+    override def toString = s"""Returning
+  v = $v
+  σ = ${σ.toVector.sortBy(_._1.address).mkString("{", "\n       ", "}")}
+  φ = $φ
+  k = ${k.mkString("[", "\n       ", "]")}"""
+
+    def step = k match {
+      // if we hit the bottom of the stack, report an error.
+      case Nil => Halt(v, φ)
+
+      // If we're throwing and we hit a finally block,
+      // evaluate the finally block and then rethrow.
+      case FinallyFrame(fin, ρ1)::k =>
+        Ev(fin, ρ1, σ, φ, FocusCont(v)::DoReturn()::k)
+
+      // Once we hit the call frame, evaluate the return value.
+      case CallFrame(ρ1)::k =>
+        Co(v, σ, φ, k)
+
+      // If we hit a reset frame, we had the following situation:
+      // f() { if (...) return 1 else ... }
+      // rather than residualizing the return, we just extend the continuation
+      // to reset past the call.
+
+      // Push reset continuations out past the call frame.
+      case ResetBranch(test, σ2, φ0, ρ0, kf)::k2::k =>
+        Returning(v, σ, φ, k2::ResetBranch(test, σ2, φ0, ρ0, kf :+ k2)::k)
+
+      // In all other cases, just pop the frame.
+      case _::k =>
+        Returning(v, σ, φ, k)
+    }
+  }
+
+  // The Breaking state just pops continuations until hitting a call frame.
+  case class Breaking(jump: Exp, σ: Store, φ: Effect, k: Cont) extends State {
+    override def toString = s"""Breaking
+  e = $jump
+  σ = ${σ.toVector.sortBy(_._1.address).mkString("{", "\n       ", "}")}
+  φ = $φ
+  k = ${k.mkString("[", "\n       ", "]")}"""
+
+    def step = k match {
+      // if we hit the bottom of the stack, evaluate to undefined.
+      case Nil => Err("break or continue outside a loop", this)
+
+      // If we're breaking and we hit a finally block,
+      // evaluate the finally block and then rebreak.
+      case FinallyFrame(fin, ρ1)::k =>
+        Ev(fin, ρ1, σ, φ, SeqCont(jump, ρ1)::k)
+
+      // Push reset continuations out past the loop frame.
+      case ResetBranch(test, σ2, φ0, ρ0, kf)::k2::k =>
+        Breaking(jump, σ, φ, k2::ResetBranch(test, σ2, φ0, ρ0, kf :+ k2)::k)
+
+      case BreakFrame(_)::k if jump == Break(None) =>
+        Co(Undefined(), σ, φ, k)
+
+      case ContinueFrame(_)::k if jump == Continue(None) =>
+        Co(Undefined(), σ, φ, k)
+
+      case BreakFrame(Some(x))::k if jump == Break(Some(x)) =>
+        Co(Undefined(), σ, φ, k)
+
+      case ContinueFrame(Some(x))::k if jump == Break(Some(x)) =>
+        Co(Undefined(), σ, φ, k)
+
+      // In all other cases, just pop the frame.
+      case _::k =>
+        Breaking(jump, σ, φ, k)
+    }
+  }
+
+  case class Co(v: Val, σ: Store, φ: Effect, k: Cont) extends State {
     override def toString = s"""Co
   v = $v
   σ = ${σ.toVector.sortBy(_._1.address).mkString("{", "\n       ", "}")}
@@ -548,9 +694,9 @@ object Step {
             // If the result cannot be converted to a boolean, we residualize.
             // We first run the true branch, discarding all the effects accumulated so far
             // and simulating a true test on the store.
-            // We then Reset the store, this time simulating a false test,
+            // We then ResetBranch the store, this time simulating a false test,
             // then run the false branch.
-            // We then Merge the stores and effects, prepending the effects so far.
+            // We then MergeBranch the stores and effects, prepending the effects so far.
 
             // We have two options here.
             // - LONG_CONTINUATIONS.
@@ -568,15 +714,15 @@ object Step {
             val LONG_CONTINUATIONS = false
 
             if (LONG_CONTINUATIONS)
-              Co(v, σ1, Machine.φ0, (kt ++ k) :+ Reset(v, σ2, φ, ρ, kf ++ k))
+              Co(v, σ1, Machine.φ0, (kt ++ k) :+ ResetBranch(v, σ2, φ, ρ, kf ++ k))
             else
-              Co(v, σ1, Machine.φ0, kt ++ (Reset(v, σ2, φ, ρ, kf)::k))
+              Co(v, σ1, Machine.φ0, kt ++ (ResetBranch(v, σ2, φ, ρ, kf)::k))
         }
 
-      case Reset(test, σ2, φ0, ρ0, kf)::k =>
-        Co(test, σ2, Machine.φ0, kf ++ (Merge(v, σ, φ, test, φ0, ρ0)::k))
+      case ResetBranch(test, σ2, φ0, ρ0, kf)::k =>
+        Co(test, σ2, Machine.φ0, kf ++ (MergeBranch(v, σ, φ, test, φ0, ρ0)::k))
 
-      case Merge(v1, σ1, φ1, test, φ0, ρ0)::k =>
+      case MergeBranch(v1, σ1, φ1, test, φ0, ρ0)::k =>
         val v2 = v
         val σ2 = σ
         val φ2 = φ
@@ -598,24 +744,10 @@ object Step {
           Co(Residual(x), σ1.merge(σ2, ρ0), φ, k)
         }
 
-      case Breaking(None)::BreakFrame(_)::k =>
-        Co(v, σ, φ, k)
-      case Continuing(None)::ContinueFrame(_)::k =>
-        Co(v, σ, φ, k)
-
-      case Breaking(Some(x))::BreakFrame(Some(y))::k if x == y =>
-        Co(v, σ, φ, k)
-      case Continuing(Some(x))::ContinueFrame(Some(y))::k if x == y =>
-        Co(v, σ, φ, k)
-
-      case Breaking(label)::_::k =>
-        Co(v, σ, φ, Breaking(label)::k)
-      case Continuing(label)::_::k =>
-        Co(v, σ, φ, Continuing(label)::k)
-
       // discard useless break and continue frames
       case BreakFrame(_)::k =>
         Co(v, σ, φ, k)
+        
       case ContinueFrame(_)::k =>
         Co(v, σ, φ, k)
 
@@ -823,23 +955,7 @@ object Step {
       ////////////////////////////////////////////////////////////////
 
       case DoReturn()::k =>
-        Co(Undefined(), σ, φ, Returning(v)::k)
-
-      // Once we hit the call frame, evaluate the return value.
-      case Returning(v1)::CallFrame(ρ1)::k =>
-        Co(v1, σ, φ, k)
-
-      // If we hit a reset frame, we had the following situation:
-      // f() { if (...) return 1 else ... }
-      // rather than residualizing the return, what we do is extend
-      // the continuation.
-
-      // Push reset continuations out past the call frame.
-      case Returning(v1)::Reset(test, σ2, φ0, ρ0, kf)::k2::k =>
-        Co(v, σ, φ, Returning(v1)::k2::Reset(test, σ2, φ0, ρ0, kf :+ k2)::k)
-
-      case Returning(v1)::_::k =>
-        Co(v, σ, φ, Returning(v1)::k)
+        Returning(v, σ, φ, k)
 
       // If we run off the end of the function body, act like we returned normally.
       case CallFrame(ρ1)::k =>
@@ -851,19 +967,15 @@ object Step {
       ////////////////////////////////////////////////////////////////
 
       case DoThrow()::k =>
-        Co(Undefined(), σ, φ, Throwing(v)::k)
-
-      // If we're throwing and we hit a try block,
-      // evaluate the finally block and rethrow.
-      case Throwing(e)::FinallyFrame(fin, ρ1)::k =>
-        Ev(fin, ρ1, σ, φ, Throwing(e)::k)
-
-      case Throwing(e)::_::k =>
-        Co(v, σ, φ, Throwing(e)::k)
+        Throwing(v, σ, φ, k)
 
       // Run the finally block, if any. Then restore the value.
       case FinallyFrame(fin, ρ1)::k =>
         Ev(fin, ρ1, σ, φ, FocusCont(v)::k)
+
+      // If not throwing, just discard catch frames.
+      case CatchFrame(cs, ρ1)::k =>
+        Co(v, σ, φ, k)
 
       ////////////////////////////////////////////////////////////////
       // Objects and arrays.

@@ -41,13 +41,12 @@ object Continuations {
   case class EvalMethodProperty(methodProp: Exp, args: List[Exp], ρ: Env) extends ContFrame
 
   case class CallFrame(ρ: Env) extends ContFrame
-  case class ReturnFrame() extends ContFrame
   case class ThrowFrame() extends ContFrame
   case class CatchFrame(cs: List[Exp], ρ: Env) extends ContFrame
   case class FinallyFrame(fin: Exp, ρ: Env) extends ContFrame
 
-  case class Reset(test: Val, σ2: Store, φ0: Effect, ρ0: Env, kf: Cont) extends ContFrame
-  case class Merge(v1: Val, σ1: Store, φ1: Effect, test: Val, φ0: Effect, ρ0: Env) extends ContFrame
+  case class ResetBranch(test: Val, σ2: Store, φ0: Effect, ρ0: Env, kf: Cont) extends ContFrame
+  case class MergeBranch(v1: Val, σ1: Store, φ1: Effect, test: Val, φ0: Effect, ρ0: Env) extends ContFrame
 
   // Residualization:
   // For each reduction continuation, i.e., the ones that "Do" something,
@@ -79,10 +78,6 @@ object Continuations {
   case class BreakFrame(label: Option[Name]) extends ContFrame
   case class ContinueFrame(label: Option[Name]) extends ContFrame
 
-  case class Breaking(label: Option[Name]) extends ContFrame
-  case class Continuing(label: Option[Name]) extends ContFrame
-  case class Returning(v: Val) extends ContFrame
-  case class Throwing(v: Val) extends ContFrame
   case class DoReturn() extends ContFrame
   case class DoThrow() extends ContFrame
 
@@ -95,10 +90,6 @@ object Continuations {
 
   // typeof
   case class DoTypeof(ρ: Env) extends ContFrame
-
-  case class InitObject(loc: Loc, todo: List[Exp], done: List[Exp], ρ: Env) extends ContFrame
-  case class WrapProperty(k: Exp, ρ: Env) extends ContFrame
-  case class EvalPropertyValue(v: Val, ρ: Env) extends ContFrame
 
   // delete a[i]
   case class EvalPropertyNameForDel(i: Exp, ρ: Env) extends ContFrame
