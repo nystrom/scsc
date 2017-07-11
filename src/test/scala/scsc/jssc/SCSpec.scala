@@ -123,7 +123,80 @@ class SCSpec extends FlatSpec with Matchers {
 
   "JSSC" should "evaluate try/catch" in {
     val e = Parser.fromString("""{
+      try { throw 8 } catch (e) { e }
+    }
+    """)
+    e match {
+      case Some(e) =>
+        val result = CESK.eval(e, 100)
+        result shouldBe (Num(8.0))
+      case None =>
+        fail
+    }
+  }
+
+  "JSSC" should "evaluate try/catch with conditional catch" in {
+    val e = Parser.fromString("""{
       try { throw 1 } catch (e if e == 1) { 8 }
+    }
+    """)
+    e match {
+      case Some(e) =>
+        val result = CESK.eval(e, 100)
+        result shouldBe (Num(8.0))
+      case None =>
+        fail
+    }
+  }
+
+  "JSSC" should "evaluate nested try/catch with failing conditional catch" in {
+    val e = Parser.fromString("""{
+      try { try { throw 8 } catch (e if e == 1) { 999 } } catch (e) { e }
+    }
+    """)
+    e match {
+      case Some(e) =>
+        val result = CESK.eval(e, 100)
+        result shouldBe (Num(8.0))
+      case None =>
+        fail
+    }
+  }
+
+  "JSSC" should "evaluate try/catch with failing conditional catch" in {
+    val e = Parser.fromString("""{
+      try { throw 8 } catch (e if e == 1) { 999 } catch (e) { e }
+    }
+    """)
+    e match {
+      case Some(e) =>
+        val result = CESK.eval(e, 100)
+        result shouldBe (Num(8.0))
+      case None =>
+        fail
+    }
+  }
+
+
+  "JSSC" should "evaluate try/finally with return" in {
+    val e = Parser.fromString("""{
+      function f() { try { return 1 } finally { return 8 } }
+      f()
+    }
+    """)
+    e match {
+      case Some(e) =>
+        val result = CESK.eval(e, 100)
+        result shouldBe (Num(8.0))
+      case None =>
+        fail
+    }
+  }
+
+  "JSSC" should "evaluate try/finally with throw" in {
+    val e = Parser.fromString("""{
+      function f() { try { throw 1 } finally { return 8 } }
+      f()
     }
     """)
     e match {
