@@ -121,6 +121,104 @@ class SCSpec extends FlatSpec with Matchers {
     }
   }
 
+  "JSSC" should "evaluate try/catch" in {
+    val e = Parser.fromString("""{
+      try { throw 1 } catch (e if e == 1) { 8 }
+    }
+    """)
+    e match {
+      case Some(e) =>
+        val result = CESK.eval(e, 100)
+        result shouldBe (Num(8.0))
+      case None =>
+        fail
+    }
+  }
+
+  "JSSC" should "evaluate break" in {
+    val e = Parser.fromString("""{
+      while (true) break; 8
+    }
+    """)
+    e match {
+      case Some(e) =>
+        val result = CESK.eval(e, 100)
+        result shouldBe (Num(8.0))
+      case None =>
+        fail
+    }
+  }
+
+  "JSSC" should "evaluate for loops" in {
+    val e = Parser.fromString("""{
+      for (var i = 0; i < 8; i++) { } ; i
+    }
+    """)
+    e match {
+      case Some(e) =>
+        val result = CESK.eval(e, 100)
+        result shouldBe (Num(8.0))
+      case None =>
+        fail
+    }
+  }
+
+  "JSSC" should "evaluate for loops with continue" in {
+    val e = Parser.fromString("""{
+      for (var i = 0; i < 8; i++) { if (i < 8) continue; i = 999 } ; i
+    }
+    """)
+    e match {
+      case Some(e) =>
+        val result = CESK.eval(e, 100)
+        result shouldBe (Num(8.0))
+      case None =>
+        fail
+    }
+  }
+
+  "JSSC" should "evaluate while loops" in {
+    val e = Parser.fromString("""{
+      var i = 0; while (i < 8) { i++; } ; i
+    }
+    """)
+    e match {
+      case Some(e) =>
+        val result = CESK.eval(e, 100)
+        result shouldBe (Num(8.0))
+      case None =>
+        fail
+    }
+  }
+
+  "JSSC" should "evaluate do-while loops" in {
+    val e = Parser.fromString("""{
+      var i = 16; do { i-- } while (i != 8); i
+    }
+    """)
+    e match {
+      case Some(e) =>
+        val result = CESK.eval(e, 100)
+        result shouldBe (Num(8.0))
+      case None =>
+        fail
+    }
+  }
+
+  "JSSC" should "evaluate do-while loops with break" in {
+    val e = Parser.fromString("""{
+      var i = 9; do { i--; break } while (i); i
+    }
+    """)
+    e match {
+      case Some(e) =>
+        val result = CESK.eval(e, 100)
+        result shouldBe (Num(8.0))
+      case None =>
+        fail
+    }
+  }
+
   "JSSC" should "supercompile map inc" ignore {
     val e = Parser.fromString("""{
       function cons(head, tail) {
