@@ -562,8 +562,8 @@ object Step {
             // program, although the former might result in better
             // performance.
 
-            val σ1 = extendWithCond(v, σ, ρ, true)
-            val σ2 = extendWithCond(v, σ, ρ, false)
+            val σ1 = Eval.extendWithCond(v, σ, ρ, true)
+            val σ2 = Eval.extendWithCond(v, σ, ρ, false)
 
             val LONG_CONTINUATIONS = false
 
