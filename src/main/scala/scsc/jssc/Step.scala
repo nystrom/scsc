@@ -1004,9 +1004,7 @@ object Step {
                         Co(v, σ, φ, k)
                       case Some(ObjClosure(funObject, ρ2)) =>
                         MakeResidual(Index(path, i), ρ1, k)
-                      case Some(UnknownClosure()) =>
-                        MakeResidual(Index(path, i), ρ1, k)
-                      case None =>
+                      case Some(UnknownClosure()) | None =>
                         MakeResidual(Index(path, i), ρ1, k)
                     }
                   case None =>
