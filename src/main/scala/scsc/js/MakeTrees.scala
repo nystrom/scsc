@@ -915,14 +915,6 @@ object MakeTrees {
 
     // Callback for leaving a TryNode
     override def leaveTryNode(n: ir.TryNode): ir.Node = {
-      val f = {
-        if (n.getFinallyBody == null)
-          None
-        else {
-          val v = pop
-          Some(v)
-        }
-      }
       val es = ListBuffer.empty[Catch]
       for (s <- n.getCatchBlocks.toList) {
         val c = pop
@@ -934,12 +926,24 @@ object MakeTrees {
         }
       }
       val e = pop
+
+      // finally block is visited first
+      val f = {
+        if (n.getFinallyBody == null)
+          None
+        else {
+          val v = pop
+          Some(v)
+        }
+      }
+
       val e2 = f match {
-        case Some(v) =>
-          TryFinally(e, v)
+        case Some(fin) =>
+          TryFinally(e, fin)
         case None =>
           e
       }
+
       val cs2 = f match {
         case Some(v) =>
           es.toList.reverse map {
@@ -949,10 +953,12 @@ object MakeTrees {
         case None =>
           es.toList.reverse
       }
+
       cs2 match {
         case Nil => push(e2)
         case cs2 => push(TryCatch(e2, cs2))
       }
+      
       n
     }
 
