@@ -91,6 +91,7 @@ object CESK {
     }
   }
 
+  // remove unused assignments and variable declarations.
   def removeDeadCode(e: Exp): Exp = {
     var used: Set[Name] = Set()
     var changed = true
@@ -112,9 +113,26 @@ object CESK {
               used += x
             }
             e
-          case e @ VarDef(x, _) =>
+          case e @ VarDef(x, _: Lambda) =>
             // don't recurse on variable definitions
             // unless the variable is already known to be used
+            if (used contains x) {
+              super.rewrite(e)
+            }
+            else {
+              e
+            }
+          case e @ VarDef(x, _: Undefined) =>
+            // don't recurse on variable definitions
+            // unless the variable is already known to be used
+            if (used contains x) {
+              super.rewrite(e)
+            }
+            else {
+              e
+            }
+          case e @ Assign(None, Residual(x), Local(y)) =>
+            // FIXME: extend this to all pure expressions
             if (used contains x) {
               super.rewrite(e)
             }
@@ -131,6 +149,13 @@ object CESK {
     object RemoveUnused extends Rewriter {
       override def rewrite(e: Exp) = super.rewrite(e) match {
         case e @ VarDef(x, _) =>
+          if (used contains x) {
+            e
+          }
+          else {
+            Undefined()
+          }
+        case e @ Assign(None, Residual(x), _) =>
           if (used contains x) {
             e
           }
@@ -211,62 +236,111 @@ object CESK {
     // Run for maxSteps. If we terminate, great.
     // Otherwise, _restart_ and run with termination checking enabled,
     // which might cause an earlier termination.
-
     var attempt = 1
 
     while (true) {
-      var t = if (attempt == 1) maxSteps else absoluteMax
+      var t = if (attempt == 1) maxSteps*10 else absoluteMax
       var s = inject(e)
+      s = drive(s, Nil, t)
 
-      val hist: ListBuffer[St] = ListBuffer()
-
-      if (attempt != 1)
-        hist += s
-
-      while (t > 0) {
-        t -= 1
-        println(s)
-
-        // println("term " + toTerm(s).map(_.show).getOrElse("FAIL"))
-
-        s match {
-          // stop when we have a value with the empty continuation.
-          case s @ Halt(v, σ, φ) =>
-            return s.residual
-
-          case Err(message, s) =>
-            println(s"FAIL $message in $s")
-            return Undefined()
-
-          case s0 =>
-            val s1 = step(s0)
-            if (attempt == 1) {
-              s = s1
-            }
-            else {
-              s = checkHistory(hist, s1)
-              hist += s
-            }
-        }
+      s match {
+        case s @ Halt(v, σ, φ) =>
+          return s.residual
+        case Err(msg, s) =>
+          println(s"FAIL $msg in $s")
+          return Undefined()
+        case s =>
+          toTerm(s) match {
+            case Some((t1, φ1, _)) =>
+              return Halt(t1, σ0, φ1).residual
+            case None =>
+              println(s"FAIL could reduce $s to term")
+              return Undefined()
+          }
       }
-
-      if (attempt != 1) {
-        // timeout
-        toTerm(s) match {
-          case Some((v, φ, n)) =>
-            return Halt(v, σ0, φ).residual
-          case None =>
-            println(s"FAIL cannot reduce $s to a term")
-            return Undefined()
-        }
-      }
-
-      // Go again! Performing termination checking as we go.
-      attempt += 1
     }
 
-    println(s"fell off the end")
-    Undefined()
+    ???
+  }
+
+  // This is unnecessarily complicated. Better would be to
+  // maintain a frontier of states and just advance the frontier.
+  // Merging non-deterministically (arbitrarily) when the two states
+  // in the frontier have the same continuation.
+  // We can insert barriers to force syncing.
+  // Hmmm...
+  def drive(initialState: St, hist: List[St], maxSteps: Int): FinalState = {
+    var t = maxSteps
+    var s = initialState
+
+    while (true) {
+      t -= 1
+
+      println(s"DRIVE $s")
+
+      s match {
+        case s0 @ Halt(v, σ, φ) =>
+          return s0
+
+        case s0 @ Err(msg, s) =>
+          return s0
+
+        case s0 @ Stuck(v, σ, φ, Nil) =>
+          s = Halt(v, σ, φ)
+
+        case s0 @ Stuck(v, σ, φ, _) =>
+          val (ss, k, combine) = s0.split
+
+          var kont = k
+          var states = ss
+
+          while (states.length > 1) {
+            println("SPLIT")
+            states foreach { println }
+            println(s"kont $kont")
+
+            val driven = states map {
+              s => drive(s, hist :+ s, t)
+            }
+
+            println("DRIVEN")
+            driven foreach { println }
+
+            combine(driven, kont) match {
+              case (ss, k) =>
+                states = ss
+                kont = k
+            }
+
+            println("MERGED")
+            states foreach { println }
+            println(s"kont $kont")
+          }
+
+          states match {
+            case Nil =>
+              s = Err(s"could not reconcile final states $states", s0)
+            case s1::Nil =>
+              s = s1
+            case _ =>
+              s = Err(s"could not reconcile final states $ss", s0)
+          }
+
+          println("AFTER")
+          println(s"s = $s")
+
+        // If we time out, go to the stuck state
+        case Co(v, σ, φ, k) if t <= 0 =>
+          s = Stuck(v, σ, φ, k)
+
+        // Otherwise take a step.
+        case s0 =>
+          val s1 = step(s0)
+          s = s1
+      }
+    }
+
+    return Err("unreachable state", s)
   }
 
   def checkHistory(hist: ListBuffer[St], s: St): St = s match {

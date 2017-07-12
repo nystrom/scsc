@@ -292,6 +292,89 @@ class SCSpec extends FlatSpec with Matchers {
     }
   }
 
+  "JSSC" should "evaluate if true" in {
+    val e = Parser.fromString("""{
+      true ? 8 : 999
+    }
+    """)
+    e match {
+      case Some(e) =>
+        val result = CESK.eval(e, 100)
+        result shouldBe (Num(8.0))
+      case None =>
+        fail
+    }
+  }
+
+  "JSSC" should "evaluate if false" in {
+    val e = Parser.fromString("""{
+      false ? 999 : 8
+    }
+    """)
+    e match {
+      case Some(e) =>
+        val result = CESK.eval(e, 100)
+        result shouldBe (Num(8.0))
+      case None =>
+        fail
+    }
+  }
+
+  "JSSC" should "evaluate if constant cond" in {
+    val e = Parser.fromString("""{
+      (999 < 8) ? 999 : 8
+    }
+    """)
+    e match {
+      case Some(e) =>
+        val result = CESK.eval(e, 100)
+        result shouldBe (Num(8.0))
+      case None =>
+        fail
+    }
+  }
+
+  "JSSC" should "evaluate if residual with merge" in {
+    val e = Parser.fromString("""{
+      x ? 8 : 8
+    }
+    """)
+    e match {
+      case Some(e) =>
+        val result = CESK.eval(e, 100)
+        result shouldBe (Num(8.0))
+      case None =>
+        fail
+    }
+  }
+
+  "JSSC" should "evaluate if residual with non-merge" in {
+    val e = Parser.fromString("""{
+      x ? 8 : 999
+    }
+    """)
+    e match {
+      case Some(e) =>
+        val result = CESK.eval(e, 100)
+        result should matchPattern {
+          case Seq(
+            VarDef(x1,Undefined()),
+            Seq(
+              VarDef(y1,Undefined()),
+              Seq(
+                Seq(
+                  Assign(None,Residual(x2),Local("x")),
+                  IfElse(
+                    Residual(x3),
+                    Assign(None,Residual(y2),Num(8.0)),
+                    Assign(None,Residual(y3),Num(999.0)))),
+                Residual(y4)))) if x1 == x2 && x2 == x3 && y1 == y2 && y2 == y3 && y3 == y4 && x1 != y1 =>
+        }
+      case None =>
+        fail
+    }
+  }
+
   "JSSC" should "supercompile map inc" ignore {
     val e = Parser.fromString("""{
       function cons(head, tail) {

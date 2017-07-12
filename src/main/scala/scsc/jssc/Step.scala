@@ -12,6 +12,10 @@ object Step {
   import Residualization._
   import CESK._
 
+  // Options: use the Stuck continuation.
+  val STUCK = true
+  val LONG_CONTINUATIONS = false
+
   import org.bitbucket.inkytonik.kiama.util.Counter
 
   object CallCounter extends Counter {
@@ -30,9 +34,11 @@ object Step {
     def step: State
   }
 
-  case class Halt(v: Val, σ: Store, φ: Effect) extends State {
+  sealed trait FinalState extends State {
     def step = this
+  }
 
+  case class Halt(v: Val, σ: Store, φ: Effect) extends FinalState {
     def residual: Exp = φ match {
       case Effect(_, Undefined()) => v
       case Effect(vars, e) =>
@@ -46,8 +52,7 @@ object Step {
     }
   }
 
-  case class Err(message: String, st: State) extends State {
-    def step = this
+  case class Err(message: String, st: State) extends FinalState {
   }
 
   case class Ev(e: Exp, ρ: Env, σ: Store, φ: Effect, k: Cont) extends State {
@@ -450,17 +455,16 @@ object Step {
   // - a BranchCont where the value is a residual
   // - Unwinding throw where the exception is a residual
   // - when the whistle blows and Meta changes the state to Stuck
-  case class Stuck(v: Val, σ: Store, φ: Effect, k: Cont) extends State {
+  case class Stuck(v: Val, σ: Store, φ: Effect, k: Cont) extends FinalState {
     override def toString = s"""Stuck
   v = $v
   σ = ${σ.toVector.sortBy(_._1.address).mkString("{", "\n       ", "}")}
   φ = $φ
   k = ${k.mkString("[", "\n       ", "]")}"""
 
-    // stuck states don't advance
-    def step = this
+    type Merger = (List[State], Cont) => (List[State], Cont)
 
-    def split: (List[State], PartialFunction[List[State], List[State]]) = k match {
+    def split: (List[State], Cont, Merger) = k match {
       case BranchCont(kt, kf, ρ)::k =>
         // If the result cannot be converted to a boolean, we residualize.
         // We first run the true branch, discarding all the effects accumulated so far
@@ -479,106 +483,101 @@ object Step {
         // because of the information loss after the join even through
         // there's exponential code growth.
 
-        val LONG_CONTINUATIONS = false
-
         if (LONG_CONTINUATIONS) {
-          splitBranch(ρ, kt ++ k, kf ++ k, Nil)
+          (splitBranch(ρ, kt ++ k, kf ++ k), Nil, mergeBranch(v, ρ, φ) _)
         }
         else {
-          splitBranch(ρ, kt, kf, k)
+          (splitBranch(ρ, kt, kf), k, mergeBranch(v, ρ, φ) _)
         }
+
+      case k =>
+        (Nil, k, { case _ => (List(Err("nothing to merge", this)), Nil) })
     }
 
-    def splitBranch(ρ: Env, kt: Cont, kf: Cont, k: Cont): (List[State], PartialFunction[List[State], List[State]]) = {
+    def splitBranch(ρ: Env, kt: Cont, kf: Cont): List[State] = {
       val test = v
       val σ1 = Eval.extendWithCond(test, σ, ρ, true)
       val σ2 = Eval.extendWithCond(test, σ, ρ, false)
-
-      (
-        List(Co(test, σ1, Machine.φ0, kt), Co(test, σ2, Machine.φ0, kf)), {
-          // Both branches halted normally.
-          // Merge the values and resume conputation with k.
-          case List(Halt(v1, σ1, φ1), Halt(v2, σ2, φ2)) =>
-            if (v1 == v2) {
-              // If the values are the same, just use them.
-              val φ = φ0.extend(φ1.vars ++ φ2.vars, IfElse(test, φ1.body, φ2.body))
-              List(Co(v1, σ1.merge(σ2, ρ0), φ, k))
-            }
-            else {
-              // Otherwise create a fresh residual variable
-              // and then assign the values at the end of each branch.
-              // cf. removing SSA.
-              val x = FreshVar()
-              val a1 = Assign(None, Residual(x), v1)
-              val a2 = Assign(None, Residual(x), v2)
-
-              val φ = φ0.extend(φ1.vars ++ φ2.vars, IfElse(test, Seq(φ1.body, a1), Seq(φ2.body, a2)))
-              List(Co(Residual(x), σ1.merge(σ2, ρ0), φ, k))
-            }
-
-          // Both branches halted abnormally.
-          // We can try to merge the states and continue unwinding the stack.
-          case List(Err(_, Unwinding(jump1, σ1, φ1, Nil)), Err(_, Unwinding(jump2, σ2, φ2, Nil))) =>
-            if (jump1 == jump2) {
-              // exactly the same jump
-              val φ = φ0.extend(φ1.vars ++ φ2.vars, IfElse(test, φ1.body, φ2.body))
-              List(Unwinding(jump1, σ1.merge(σ2, ρ0), φ, k))
-            }
-            else {
-              // try to merge the jumps
-              (jump1, jump2) match {
-                case (Return(Some(v1)), Return(Some(v2))) =>
-                  val x = FreshVar()
-                  val a1 = Assign(None, Residual(x), v1)
-                  val a2 = Assign(None, Residual(x), v2)
-                  val φ = φ0.extend(φ1.vars ++ φ2.vars, IfElse(test, Seq(φ1.body, a1), Seq(φ2.body, a2)))
-                  List(Unwinding(Return(Some(Residual(x))), σ1.merge(σ2, ρ0), φ, k))
-
-                case (Throw(v1), Throw(v2)) =>
-                  val x = FreshVar()
-                  val a1 = Assign(None, Residual(x), v1)
-                  val a2 = Assign(None, Residual(x), v2)
-                  val φ = φ0.extend(φ1.vars ++ φ2.vars, IfElse(test, Seq(φ1.body, a1), Seq(φ2.body, a2)))
-                  List(Unwinding(Throw(Residual(x)), σ1.merge(σ2, ρ0), φ, k))
-
-                case _ =>
-                  // cannot merge the jumps
-                  // pull in a frame from after the merge point
-                  k match {
-                    case k::ks =>
-                      List(Unwinding(jump1, σ1, φ1, k::Nil), Unwinding(jump2, σ2, φ2, k::Nil))
-                    case Nil =>
-                      List(Err(s"cannot merge states for $jump1 and $jump2", this))
-                  }
-              }
-            }
-
-          case List(Err(_, Unwinding(jump1, σ1, φ1, Nil)), Halt(v2, σ2, φ2)) =>
-            // one branch completed abnormally, the other normally.
-            // pull in a frame from after the merge point
-            k match {
-              case k::ks =>
-                List(Unwinding(jump1, σ1, φ1, k::Nil), Co(v2, σ2, φ2, k::Nil))
-              case Nil =>
-                List(Err(s"cannot merge states for $jump1 and $v2", this))
-            }
-
-          case List(Halt(v1, σ2, φ2), Err(_, Unwinding(jump2, σ1, φ1, Nil))) =>
-            // one branch completed abnormally, the other normally.
-            // pull in a frame from after the merge point
-            k match {
-              case k::ks =>
-                List(Co(v1, σ1, φ1, k::Nil), Unwinding(jump2, σ2, φ2, k::Nil))
-              case Nil =>
-                List(Err(s"cannot merge states for $v1 and $jump2", this))
-            }
-
-          // error
-          case List(_, Err(msg, s)) => List(Err(msg, s))
-          case List(Err(msg, s), _) => List(Err(msg, s))
-        }
-      )
+      List(Co(test, σ1, Machine.φ0, kt), Co(test, σ2, Machine.φ0, kf))
     }
+
+    def mergeBranch(test: Exp, ρ0: Env, φ0: Effect)(ss: List[State], k: Cont): (List[State], Cont) = {
+      (ss, k) match {
+        // Both branches halted normally.
+        // Merge the values and resume conputation with k.
+        case (List(Halt(v1, σ1, φ1), Halt(v2, σ2, φ2)), k) if v1 == v2 =>
+          // If the values are the same, just use them.
+          (φ1.body, φ2.body) match {
+            case (Undefined(), Undefined()) =>
+              // If the branches had no effects, we can just dicard them.
+              (List(Co(v1, σ1.merge(σ2, ρ0), φ0, k)), Nil)
+            case (s1, s2) =>
+              val φ = φ0.extend(φ1.vars ++ φ2.vars, IfElse(test, s1, s2))
+              (List(Co(v1, σ1.merge(σ2, ρ0), φ, k)), Nil)
+          }
+
+        case (List(Halt(v1, σ1, φ1), Halt(v2, σ2, φ2)), k) =>
+          // Otherwise create a fresh residual variable
+          // and then assign the values at the end of each branch.
+          // cf. removing SSA.
+          val x = FreshVar()
+          val a1 = Assign(None, Residual(x), v1)
+          val a2 = Assign(None, Residual(x), v2)
+
+          val φ = φ0.extend(φ1.vars ++ φ2.vars :+ x, IfElse(test, Seq(φ1.body, a1), Seq(φ2.body, a2)))
+          (List(Co(Residual(x), σ1.merge(σ2, ρ0), φ, k)), Nil)
+
+        // Both branches halted abnormally.
+        // We can try to merge the states and continue unwinding the stack.
+
+        // exactly the same jump
+        case (List(Err(_, Unwinding(jump1, σ1, φ1, Nil)), Err(_, Unwinding(jump2, σ2, φ2, Nil))), k) if jump1 == jump2 =>
+          (φ1.body, φ2.body) match {
+            case (Undefined(), Undefined()) =>
+              // If the branches had no effects, we can just dicard them.
+              (List(Unwinding(jump1, σ1.merge(σ2, ρ0), φ0, k)), Nil)
+            case (s1, s2) =>
+              val φ = φ0.extend(φ1.vars ++ φ2.vars, IfElse(test, s1, s2))
+              (List(Unwinding(jump1, σ1.merge(σ2, ρ0), φ, k)), Nil)
+          }
+
+        case (List(Err(_, Unwinding(Return(Some(v1)), σ1, φ1, Nil)), Err(_, Unwinding(Return(Some(v2)), σ2, φ2, Nil))), k) =>
+          // merge two returns
+          val x = FreshVar()
+          val a1 = Assign(None, Residual(x), v1)
+          val a2 = Assign(None, Residual(x), v2)
+          val φ = φ0.extend(φ1.vars ++ φ2.vars :+ x, IfElse(test, Seq(φ1.body, a1), Seq(φ2.body, a2)))
+          (List(Unwinding(Return(Some(Residual(x))), σ1.merge(σ2, ρ0), φ, k)), Nil)
+
+        case (List(Err(_, Unwinding(Throw(v1), σ1, φ1, Nil)), Err(_, Unwinding(Throw(v2), σ2, φ2, Nil))), k) =>
+          // merge two throws
+          val x = FreshVar()
+          val a1 = Assign(None, Residual(x), v1)
+          val a2 = Assign(None, Residual(x), v2)
+          val φ = φ0.extend(φ1.vars ++ φ2.vars :+ x, IfElse(test, Seq(φ1.body, a1), Seq(φ2.body, a2)))
+          (List(Unwinding(Throw(Residual(x)), σ1.merge(σ2, ρ0), φ, k)), Nil)
+
+        case (List(Err(_, Unwinding(jump1, σ1, φ1, Nil)), Err(_, Unwinding(jump2, σ2, φ2, Nil))), frame::k) =>
+          // cannot merge the jumps
+          // pull in a frame from after the merge point
+          (List(Unwinding(jump1, σ1, φ1, frame::Nil), Unwinding(jump2, σ2, φ2, frame::Nil)), k)
+
+        case (List(Err(_, Unwinding(jump1, σ1, φ1, Nil)), Halt(v2, σ2, φ2)), frame::k) =>
+          // one branch completed abnormally, the other normally.
+          // pull in a frame from after the merge point
+          (List(Unwinding(jump1, σ1, φ1, frame::Nil), Co(v2, σ2, φ2, frame::Nil)), k)
+
+        case (List(Halt(v1, σ2, φ2), Err(_, Unwinding(jump2, σ1, φ1, Nil))), frame::k) =>
+          // one branch completed abnormally, the other normally.
+          // pull in a frame from after the merge point
+          (List(Co(v1, σ1, φ1, frame::Nil), Unwinding(jump2, σ2, φ2, frame::Nil)), k)
+
+        // error
+        case (List(_, Err(msg, s)), k) => (List(Err(msg, s)), k)
+        case (List(Err(msg, s), _), k) => (List(Err(msg, s)), k)
+      }
+    }
+
   }
 
   // The Unwinding state just pops continuations until hitting a call or loop or catch.
@@ -777,32 +776,38 @@ object Step {
           case v @ CvtBool(true) => Co(v, σ, φ, kt ++ k)
           case v @ CvtBool(false) => Co(v, σ, φ, kf ++ k)
           case _ =>
-            // If the result cannot be converted to a boolean, we residualize.
-            // We first run the true branch, discarding all the effects accumulated so far
-            // and simulating a true test on the store.
-            // We then ResetBranch the store, this time simulating a false test,
-            // then run the false branch.
-            // We then MergeBranch the stores and effects, prepending the effects so far.
 
-            // We have two options here.
-            // - LONG_CONTINUATIONS.
-            //   We run both continuations to the end of the program and then merge
-            // - !LONG_CONTINUATIONS.
-            //   We run both continuations to the join point, then merge
-            // and merge the resulting states and effects.
-            // We choose the latter because it yields a smaller residual
-            // program, although the former might result in better
-            // performance.
+            if (!STUCK) {
+              // If the result cannot be converted to a boolean, we residualize.
+              // We first run the true branch, discarding all the effects accumulated so far
+              // and simulating a true test on the store.
+              // We then ResetBranch the store, this time simulating a false test,
+              // then run the false branch.
+              // We then MergeBranch the stores and effects, prepending the effects so far.
 
-            val σ1 = Eval.extendWithCond(v, σ, ρ, true)
-            val σ2 = Eval.extendWithCond(v, σ, ρ, false)
+              // We have two options here.
+              // - LONG_CONTINUATIONS.
+              //   We run both continuations to the end of the program and then merge
+              // - !LONG_CONTINUATIONS.
+              //   We run both continuations to the join point, then merge
+              // and merge the resulting states and effects.
+              // We choose the latter because it yields a smaller residual
+              // program, although the former might result in better
+              // performance.
 
-            val LONG_CONTINUATIONS = false
+              val σ1 = Eval.extendWithCond(v, σ, ρ, true)
+              val σ2 = Eval.extendWithCond(v, σ, ρ, false)
 
-            if (LONG_CONTINUATIONS)
-              Co(v, σ1, Machine.φ0, (kt ++ k) :+ ResetBranch(v, σ2, φ, ρ, kf ++ k))
-            else
-              Co(v, σ1, Machine.φ0, kt ++ (ResetBranch(v, σ2, φ, ρ, kf)::k))
+              val LONG_CONTINUATIONS = false
+
+              if (LONG_CONTINUATIONS)
+                Co(v, σ1, Machine.φ0, (kt ++ k) :+ ResetBranch(v, σ2, φ, ρ, kf ++ k))
+              else
+                Co(v, σ1, Machine.φ0, kt ++ (ResetBranch(v, σ2, φ, ρ, kf)::k))
+            }
+            else {
+              Stuck(v, σ, φ, BranchCont(kt, kf, ρ)::k)
+            }
         }
 
       case ResetBranch(test, σ2, φ0, ρ0, kf)::k =>
@@ -826,7 +831,7 @@ object Step {
           val a1 = Assign(None, Residual(x), v1)
           val a2 = Assign(None, Residual(x), v2)
 
-          val φ = φ0.extend(φ1.vars ++ φ2.vars, IfElse(test, Seq(φ1.body, a1), Seq(φ2.body, a2)))
+          val φ = φ0.extend(φ1.vars ++ φ2.vars :+ x, IfElse(test, Seq(φ1.body, a1), Seq(φ2.body, a2)))
           Co(Residual(x), σ1.merge(σ2, ρ0), φ, k)
         }
 
