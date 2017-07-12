@@ -289,7 +289,7 @@ object CESK {
           s = Halt(v, σ, φ)
 
         case s0 @ Stuck(v, σ, φ, _) =>
-          val (ss, k, combine) = s0.split
+          val (ss, k, tryMerge) = s0.split
 
           var kont = k
           var states = ss
@@ -306,10 +306,13 @@ object CESK {
             println("DRIVEN")
             driven foreach { println }
 
-            combine(driven, kont) match {
-              case (ss, k) =>
+            tryMerge(driven, kont) match {
+              case Some((ss, k)) =>
                 states = ss
                 kont = k
+              case None =>
+                // cannot merge
+                return s0
             }
 
             println("MERGED")

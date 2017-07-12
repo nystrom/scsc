@@ -462,7 +462,7 @@ object Step {
   φ = $φ
   k = ${k.mkString("[", "\n       ", "]")}"""
 
-    type Merger = (List[State], Cont) => (List[State], Cont)
+    type Merger = (List[State], Cont) => Option[(List[State], Cont)]
 
     def split: (List[State], Cont, Merger) = k match {
       case BranchCont(kt, kf, ρ)::k =>
@@ -491,7 +491,7 @@ object Step {
         }
 
       case k =>
-        (Nil, k, { case _ => (List(Err("nothing to merge", this)), Nil) })
+        (Nil, k, { case _ => None })
     }
 
     def splitBranch(ρ: Env, kt: Cont, kf: Cont): List[State] = {
@@ -501,19 +501,23 @@ object Step {
       List(Co(test, σ1, Machine.φ0, kt), Co(test, σ2, Machine.φ0, kf))
     }
 
-    def mergeBranch(test: Exp, ρ0: Env, φ0: Effect)(ss: List[State], k: Cont): (List[State], Cont) = {
+    def mergeBranch(test: Exp, ρ0: Env, φ0: Effect)(ss: List[State], k: Cont): Option[(List[State], Cont)] = {
       (ss, k) match {
+        ////////////////////////////////////////////////////////////////
+        // Both Halt
+        ////////////////////////////////////////////////////////////////
+
         // Both branches halted normally.
-        // Merge the values and resume conputation with k.
+        // Merge the values and resume computation with k.
         case (List(Halt(v1, σ1, φ1), Halt(v2, σ2, φ2)), k) if v1 == v2 =>
           // If the values are the same, just use them.
           (φ1.body, φ2.body) match {
             case (Undefined(), Undefined()) =>
               // If the branches had no effects, we can just dicard them.
-              (List(Co(v1, σ1.merge(σ2, ρ0), φ0, k)), Nil)
+              Some((List(Co(v1, σ1.merge(σ2, ρ0), φ0, k)), Nil))
             case (s1, s2) =>
               val φ = φ0.extend(φ1.vars ++ φ2.vars, IfElse(test, s1, s2))
-              (List(Co(v1, σ1.merge(σ2, ρ0), φ, k)), Nil)
+              Some((List(Co(v1, σ1.merge(σ2, ρ0), φ, k)), Nil))
           }
 
         case (List(Halt(v1, σ1, φ1), Halt(v2, σ2, φ2)), k) =>
@@ -525,7 +529,11 @@ object Step {
           val a2 = Assign(None, Residual(x), v2)
 
           val φ = φ0.extend(φ1.vars ++ φ2.vars :+ x, IfElse(test, Seq(φ1.body, a1), Seq(φ2.body, a2)))
-          (List(Co(Residual(x), σ1.merge(σ2, ρ0), φ, k)), Nil)
+          Some((List(Co(Residual(x), σ1.merge(σ2, ρ0), φ, k)), Nil))
+
+        ////////////////////////////////////////////////////////////////
+        // Both Unwinding
+        ////////////////////////////////////////////////////////////////
 
         // Both branches halted abnormally.
         // We can try to merge the states and continue unwinding the stack.
@@ -535,10 +543,10 @@ object Step {
           (φ1.body, φ2.body) match {
             case (Undefined(), Undefined()) =>
               // If the branches had no effects, we can just dicard them.
-              (List(Unwinding(jump1, σ1.merge(σ2, ρ0), φ0, k)), Nil)
+              Some((List(Unwinding(jump1, σ1.merge(σ2, ρ0), φ0, k)), Nil))
             case (s1, s2) =>
               val φ = φ0.extend(φ1.vars ++ φ2.vars, IfElse(test, s1, s2))
-              (List(Unwinding(jump1, σ1.merge(σ2, ρ0), φ, k)), Nil)
+              Some((List(Unwinding(jump1, σ1.merge(σ2, ρ0), φ, k)), Nil))
           }
 
         case (List(Err(_, Unwinding(Return(Some(v1)), σ1, φ1, Nil)), Err(_, Unwinding(Return(Some(v2)), σ2, φ2, Nil))), k) =>
@@ -547,7 +555,7 @@ object Step {
           val a1 = Assign(None, Residual(x), v1)
           val a2 = Assign(None, Residual(x), v2)
           val φ = φ0.extend(φ1.vars ++ φ2.vars :+ x, IfElse(test, Seq(φ1.body, a1), Seq(φ2.body, a2)))
-          (List(Unwinding(Return(Some(Residual(x))), σ1.merge(σ2, ρ0), φ, k)), Nil)
+          Some((List(Unwinding(Return(Some(Residual(x))), σ1.merge(σ2, ρ0), φ, k)), Nil))
 
         case (List(Err(_, Unwinding(Throw(v1), σ1, φ1, Nil)), Err(_, Unwinding(Throw(v2), σ2, φ2, Nil))), k) =>
           // merge two throws
@@ -555,26 +563,58 @@ object Step {
           val a1 = Assign(None, Residual(x), v1)
           val a2 = Assign(None, Residual(x), v2)
           val φ = φ0.extend(φ1.vars ++ φ2.vars :+ x, IfElse(test, Seq(φ1.body, a1), Seq(φ2.body, a2)))
-          (List(Unwinding(Throw(Residual(x)), σ1.merge(σ2, ρ0), φ, k)), Nil)
+          Some((List(Unwinding(Throw(Residual(x)), σ1.merge(σ2, ρ0), φ, k)), Nil))
 
         case (List(Err(_, Unwinding(jump1, σ1, φ1, Nil)), Err(_, Unwinding(jump2, σ2, φ2, Nil))), frame::k) =>
           // cannot merge the jumps
           // pull in a frame from after the merge point
-          (List(Unwinding(jump1, σ1, φ1, frame::Nil), Unwinding(jump2, σ2, φ2, frame::Nil)), k)
+          Some((List(Unwinding(jump1, σ1, φ1, frame::Nil), Unwinding(jump2, σ2, φ2, frame::Nil)), k))
+
+        ////////////////////////////////////////////////////////////////
+        // One Unwinding, one Halt
+        ////////////////////////////////////////////////////////////////
 
         case (List(Err(_, Unwinding(jump1, σ1, φ1, Nil)), Halt(v2, σ2, φ2)), frame::k) =>
           // one branch completed abnormally, the other normally.
           // pull in a frame from after the merge point
-          (List(Unwinding(jump1, σ1, φ1, frame::Nil), Co(v2, σ2, φ2, frame::Nil)), k)
+          Some((List(Unwinding(jump1, σ1, φ1, frame::Nil), Co(v2, σ2, φ2, frame::Nil)), k))
 
-        case (List(Halt(v1, σ2, φ2), Err(_, Unwinding(jump2, σ1, φ1, Nil))), frame::k) =>
+        case (List(Halt(v1, σ1, φ1), Err(_, Unwinding(jump2, σ2, φ2, Nil))), frame::k) =>
           // one branch completed abnormally, the other normally.
           // pull in a frame from after the merge point
-          (List(Co(v1, σ1, φ1, frame::Nil), Unwinding(jump2, σ2, φ2, frame::Nil)), k)
+          Some((List(Co(v1, σ1, φ1, frame::Nil), Unwinding(jump2, σ2, φ2, frame::Nil)), k))
+
+        ////////////////////////////////////////////////////////////////
+        // One Unwinding, one Stuck
+        ////////////////////////////////////////////////////////////////
+
+        case (List(Err(_, Unwinding(jump1, σ1, φ1, Nil)), Stuck(v2, σ2, φ2, k2)), frame::k) =>
+          Some((List(Unwinding(jump1, σ1, φ1, frame::Nil), Stuck(v2, σ2, φ2, k2 :+ frame)), k))
+
+        case (List(Stuck(v1, σ1, φ1, k1), Err(_, Unwinding(jump2, σ2, φ2, Nil))), frame::k) =>
+          Some((List(Stuck(v1, σ1, φ1, k1 :+ frame), Unwinding(jump2, σ2, φ2, frame::Nil)), k))
+
+        ////////////////////////////////////////////////////////////////
+        // One Halt, one Stuck
+        ////////////////////////////////////////////////////////////////
+
+        case (List(Halt(v1, σ1, φ1), Stuck(v2, σ2, φ2, k2)), frame::k) =>
+          // one branch completed abnormally, the other normally.
+          // pull in a frame from after the merge point
+          Some((List(Co(v1, σ1, φ1, frame::Nil), Stuck(v2, σ2, φ2, k2 :+ frame)), k))
+
+        case (List(Stuck(v1, σ1, φ1, k1), Halt(v2, σ2, φ2)), frame::k) =>
+          Some((List(Stuck(v1, σ1, φ1, k1 :+ frame), Co(v2, σ2, φ2, frame::Nil)), k))
+
+        ////////////////////////////////////////////////////////////////
+        // Both Stuck
+        ////////////////////////////////////////////////////////////////
+
+        case (List(Stuck(v1, σ1, φ1, k1), Stuck(v2, σ2, φ2, k2)), frame::k) =>
+          Some((List(Stuck(v1, σ1, φ1, k1 :+ frame), Stuck(v2, σ2, φ2, k2 :+ frame)), k))
 
         // error
-        case (List(_, Err(msg, s)), k) => (List(Err(msg, s)), k)
-        case (List(Err(msg, s), _), k) => (List(Err(msg, s)), k)
+        case (states, k) => None
       }
     }
 
