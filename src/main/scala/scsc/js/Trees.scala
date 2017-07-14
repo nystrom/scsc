@@ -131,8 +131,10 @@ object Trees {
   // FIXME: Prim("foo.bar") should just be Residual(Index(Local("foo"), StringLit("bar")))
   sealed trait Val extends Exp
   case class Prim(name: String) extends Lit
-  case class Path(address: Int, path: Exp) extends Val
-  case class Residual(name: String) extends Val
+  case class Path(address: Int, path: Exp) extends Val with Var
+  case class Residual(name: String) extends Val with Var
+
+  sealed trait Var extends Exp
 
   type Name = String
 
@@ -248,9 +250,9 @@ object Trees {
   case class ForEach(label: Option[Name], init: Exp, test: Exp, modify: Exp, body: Exp) extends Exp // MISSING
   case class Lambda(params: List[Name], body: Exp) extends Exp
   case class Scope(body: Exp) extends Exp
-  case class Local(x: Name) extends Exp
+  case class Local(x: Name) extends Exp with Var
   case class IfElse(test: Exp, pass: Exp, fail: Exp) extends Exp
-  case class Index(a: Exp, i: Exp) extends Exp
+  case class Index(a: Exp, i: Exp) extends Exp with Var
   case class ArrayLit(es: List[Exp]) extends Exp  // HACKED (prototype missing)
 
   case class ObjectLit(es: List[Exp]) extends Exp // HACKED (prototype missing)
