@@ -65,7 +65,7 @@ object PP {
       case Catch(ex, None, body) =>
         text("catch") <+> text(ex) <> colon <> line <> nest(show(body)) <> line
       case Empty() =>
-        emptyDoc
+        text("/**/")
       case For(label, init, test, modify, body) =>
         text("for") <+> parens(show(init) <> semi <+> show(test) <> semi <+> show(modify)) <> line <> nest(show(body))
       case ForIn(label, element, collection, body) =>
