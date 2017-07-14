@@ -22,10 +22,26 @@ object Continuations {
       case (done, todo) => s"${fun.show}(${done.map(_.show).mkString(", ")}, ☐, ${todo.map(_.show).mkString(", ")})"
     }
   }
+  case class EvalMoreArgsForResidual(fun: Exp, todo: List[Exp], done: List[Val], ρ: Env) extends ContFrame {
+    override def toString = (done, todo) match {
+      case (Nil, Nil) => s"${fun.show}(☐)"
+      case (done, Nil) => s"${fun.show}(${done.map(_.show).mkString(", ")}, ☐)"
+      case (Nil, todo) => s"${fun.show}(☐, ${todo.map(_.show).mkString(", ")})"
+      case (done, todo) => s"${fun.show}(${done.map(_.show).mkString(", ")}, ☐, ${todo.map(_.show).mkString(", ")})"
+    }
+  }
   case class EvalArgs(thisValue: Val, todo: List[Exp], ρ: Env) extends ContFrame {
     override def toString = s"☐(${todo.map(_.show).mkString(", ")})"
   }
   case class EvalMoreArgsForNew(fun: Val, todo: List[Exp], done: List[Val], ρ: Env) extends ContFrame {
+    override def toString = (done, todo) match {
+      case (Nil, Nil) => s"${fun.show}(☐)"
+      case (done, Nil) => s"${fun.show}(${done.map(_.show).mkString(", ")}, ☐)"
+      case (Nil, todo) => s"${fun.show}(☐, ${todo.map(_.show).mkString(", ")})"
+      case (done, todo) => s"${fun.show}(${done.map(_.show).mkString(", ")}, ☐, ${todo.map(_.show).mkString(", ")})"
+    }
+  }
+  case class EvalMoreArgsForNewResidual(fun: Exp, todo: List[Exp], done: List[Val], ρ: Env) extends ContFrame {
     override def toString = (done, todo) match {
       case (Nil, Nil) => s"${fun.show}(☐)"
       case (done, Nil) => s"${fun.show}(${done.map(_.show).mkString(", ")}, ☐)"
@@ -43,9 +59,6 @@ object Continuations {
   case class CallFrame(ρ: Env) extends ContFrame
   case class CatchFrame(cs: List[Exp], ρ: Env) extends ContFrame
   case class FinallyFrame(fin: Exp, ρ: Env) extends ContFrame
-
-  case class ResetBranch(test: Val, σ2: Store, φ0: Effect, ρ0: Env, kf: Cont) extends ContFrame
-  case class MergeBranch(v1: Val, σ1: Store, φ1: Effect, test: Val, φ0: Effect, ρ0: Env) extends ContFrame
 
   // Residualization:
   // For each reduction continuation, i.e., the ones that "Do" something,

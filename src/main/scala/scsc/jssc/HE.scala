@@ -24,10 +24,6 @@ object HE {
   // to avoid repeating we do Residual(x+2).
   // We do this rather than splitting?
 
-  type FoldResult = (Name, Exp, Exp, Exp)
-
-  def tryFold(s: St, target: St): Option[FoldResult] = None
-
   def size(e: Exp): Int = {
     import scsc.js.TreeWalk._
 
@@ -178,11 +174,17 @@ object HE {
   }
 
   implicit class StHE(s1: St) {
+    def comparableConts(k1: Cont, k2: Cont) = (k1, k2) match {
+      case (Nil, Nil) => true
+      case (k1::_, k2::_) => k1.getClass == k2.getClass
+      case _ => false
+    }
+
     def comparableStates(s1: St, s2: St) = (s1, s2) match {
-      case (s1 @ Ev(e1, ρ1, σ1, φ1, k1::_), s2 @ Ev(e2, ρ2, σ2, φ2, k2::_)) => e1 == e2 && φ1 == φ2 && k1.getClass == k2.getClass
-      case (s1 @ Co(e1, σ1, φ1, k1::_), s2 @ Co(e2, σ2, φ2, k2::_)) => e1 == e2 && φ1 == φ2 && k1.getClass == k2.getClass
-      case (s1 @ Ev(e1, ρ1, σ1, φ1, Nil), s2 @ Ev(e2, ρ2, σ2, φ2, Nil)) => e1 == e2 && φ1 == φ2
-      case (s1 @ Co(e1, σ1, φ1, Nil), s2 @ Co(e2, σ2, φ2, Nil)) => e1 == e2 && φ1 == φ2
+      case (s1 @ Ev(e1, ρ1, σ1, φ1, k1), s2 @ Ev(e2, ρ2, σ2, φ2, k2)) => e1 == e2 && φ1 == φ2 && comparableConts(k1, k2)
+      case (s1 @ Unwinding(jump1, σ1, φ1, k1), s2 @ Unwinding(jump2, σ2, φ2, k2)) => jump1 == jump2 && φ1 == φ2 && comparableConts(k1, k2)
+      case (s1 @ Co(v1, σ1, φ1, k1), s2 @ Co(v2, σ2, φ2, k2)) => v1 == v2 && φ1 == φ2 && comparableConts(k1, k2)
+      case (s1 @ Stuck(v1, σ1, φ1, k1), s2 @ Stuck(v2, σ2, φ2, k2)) => v1 == v2 && φ1 == φ2 && comparableConts(k1, k2)
       case _ => false
     }
 
@@ -196,48 +198,38 @@ object HE {
       // For instance, with the logarithmic version of pow.
       // Need to incorporate the environment too, perhaps.
       case (s1, s2) if comparableStates(s1, s2) =>
-        (toTerm(s1), toTerm(s2)) match {
-          case (Some((e1, φ1, n1)), Some((e2, φ2, n2))) =>
-            val t1 = Halt(e1, σ0, φ1).residual
-            val t2 = Halt(e2, σ0, φ2).residual
+        def toFinalState(s: St) = {
+          // Just drive with no time left
+          CESK.drive(s, Nil, Some(0)) match {
+            case (s, timedout) => s
+          }
+        }
+
+        (toFinalState(s1), toFinalState(s2)) match {
+          case (u1 @ Halt(e1, σ1, φ1), u2 @ Halt(e2, σ2, φ2)) =>
+            val t1 = u1.residual
+            val t2 = u2.residual
+
+            val n1 = size(t1)
+            val n2 = size(t2)
+
             println("HE: comparing " + s1)
             println("           vs " + s2)
+            println("HE:   reduced " + u1)
+            println("           vs " + u2)
             println("HE:     terms " + t1.show)
             println("           vs " + t2.show)
-            println("HE:     sizes " + size(t1))
-            println("           vs " + size(t2))
-            println("HE:     steps " + n1)
+            println("HE:     sizes " + n1)
             println("           vs " + n2)
 
             n1 <= n2 && t1 <<| t2
-          case (None, None) => true  // if both fail, blow the whistle!
-          case _ => false
+          case (s1 @ Err(_, _), s2 @ Err(_, _)) =>
+            // if both fail, blow the whistle!
+            true
+          case _ =>
+            false
         }
       case _ => false
     }
   }
-
-  // termination:
-  // a precondition of nontermination is that values grow.
-  // but this is difficult to implement here because we have numbers (which "change" not "grow")
-  //
-  // Homeomorphic embedding says a previous state is a subsequence of the new state.
-  // HE works well with terms.
-  // tagbags are an approximation: a well-quasi order
-  //
-  // states are more complicated.
-  // simple test.... if we run ahead 1000 steps, do we terminate?
-  // if yes, ok.
-  // if not, then, we can either just run ahead 1000 steps or we can generalize the two states
-  // in the history
-  // So, don't bother with the HE or anything like that.
-  // This may actually work very well in practice because we won't PE code forever
-
-  // Continuation generalization.
-  // We fold two states that have the same focus and different continuations.
-  // (e, k1) fold (e, k2)
-  // where k1 = k1' ++ k
-  //       k2 = k2' ++ k
-  // we generalize k1' and k2' to k', getting k' ++ k
-  // then we restart in (e, k' ++ k)
 }

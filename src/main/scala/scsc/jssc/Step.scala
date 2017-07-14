@@ -344,13 +344,65 @@ object Step {
       case Call(Index(e, m), args) =>
         Ev(e, ρ, σ, φ, EvalMethodProperty(m, args, ρ)::k)
 
-      // A non-method call "f()" passes "window" as "this"
+      // A non-method call "f()" passes "window" as "this".
+      // Preempt the local not being found.
+      // We don't want to residualize the local to another name.
+
+      case Call(fun @ Local(x), args) =>
+        // The call will get residualized, but first evaluate the arguments.
+        lazy val residual = args match {
+          case Nil =>
+            Co(Undefined(), σ, φ, k).MakeResidual(Call(fun, Nil), ρ, k)
+          case arg::args =>
+            Ev(arg, ρ, σ, φ, EvalMoreArgsForResidual(fun, args, Nil, ρ)::k)
+        }
+
+        ρ.get(x) match {
+          case Some(Loc(addr)) =>
+            σ.get(Loc(addr)) match {
+              case Some(LocClosure(Loc(v))) =>
+                Ev(fun, ρ, σ, φ, EvalArgs(Prim("window"), args, ρ)::k)
+              case _ =>
+                residual
+            }
+
+          case None if x == "undefined" =>
+            // The special global name "undefined" evaluates to "undefined".
+            Co(Undefined(), σ, φ, k)
+
+          case None =>
+            println(s"variable $x not found... residualizing")
+            residual
+        }
+
       case Call(fun, args) =>
         Ev(fun, ρ, σ, φ, EvalArgs(Prim("window"), args, ρ)::k)
 
+      case NewCall(fun @ Local(x), args) =>
+        // The call will get residualized, but first evaluate the arguments.
+        lazy val residual = args match {
+          case Nil =>
+            Co(Undefined(), σ, φ, k).MakeResidual(NewCall(fun, Nil), ρ, k)
+          case arg::args =>
+            Ev(arg, ρ, σ, φ, EvalMoreArgsForNewResidual(fun, args, Nil, ρ)::k)
+        }
+
+        ρ.get(x) match {
+          case Some(Loc(addr)) =>
+            σ.get(Loc(addr)) match {
+              case Some(LocClosure(Loc(v))) =>
+                Ev(fun, ρ, σ, φ, EvalArgsForNew(args, ρ)::k)
+              case _ =>
+                residual
+            }
+
+          case None =>
+            println(s"variable $x not found... residualizing")
+            residual
+        }
+
       case NewCall(fun, args) =>
         Ev(fun, ρ, σ, φ, EvalArgsForNew(args, ρ)::k)
-
 
       ////////////////////////////////////////////////////////////////
       // Return. Pop the continuations until we hit the caller.
@@ -373,9 +425,14 @@ object Step {
         Ev(e, ρ, σ, φ, k)
 
       case TryCatch(e, cs) =>
+        // FIXME: need to add try/catch to the residual in case
+        // residual code throws an exception...
+        // OR: when a call is added to the residual, branch and simulate a residual throw
         Ev(e, ρ, σ, φ, CatchFrame(cs, ρ)::k)
 
       case TryFinally(e, fin) =>
+        // FIXME: need to add try/finally to the residual in case
+        // residual code throws an exception...
         Ev(e, ρ, σ, φ, FinallyFrame(fin, ρ)::k)
 
       ////////////////////////////////////////////////////////////////
@@ -467,11 +524,10 @@ object Step {
     def split: (List[State], Cont, Merger) = k match {
       case BranchCont(kt, kf, ρ)::k =>
         // If the result cannot be converted to a boolean, we residualize.
-        // We first run the true branch, discarding all the effects accumulated so far
-        // and simulating a true test on the store.
-        // We then ResetBranch the store, this time simulating a false test,
-        // then run the false branch.
-        // We then MergeBranch the stores and effects, prepending the effects so far.
+        // We split into two states, one which runs the true
+        // branch and one which runs the false branch.
+        // We also return a merger function that reconstructs the residual if
+        // at (or after) the join point.
 
         // We have two options here.
         // - LONG_CONTINUATIONS.
@@ -480,8 +536,8 @@ object Step {
         //   We run both continuations to the join point, then merge
         // We choose the latter because it yields a smaller residual
         // program, although the former might result in better performance
-        // because of the information loss after the join even through
-        // there's exponential code growth.
+        // because of the information loss after the join, despite
+        // exponential code growth.
 
         if (LONG_CONTINUATIONS) {
           (splitBranch(ρ, kt ++ k, kf ++ k), Nil, mergeBranch(v, ρ, φ) _)
@@ -499,6 +555,17 @@ object Step {
       val σ1 = Eval.extendWithCond(test, σ, ρ, true)
       val σ2 = Eval.extendWithCond(test, σ, ρ, false)
       List(Co(test, σ1, Machine.φ0, kt), Co(test, σ2, Machine.φ0, kf))
+    }
+
+    def findLandingPad(jump: Exp, k: Cont, acc: Cont = Nil): (Cont, Cont) = (jump, k) match {
+      case (_: Return, (frame: CallFrame)::k) => (acc :+ frame, k)
+      case (_: Throw, (frame: CatchFrame)::k) => (acc :+ frame, k)
+      case (Break(Some(x)), (frame @ BreakFrame(Some(y)))::k) if x == y => (acc :+ frame, k)
+      case (Continue(Some(x)), (frame @ ContinueFrame(Some(y)))::k) if x == y => (acc :+ frame, k)
+      case (Break(None), (frame: BreakFrame)::k) => (acc :+ frame, k)
+      case (Continue(None), (frame: ContinueFrame)::k) => (acc :+ frame, k)
+      case (_, frame::k) => findLandingPad(jump, k, acc :+ frame)
+      case (_, Nil) => (acc, Nil)
     }
 
     def mergeBranch(test: Exp, ρ0: Env, φ0: Effect)(ss: List[State], k: Cont): Option[(List[State], Cont)] = {
@@ -565,34 +632,65 @@ object Step {
           val φ = φ0.extend(φ1.vars ++ φ2.vars :+ x, IfElse(test, Seq(φ1.body, a1), Seq(φ2.body, a2)))
           Some((List(Unwinding(Throw(Residual(x)), σ1.merge(σ2, ρ0), φ, k)), Nil))
 
-        case (List(Err(_, Unwinding(jump1, σ1, φ1, Nil)), Err(_, Unwinding(jump2, σ2, φ2, Nil))), frame::k) =>
+        case (List(Err(_, Unwinding(jump1, σ1, φ1, Nil)), Err(_, Unwinding(jump2, σ2, φ2, Nil))), k) =>
           // cannot merge the jumps
-          // pull in a frame from after the merge point
-          Some((List(Unwinding(jump1, σ1, φ1, frame::Nil), Unwinding(jump2, σ2, φ2, frame::Nil)), k))
+          // Extend the continuations past the landing pad for the jumps
+          val (kConsumed1, kRemaining1) = findLandingPad(jump1, k)
+          val (kConsumed2, kRemaining2) = findLandingPad(jump2, k)
+          val (kConsumed, kRemaining) = if (kConsumed1.length >= kConsumed2.length) (kConsumed1, kRemaining1) else (kConsumed2, kRemaining2)
+          kConsumed match {
+            case Nil => None
+            case _ =>
+              Some((List(Unwinding(jump1, σ1, φ1, kConsumed), Unwinding(jump2, σ2, φ2, kConsumed)), kRemaining))
+          }
 
         ////////////////////////////////////////////////////////////////
         // One Unwinding, one Halt
         ////////////////////////////////////////////////////////////////
 
-        case (List(Err(_, Unwinding(jump1, σ1, φ1, Nil)), Halt(v2, σ2, φ2)), frame::k) =>
+        case (List(Err(_, Unwinding(jump1, σ1, φ1, Nil)), Halt(v2, σ2, φ2)), k) =>
           // one branch completed abnormally, the other normally.
-          // pull in a frame from after the merge point
-          Some((List(Unwinding(jump1, σ1, φ1, frame::Nil), Co(v2, σ2, φ2, frame::Nil)), k))
+          // Extend the continuations past the landing pad for the jump
+          val (kConsumed, kRemaining) = findLandingPad(jump1, k)
+          kConsumed match {
+            case Nil => None
+            case _ =>
+              Some((List(Unwinding(jump1, σ1, φ1, kConsumed), Co(v2, σ2, φ2, kConsumed)), kRemaining))
+          }
 
-        case (List(Halt(v1, σ1, φ1), Err(_, Unwinding(jump2, σ2, φ2, Nil))), frame::k) =>
-          // one branch completed abnormally, the other normally.
-          // pull in a frame from after the merge point
-          Some((List(Co(v1, σ1, φ1, frame::Nil), Unwinding(jump2, σ2, φ2, frame::Nil)), k))
+        case (List(Halt(v1, σ1, φ1), Err(_, Unwinding(jump2, σ2, φ2, Nil))), k) =>
+          // one branch completed normally, the other abnormally.
+          // Extend the continuations past the landing pad for the jump
+          val (kConsumed, kRemaining) = findLandingPad(jump2, k)
+          kConsumed match {
+            case Nil => None
+            case _ =>
+              Some((List(Co(v1, σ1, φ1, kConsumed), Unwinding(jump2, σ2, φ2, kConsumed)), kRemaining))
+          }
 
         ////////////////////////////////////////////////////////////////
         // One Unwinding, one Stuck
         ////////////////////////////////////////////////////////////////
 
-        case (List(Err(_, Unwinding(jump1, σ1, φ1, Nil)), Stuck(v2, σ2, φ2, k2)), frame::k) =>
-          Some((List(Unwinding(jump1, σ1, φ1, frame::Nil), Stuck(v2, σ2, φ2, k2 :+ frame)), k))
+        case (List(Err(_, Unwinding(jump1, σ1, φ1, Nil)), Stuck(v2, σ2, φ2, k2)), k) =>
+          // one branch completed abnormally, the other is stuck.
+          // Extend the continuations past the landing pad for the jump
+          val (kConsumed, kRemaining) = findLandingPad(jump1, k)
+          kConsumed match {
+            case Nil => None
+            case _ =>
+              Some((List(Unwinding(jump1, σ1, φ1, kConsumed), Stuck(v2, σ2, φ2, k2 ++ kConsumed)), kRemaining))
+          }
 
-        case (List(Stuck(v1, σ1, φ1, k1), Err(_, Unwinding(jump2, σ2, φ2, Nil))), frame::k) =>
-          Some((List(Stuck(v1, σ1, φ1, k1 :+ frame), Unwinding(jump2, σ2, φ2, frame::Nil)), k))
+        case (List(Stuck(v1, σ1, φ1, k1), Err(_, Unwinding(jump2, σ2, φ2, Nil))), k) =>
+          // one branch is stuck, the other completed abnormally.
+          // Extend the continuations past the landing pad for the jump
+          val (kConsumed, kRemaining) = findLandingPad(jump2, k)
+          kConsumed match {
+            case Nil => None
+            case _ =>
+              Some((List(Stuck(v1, σ1, φ1, k1 ++ kConsumed), Unwinding(jump2, σ2, φ2, kConsumed)), kRemaining))
+          }
 
         ////////////////////////////////////////////////////////////////
         // One Halt, one Stuck
@@ -641,10 +739,6 @@ object Step {
       // evaluate the finally block and then rebreak.
       case (FinallyFrame(fin, ρ1)::k, jump) =>
         Ev(fin, ρ1, σ, φ, SeqCont(jump, ρ1)::k)
-
-      // Push reset continuations out past the landing frame.
-      case (ResetBranch(test, σ2, φ0, ρ0, kf)::k2::k, jump) =>
-        Unwinding(jump, σ, φ, k2::ResetBranch(test, σ2, φ0, ρ0, kf :+ k2)::k)
 
       ////////////////////////////////////////////////////////////////
       // Break
@@ -717,23 +811,116 @@ object Step {
   φ = $φ
   k = ${k.mkString("[", "\n       ", "]")}"""
 
-    def MakeResidual(e: Exp, ρ1: Env, k: Cont) = {
+    // This is called in two situations.
+    // First, when the stepper gets stuck because a value is unknown, it might
+    // residualize an expression or statement.
+    // Second, when the whistle blows and we want to force termination.
+    // We residualize the focus after each step, preventing the stepper
+    // from evaluating calls and loops.
+
+    // What we should do here for statements is just return a Stuck state.
+    // This will trigger the splitter, which will evaluate the loop body,
+    // but not repeat the loop again.
+    //
+    // Alternatively, we can CPS the whole fucking program.
+    def MakeResidual(e: Exp, ρ1: Env, k: Cont): St = {
       // TODO: if a variable used in e is in ρ1, we have to generate an assignment to it.
       lazy val x = FreshVar()
+
       reify(e) match {
+        // Don't residualize values
         case e: Val =>
-          // Don't residualize values
           Co(e, σ, φ, k)
+
+        // Statements evaluate to undefined, so don't generate a variable
+        // for the value.
+        // FIXME: we need to be able to residualize jumps.
+        // This means we have to residualize the landing pads too (call, break, continue, catch frames)
+        case e: Empty =>
+          Co(Undefined(), σ, φ, k)
+
+        // for if, just residualize the test
+        // this will force a Stuck state.
+        case IfElse(e, pass, fail) =>
+          Ev(IfElse(Residual(x), pass, fail), ρ1, Eval.simulateStore(e)(σ, ρ1), φ.extend(x::Nil, Assign(None, Residual(x), e)), k)
+
+        // for loops, just residualize the test
+        case While(label, e, body) =>
+          Ev(IfElse(Residual(x), DoWhile(label, body, e), Undefined()), ρ1, Eval.simulateStore(e)(σ, ρ1), φ.extend(x::Nil, Assign(None, Residual(x), e)), k)
+
+        case For(label, Empty(), test, Empty(), body) =>
+          Ev(IfElse(Residual(x), DoWhile(label, body, e), Undefined()), ρ1, Eval.simulateStore(e)(σ, ρ1), φ.extend(x::Nil, Assign(None, Residual(x), e)), k)
+
+        case DoWhile(label, body, cond) =>
+          Co(Undefined(), Eval.simulateStore(e)(σ, ρ1), φ.extend(Nil, e), k)
+
+        case e @ For(label, init, test, iter, body) =>
+          Co(Undefined(), Eval.simulateStore(e)(σ, ρ1), φ.extend(Nil, e), k)
+
+        case e: ForIn =>
+          Co(Undefined(), Eval.simulateStore(e)(σ, ρ1), φ.extend(Nil, e), k)
+
+        case e: VarDef =>
+          Co(Undefined(), Eval.simulateStore(e)(σ, ρ1), φ.extend(Nil, e), k)
+
+        // Unwinding statements cannot be residualized.
+        case e: Break =>
+          Ev(e, ρ1, σ, φ, k)
+
+        case e: Continue =>
+          Ev(e, ρ1, σ, φ, k)
+
+        case e @ Return(None) =>
+          Ev(e, ρ1, σ, φ, k)
+
+        // For return value and throw, residualize the value, but keep the jump.
+        case Return(Some(e)) =>
+          Ev(Return(Some(Residual(x))), ρ1, Eval.simulateStore(e)(σ, ρ1), φ.extend(x::Nil, Assign(None, Residual(x), e)), k)
+
+        case Throw(e) =>
+          Ev(Throw(Residual(x)), ρ1, Eval.simulateStore(e)(σ, ρ1), φ.extend(x::Nil, Assign(None, Residual(x), e)), k)
+
+        case Seq(e1, e2) =>
+          MakeResidual(e1, ρ1, k) match {
+            case s1 @ Co(v1, σ2, φ1, k1) =>
+              s1.MakeResidual(e2, ρ1, k)
+            case s1 =>
+              // The only time it's not a Co is if e1 is a jump
+              // and so e2 won't be evaluated anyway.
+              s1
+          }
+
+        // Convert locals to residuals after manifesting the value.
+        // TODO need to manifest the value.
+        // This doesn't really work since a later expression
+        // might assign x.
+        // We should just be more careful with calls.
+        // case e @ Local(x) =>
+        //   Co(Residual(x), σ, φ, k)
+
         case e @ Assign(op, lhs, rhs) =>
           println(s"simulating $e")
           println(s"initial σ = $σ")
           println(s"  final σ = ${Eval.simulateStore(e)(σ, ρ1)}")
           Co(Residual(x), Eval.simulateStore(e)(σ, ρ1), φ.extend(x::Nil, Seq(e, Assign(None, Residual(x), lhs))), k)
+
         case e =>
+          // TODO
+          // if e might throw an exception, split and simulate the exception throw
+          // f() k -->
+          // (try x = f() catch (ex) { Throw(ex) } :: k
           println(s"simulating $e")
           println(s"initial σ = $σ")
           println(s"  final σ = ${Eval.simulateStore(e)(σ, ρ1)}")
-          Co(Residual(x), Eval.simulateStore(e)(σ, ρ1), φ.extend(x::Nil, Assign(None, Residual(x), e)), k)
+          val SIM_EXCEPTIONS = false
+          if (SIM_EXCEPTIONS) {
+            val y = FreshVar()
+            TryCatch(Assign(None, Residual(x), e), Catch(y, None, Throw(Residual(y)))::Nil)
+            Co(Residual(x), Eval.simulateStore(e)(σ, ρ1), φ.extend(x::Nil, Assign(None, Residual(x), e)), CatchFrame(Catch(y, None, Throw(Residual(y)))::Nil, ρ1)::k)
+          }
+          else {
+            Co(Residual(x), Eval.simulateStore(e)(σ, ρ1), φ.extend(x::Nil, Assign(None, Residual(x), e)), k)
+          }
       }
     }
 
@@ -817,62 +1004,7 @@ object Step {
           case v @ CvtBool(false) => Co(v, σ, φ, kf ++ k)
           case _ =>
 
-            if (!STUCK) {
-              // If the result cannot be converted to a boolean, we residualize.
-              // We first run the true branch, discarding all the effects accumulated so far
-              // and simulating a true test on the store.
-              // We then ResetBranch the store, this time simulating a false test,
-              // then run the false branch.
-              // We then MergeBranch the stores and effects, prepending the effects so far.
-
-              // We have two options here.
-              // - LONG_CONTINUATIONS.
-              //   We run both continuations to the end of the program and then merge
-              // - !LONG_CONTINUATIONS.
-              //   We run both continuations to the join point, then merge
-              // and merge the resulting states and effects.
-              // We choose the latter because it yields a smaller residual
-              // program, although the former might result in better
-              // performance.
-
-              val σ1 = Eval.extendWithCond(v, σ, ρ, true)
-              val σ2 = Eval.extendWithCond(v, σ, ρ, false)
-
-              val LONG_CONTINUATIONS = false
-
-              if (LONG_CONTINUATIONS)
-                Co(v, σ1, Machine.φ0, (kt ++ k) :+ ResetBranch(v, σ2, φ, ρ, kf ++ k))
-              else
-                Co(v, σ1, Machine.φ0, kt ++ (ResetBranch(v, σ2, φ, ρ, kf)::k))
-            }
-            else {
-              Stuck(v, σ, φ, BranchCont(kt, kf, ρ)::k)
-            }
-        }
-
-      case ResetBranch(test, σ2, φ0, ρ0, kf)::k =>
-        Co(test, σ2, Machine.φ0, kf ++ (MergeBranch(v, σ, φ, test, φ0, ρ0)::k))
-
-      case MergeBranch(v1, σ1, φ1, test, φ0, ρ0)::k =>
-        val v2 = v
-        val σ2 = σ
-        val φ2 = φ
-
-        if (v1 == v2) {
-          // If the values are the same, just use them.
-          val φ = φ0.extend(φ1.vars ++ φ2.vars, IfElse(test, φ1.body, φ2.body))
-          Co(v1, σ1.merge(σ2, ρ0), φ, k)
-        }
-        else {
-          // Otherwise create a fresh residual variable
-          // and then assign the values at the end of each branch.
-          // cf. removing SSA.
-          val x = FreshVar()
-          val a1 = Assign(None, Residual(x), v1)
-          val a2 = Assign(None, Residual(x), v2)
-
-          val φ = φ0.extend(φ1.vars ++ φ2.vars :+ x, IfElse(test, Seq(φ1.body, a1), Seq(φ2.body, a2)))
-          Co(Residual(x), σ1.merge(σ2, ρ0), φ, k)
+            Stuck(v, σ, φ, BranchCont(kt, kf, ρ)::k)
         }
 
       // discard useless break and continue frames
@@ -1081,6 +1213,14 @@ object Step {
       case EvalMoreArgs(fun, thisValue, Nil, done, ρ1)::k =>
         doCall(fun, thisValue, done :+ v, Call(fun, done :+ v), None, ρ1, σ, k)
 
+      // The function is unknown, so just residualize after evaluating
+      // the arguments.
+      case EvalMoreArgsForResidual(fun, arg::args, done, ρ1)::k =>
+        Ev(arg, ρ1, σ, φ, EvalMoreArgsForResidual(fun, args, done :+ v, ρ1)::k)
+
+      case EvalMoreArgsForResidual(fun, Nil, done, ρ1)::k =>
+        MakeResidual(Call(fun, done :+ v), ρ1, k)
+
       ///////////////////////////////////////////////////////////////, k/
       // Return. Pop the continuations until we hit the caller.
       ////////////////////////////////////////////////////////////////
@@ -1131,6 +1271,12 @@ object Step {
 
       case EvalMoreArgsForNew(fun, Nil, done, ρ1)::k =>
         Ev(Index(fun, StringLit("prototype")), ρ1, σ, φ, InitProto(fun, done :+ v, ρ1)::k)
+
+      case EvalMoreArgsForNewResidual(fun, arg::args, done, ρ1)::k =>
+        Ev(arg, ρ1, σ, φ, EvalMoreArgsForNewResidual(fun, args, done :+ v, ρ1)::k)
+
+      case EvalMoreArgsForNewResidual(fun, Nil, done, ρ1)::k =>
+        MakeResidual(NewCall(fun, done :+ v), ρ1, k)
 
       case InitProto(fun, args, ρ1)::k =>
         val proto = v

@@ -13,6 +13,10 @@ object Machine {
 
   val k0: Cont = Nil
 
+  // TODO: body is not an Exp, but a set of labeled traces.
+  // We can have gotos between the traces.
+  // At the end we reconstruct the trace.
+
   case class Effect(vars: List[Name], body: Exp) {
     def extend(vars1: List[Name], body1: Exp) = body match {
       case Undefined() => Effect(vars ++ vars1, body1)
@@ -22,7 +26,10 @@ object Machine {
       }
     }
   }
-  
+
+  type Effects = List[Block]
+  case class Block(label: Name, vars: List[Name], body: Exp)
+
   val φ0: Effect = Effect(Nil, Undefined())
 
   ////////////////////////////////////////////////////////////////

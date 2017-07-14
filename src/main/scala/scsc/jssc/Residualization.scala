@@ -75,38 +75,4 @@ object Residualization {
 
     Unreify.rewrite(e)
   }
-
-  def strongReify(s: St): St = s match {
-    case Co(focus, σ, φ, k) =>
-      Co(focus, σ, φ, k)
-    case Ev(focus, ρ, σ, φ, k) =>
-      Co(Undefined(), σ, φ, k).MakeResidual(focus, ρ, k)
-    case s =>
-      s
-  }
-
-  // To convert to a term, we run the machine until it terminates, reifying
-  // the focus each step.
-  def toTerm(s: St): Option[(Val, Effect, Int)] = {
-    toTermAcc(s, 0)
-  }
-
-  @scala.annotation.tailrec
-  def toTermAcc(s: St, steps: Int): Option[(Val, Effect, Int)] = {
-    println("converting to term " + s)
-    s match {
-      case s @ Halt(e, σ, φ) =>
-        val t = s.residual
-        println("--> " + t)
-        Some((e, φ, steps))
-
-      case Err(_, _) =>
-        None
-
-      case s0 =>
-        val s1 = strongReify(s0)
-        val s2 = s1.step
-        toTermAcc(s2, steps+1)
-    }
-  }
 }
