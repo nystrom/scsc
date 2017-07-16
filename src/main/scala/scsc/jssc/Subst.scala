@@ -51,6 +51,11 @@ object Subst {
           case Some(e) => e
           case None => Residual(x)
         }
+      case Local(x) =>
+        s.get(x) match {
+          case Some(e) => e
+          case None => Local(x)
+        }
       case e =>
         super.rewrite(e)
     }

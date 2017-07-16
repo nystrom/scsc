@@ -7,7 +7,6 @@ import scsc.js.Trees._
 object HE {
   import Machine._
   import Residualization._
-  import CESK._
   import Continuations._
   import Step._
 
@@ -180,11 +179,11 @@ object HE {
       case _ => false
     }
 
-    def comparableStates(s1: St, s2: St) = (s1, s2) match {
+    def comparableStates(s1: St, s2: St): Boolean = (s1, s2) match {
       case (s1 @ Ev(e1, ρ1, σ1, φ1, k1), s2 @ Ev(e2, ρ2, σ2, φ2, k2)) => e1 == e2 && φ1 == φ2 && comparableConts(k1, k2)
       case (s1 @ Unwinding(jump1, σ1, φ1, k1), s2 @ Unwinding(jump2, σ2, φ2, k2)) => jump1 == jump2 && φ1 == φ2 && comparableConts(k1, k2)
       case (s1 @ Co(v1, σ1, φ1, k1), s2 @ Co(v2, σ2, φ2, k2)) => v1 == v2 && φ1 == φ2 && comparableConts(k1, k2)
-      case (s1 @ Stuck(v1, σ1, φ1, k1), s2 @ Stuck(v2, σ2, φ2, k2)) => v1 == v2 && φ1 == φ2 && comparableConts(k1, k2)
+      case (s1 @ Stuck(t1), s2 @ Stuck(t2)) => comparableStates(t1, t2)
       case _ => false
     }
 
@@ -199,9 +198,9 @@ object HE {
       // Need to incorporate the environment too, perhaps.
       case (s1, s2) if comparableStates(s1, s2) =>
         def toFinalState(s: St) = {
-          // Just drive with no time left
-          CESK.drive(s, Nil, Some(0)) match {
-            case (s, timedout) => s
+          // Just drive getting stuck at each Ev
+          Drive.drive(Nil, Nil, true)(s) match {
+            case (s, memo) => s
           }
         }
 
@@ -226,7 +225,8 @@ object HE {
           case (s1 @ Err(_, _), s2 @ Err(_, _)) =>
             // if both fail, blow the whistle!
             true
-          case _ =>
+          case (u1, u2) =>
+            println("final states $u1 vs $u2")
             false
         }
       case _ => false

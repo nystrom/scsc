@@ -67,8 +67,6 @@ object CESK {
     }
   }
 
-  def step(s: St): St = s.step
-
   // Check for termination at these nodes.
   // In SCSC, we only checked at Local nodes, but here we need to check
   // loops also since we can have non-termination evaluating any variables.
@@ -232,366 +230,32 @@ object CESK {
   // Evaluator.
   // Step until either the whistle blows or we reach the Done continuation with a value.
   def eval(e: Exp, maxSteps: Int): Exp = {
-    val r = alpha(removeDeadCode(appendMemoizedFunctions(driver(e, maxSteps))))
+    val r = alpha(removeDeadCode(driver(e, maxSteps)))
     println("EVAL RESULT >>>")
     println(s"${scsc.js.PP.pretty(r)}")
     println("<<<")
     r
   }
 
-  def appendMemoizedFunctions(e: Exp) = memo.foldRight(e) {
+  def appendMemoizedFunctions(memo: Drive.Memo, e: Exp) = memo.foldRight(e) {
     case ((_, d), e) => Seq(d, e)
   }
 
   def driver(e: Exp, maxSteps: Int): Exp = {
     import scsc.js.PP
+    import Drive.drive
 
-    if (maxSteps >= 0) {
-      // Run for maxSteps. If we terminate, great.
-      // Otherwise, _restart_ and run with termination checking enabled,
-      // which might cause an earlier termination.
-      drive(inject(e), Nil, Some(maxSteps)) match {
-        case (s @ Halt(v, σ, φ), false) =>
-          println(s"HALT FAST ${PP.pretty(s.residual)}")
-          return s.residual
-        case (Err(msg, s), false) =>
-          println(s"FAIL $msg in $s")
-          return Undefined()
-        case (s, true) =>
-          println(s"final state $s after timeout")
-        case (s, false) =>
-          println(s"final state $s without timeout (stuck?)")
-      }
-    }
-
-    // clear the memo cache, otherwise we will pull in
-    memo.clear
-
-    drive(inject(e), Nil, None) match {
-      case (s @ Halt(v, σ, φ), _) =>
+    drive(Nil, Nil, false)(inject(e)) match {
+      case (s @ Halt(v, σ, φ), memo) =>
         println(s"HALT SLOW ${PP.pretty(s.residual)}")
-        return s.residual
+        return appendMemoizedFunctions(memo, s.residual)
       case (Err(msg, s), _) =>
         println(s"FAIL $msg in $s")
         return Undefined()
       case (s, _) =>
-        println(s"TIMEOUT $s")
+        println(s"STUCK $s")
         return Undefined()
     }
   }
 
-/*
-  def generalize(ss: List[St]): Option[St] = ss match {
-    case s::Nil => Some(s)
-    case s1::s2::ss =>
-      generalize2(s1, s2) flatMap {
-        case s => generalize(s::ss)
-      }
-  }
-
-  def generalize2(s1: St, s2: St): Option[St] = (s1, s2) match {
-    case (Ev(e1, ρ1, σ1, φ1, k1), Ev(e2, ρ2, σ2, φ2, k2)) =>
-      if (e1 == e2 && ρ1 == ρ2 && k1 == k2)
-        Some(Ev(e1, ρ1, σ1.merge(σ2), φ1, k1))
-      else
-        None
-    case (Unwinding(jump1, σ1, φ1, k1), Unwinding(jump2, σ2, φ2, k2)) =>
-      if (jump1 == jump2 && k1 == k2)
-        Some(Unwinding(jump1, ρ1, σ1.merge(σ2), φ1, k1))
-      else
-        None
-    case _ =>
-      None
-  }
-
-  // The given state supercompiled into a residual expression.
-  // We save the residual here, abstracted over the free variables.
-  // If we see a similar state, we can just generate a call
-  // to the residual rather than supercompiling again.
-  val memoMap: ListBuffer[(St, Name, Lambda)]
-
-  // Note that we complete ignore the residual effect in the state
-  // since this describes what happened before arriving in the given
-  // state. We might consider improving HE by looking at the effect too as some
-  // sort of approximation of the unknown closures in the store,
-  // but it's doubtful that it's worth the bother.
-
-  // supercompile s.
-  // if we've already seen a renaming of s before, generate a call (or jump).
-  // otherwise
-  def memo(s: St)(body: St => FinalState): FinalState = {
-    // try to generalize s1 and s2
-    def tryMatch(s: St, sk: St, h: Name, lam: Lambda): Option[MSG.Subst] = (s, sk) match {
-      case (s1, s2) if s1 == s2 => Some(MSG.emptySubst)
-      case (Ev(e1, ρ1, σ1, _, k1), Ev(e2, ρ2, σ2, _, k2)) =>
-        // if match s1 s2 returns Some renaming,
-        // then s2 must be the same as renaming(s1).
-        MSG.msgTerms(e1, e2)
-        None
-      case _ =>
-        None
-    }
-
-    for ((s0, vardef) <- memoMap) {
-      tryMerge(s, s0, vardef) match {
-        case Some(s1) =>
-          return CESK.eval(s1, S)
-        case None =>
-      }
-    }
-
-    body(s) match {
-      case sfinal @ Halt(_, _, _) =>
-        val h = FreshVar()
-        memoMap += (s, VarDef(h, sfinal.residual))
-        sfinal
-      case sfinal =>
-        sfinal
-    }
-  }
-
-  // labeled effects
-  val traceCache: ListBuffer[(Name, Exp)]
-
-  sealed trait Eff
-  case class RunTrace(x: Name) extends Eff
-  case class If(x: Residual, pass: Eff, fail: Eff) extends Eff
-  case class Seq(e1: Eff, e2: Eff) extends Eff
-*/
-
-  // Supercompilation by evaluation generates bindings for each state
-  // it supercompiles.
-  // We do the same.
-
-  val memo: ListBuffer[(St, VarDef)] = ListBuffer()
-
-  // This is unnecessarily complicated. Better would be to
-  // maintain a frontier of states and just advance the frontier.
-  // Merging (arbitrarily) when the two states
-  // in the frontier have the same continuation.
-  def drive(initialState: St, above: List[St], maxSteps: Option[Int]): (FinalState, Boolean) = {
-    var t = maxSteps match {
-      case None => 100
-      case Some(t) => t
-    }
-
-    val whistle = maxSteps == None
-    var timeout = false
-
-    import HE._
-
-    val hist: ListBuffer[St] = ListBuffer()
-
-    def shouldCheckHistory(s: St) = s match {
-      // check history when about to do a call
-      case Ev(Call(_, _), _, _, _, _) => true
-      case Ev(NewCall(_, _), _, _, _, _) => true
-      case Ev(For(_, _, _, _, _), _, _, _, _) => true
-      case Ev(ForIn(_, _, _, _), _, _, _, _) => true
-      case Ev(While(_, _, _), _, _, _, _) => true
-      case Ev(DoWhile(_, _, _), _, _, _, _) => true
-      case _ => false
-    }
-
-    var s = initialState
-
-    while (true) {
-      t -= 1
-
-      for ((prevState, VarDef(h, lambda)) <- memo) {
-        import Subst._
-
-        def unify(s1: St, s2: St): Option[(Subst, Cont)] = (s1, s2) match {
-          case (s1 @ Ev(e1, ρ1, σ1, φ1, k1), s2 @ Ev(e2, ρ2, σ2, φ2, k2)) =>
-            if (ρ1 == ρ2 && k2.length >= k1.length) {
-              val k2a = k2.take(k1.length)
-              val k2b = k2.drop(k1.length)
-              val u = new Unifier()
-              u.unify(e1, e2)
-              u.unify(k1, k2a)
-              u.getSubst map {
-                case subst => (subst, k2b)
-              }
-            }
-            else {
-              None
-            }
-          case _ =>
-            None
-        }
-
-        (prevState, s) match {
-          case (s1 @ Ev(e1, ρ1, σ1, φ1, k1), s2 @ Ev(e2, ρ2, σ2, φ2, k2)) =>
-            unify(s1, s2) match {
-              case Some((subst, k)) =>
-                lambda match {
-                  case Lambda(Nil, v: Val) =>
-                    s = Co(v, σ1.merge(σ2, ρ2), φ2, k.subst(subst))
-                  case Lambda(xs, e) =>
-                    val x = scsc.util.FreshVar()
-                    val args = xs map { x => Residual(x).subst(subst) }
-                    s = Co(Residual(x), σ1.merge(σ2, ρ2), φ2.extend(x::Nil, Assign(None, Residual(x), Call(Local(h), args))), k.subst(subst))
-                }
-              case None =>
-            }
-          case _ =>
-        }
-      }
-
-      if (whistle && shouldCheckHistory(s)) {
-        if (t >= 0) {
-          for (prev <- above.reverse) {
-            if (prev <<| s) {
-              println(s"WHISTLE ABOVE $prev <<| $s")
-              t = 0
-            }
-          }
-        }
-
-        if (t >= 0) {
-          for (prev <- hist.reverse) {
-            if (prev <<| s) {
-              println(s"WHISTLE HERE $prev <<| $s")
-
-              // We hit the same
-              (prev, s) match {
-                case (Ev(e1, ρ1, σ1, φ1, k1), Ev(e2, ρ2, σ2, φ2, k2)) if (e1 == e2 && ρ1 == ρ2) =>
-                  // We hit the same loop again.
-                  // Residualize the loop.. we should just jump to it in the residual.
-                  // if φ1 is a prefix of φ2, just jump back.
-                  // Actually we should split here!
-                  s = Co(Undefined(), σ1.merge(σ2, ρ2), φ2, k2).MakeResidual(e1, ρ2, k2)
-                case _ =>
-                  // If not the same expression, just 0 the timer so we stop.
-                  t = 0
-              }
-            }
-          }
-        }
-
-        hist += s
-      }
-
-      println(s"DRIVE $t $s")
-
-      // When we hit a call.
-
-      // When we hit a loop,
-      // if the loop expression is the same,
-      // if the environment is the same,
-      // if the TOP of the continuation is the same,
-      // merge!
-
-      s match {
-        case s0 @ Halt(v, σ, φ) =>
-          val h = scsc.util.FreshVar()
-          val r = s0.residual
-          val xs = (fv(r) -- φ.vars).toList
-          println(s"MEMO $initialState")
-          println(s" --> $s0")
-          println(s" --> $h = ${Lambda(xs, r)}")
-          memo += ((initialState, VarDef(h, Lambda(xs, r))))
-          return (s0, timeout)
-
-        case s0 @ Err(msg, s) =>
-          return (s0, timeout)
-
-        case s0 @ Stuck(v, σ, φ, Nil) =>
-          s = Halt(v, σ, φ)
-
-        case s0 @ Stuck(v, σ, φ, _) =>
-          val (ss, k, tryMerge) = s0.split
-
-          // If we get stuck, split into multiple states `ss`.
-          // The split may not consume the entire continuation of the Stuck
-          // state. Rather it returns `k`, which is the continuation not
-          // included in the states.
-
-          // Drive those states to completion and then try to merge them.
-          // The merge may not succeed in two ways:
-          // - first, it might not merge the states,
-          // but rather just extend the continuation of the split states hoping
-          // a merge is possible later. In this case we try again with the new
-          // extended split states.
-          // - second, it might fail because the states are just unmergeable
-          // and there's no way to extend the continuation. In this case, we
-          // return the Stuck state to the caller. Generally the caller is Stuck
-          // as well and this will result in extending the caller's continuation
-          // until a merge is possible.
-          // Note that this is really really slow and we should memoize to avoid
-          // repeating work. In the worst case we extend the continuations by
-          // one frame at a time repeatedly. But we should profile
-          // to see if it's really an issue. The bad case happens when we
-          // have branches that complete in different ways (e.g., one returns
-          // and one throws an exception). We have to merge _after_ the call
-          // frame or the handler. We speed things up by just extending to the
-          // next landing pad rather than extending one frame at a time.
-
-          var kont = k
-          var states = ss
-
-          while (states.length > 1) {
-            println("SPLIT")
-            states foreach { println }
-            println(s"kont $kont")
-
-            val driven = states map {
-              s => drive(s, above ++ hist.toList, maxSteps map { _ => t })
-            }
-
-            println("DRIVEN")
-            driven foreach { case (s, _) => println(s) }
-
-            timeout |= driven exists { case (_, timeout) => timeout }
-
-            tryMerge(driven map (_._1), kont) match {
-              case Some((ss, k)) =>
-                states = ss
-                kont = k
-              case None =>
-                // cannot merge
-                return (s0, false)
-            }
-
-            println("MERGED")
-            states foreach { println }
-            println(s"kont $kont")
-          }
-
-          states match {
-            case Nil =>
-              s = Err(s"could not reconcile final states $states", s0)
-            case s1::Nil =>
-              s = s1
-            case _ =>
-              s = Err(s"could not reconcile final states $ss", s0)
-          }
-
-          println("AFTER")
-          println(s"s = $s")
-
-        // If we time out, go to the stuck state
-        // case Co(v, σ, φ, k) if t <= 0 =>
-        //   s = Stuck(v, σ, φ, k)
-
-        // If we time out, residualize
-        case Ev(e, ρ, σ, φ, k) if t < 0 =>
-          s = Co(Undefined(), σ, φ, k).MakeResidual(e, ρ, k)
-          timeout = true
-
-        // Otherwise take a step.
-        case s0 =>
-          val s1 = step(s0)
-          s = s1
-      }
-    }
-
-    return (Err("unreachable state", s), true)
-  }
 }
-
-// TODO: to perform reification, need to incorporate the environment better.
-// When we add something to the environment, we should add a rebuild continuation
-// that basically adds a let if needed. We should have a let binding for each
-// free variable in the residualized focus when we get to the Done continuation.
-// But, then need to order the lets to make the environments work out correctly.

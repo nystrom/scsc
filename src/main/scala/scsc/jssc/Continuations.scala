@@ -90,6 +90,7 @@ object Continuations {
   case class BreakFrame(label: Option[Name]) extends ContFrame
   case class ContinueFrame(label: Option[Name]) extends ContFrame
 
+  case class StartLoop(loop: Exp, ρ1: Env, σ1: Store, φ1: Effect) extends ContFrame
   case class DoReturn() extends ContFrame
   case class DoThrow() extends ContFrame
 
