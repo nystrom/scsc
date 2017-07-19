@@ -10,8 +10,6 @@ import scsc.util.FreshVar
 object Split {
   import Machine._
   import Continuations._
-  import scsc.jssc.SC.JSSC._
-  import scsc.jssc.SC.JSSC.Pos
   import scsc.core.Residualization._
   import States._
 
@@ -263,9 +261,6 @@ object Split {
     }
   }
 
-  import scsc.jssc.SC.JSSC.Pos
-
-
   // merges after a split.
   // in general we might return either a rebuilt state
   // or we return a state from which we can continue driving.
@@ -404,10 +399,10 @@ object Split {
   //     None
   // }
 
-  def findMatchingEv(hist: List[(Pos, St)])(s: State): Option[(Pos, St)] = s match {
+  def findMatchingEv(hist: List[St])(s: State): Option[St] = s match {
     case Co(v, σ, φ, k) =>
       hist.find {
-        case (_, s1 @ Ev(e1, ρ1, σ1, φ1, k1)) => k == k1
+        case s1 @ Ev(e1, ρ1, σ1, φ1, k1) => k == k1
         case _ => false
       }
     case _ =>
@@ -415,41 +410,41 @@ object Split {
   }
 
   // Given a state and a history, replace one node in the history with a new node.
-  def rollback(s: St, hist: List[(Pos, St)]): Option[(Pos, St)] = hist.headOption match {
-    case Some((pos, Ev(e, ρ, σ, φ, k))) =>
-      rebuildEv(e, ρ, σ, φ, k) map { s => (pos, s) }
+  def rollback(s: St, hist: List[St]): Option[St] = hist.headOption match {
+    case Some(Ev(e, ρ, σ, φ, k)) =>
+      rebuildEv(e, ρ, σ, φ, k)
 
-    case Some((pos, Co(v, σ, φ, k))) =>
+    case Some(Co(v, σ, φ, k)) =>
       // Search the history for the Ev that led to here and replace it.
       findMatchingEv(hist)(s) match {
-        case Some((pos, st)) =>
+        case Some(st) =>
           k match {
             case DoAssign(op, lhs, ρ1)::k =>
-              rebuildEv(Assign(op, lhs, v), ρ1, σ, φ, k) map { case s => (pos, s) }
+              rebuildEv(Assign(op, lhs, v), ρ1, σ, φ, k)
             case DoIncDec(op, ρ1)::k =>
-              rebuildEv(IncDec(op, v), ρ1, σ, φ, k) map { case s => (pos, s) }
+              rebuildEv(IncDec(op, v), ρ1, σ, φ, k)
             case DoTypeof(ρ1)::k =>
-              rebuildEv(Typeof(v), ρ1, σ, φ, k) map { case s => (pos, s) }
+              rebuildEv(Typeof(v), ρ1, σ, φ, k)
             case DoUnaryOp(op, ρ1)::k =>
-              rebuildEv(Unary(op, v), ρ1, σ, φ, k) map { case s => (pos, s) }
+              rebuildEv(Unary(op, v), ρ1, σ, φ, k)
             case DoBinaryOp(op, v1, ρ1)::k =>
-              rebuildEv(Binary(op, v1, v), ρ1, σ, φ, k) map { case s => (pos, s) }
+              rebuildEv(Binary(op, v1, v), ρ1, σ, φ, k)
             case EvalArgs(thisValue, Nil, ρ1)::k =>
-              rebuildEv(Call(v, Nil), ρ1, σ, φ, k) map { case s => (pos, s) }
+              rebuildEv(Call(v, Nil), ρ1, σ, φ, k)
             case EvalMoreArgs(fun, thisValue, Nil, done, ρ1)::k =>
-              rebuildEv(Call(fun, done :+ v), ρ1, σ, φ, k) map { case s => (pos, s) }
+              rebuildEv(Call(fun, done :+ v), ρ1, σ, φ, k)
             case EvalMoreArgsForResidual(fun, Nil, done, ρ1)::k =>
-              rebuildEv(Call(fun, done :+ v), ρ1, σ, φ, k) map { case s => (pos, s) }
+              rebuildEv(Call(fun, done :+ v), ρ1, σ, φ, k)
             case EvalMoreArgsForNewResidual(fun, Nil, done, ρ1)::k =>
-              rebuildEv(NewCall(fun, done :+ v), ρ1, σ, φ, k) map { case s => (pos, s) }
+              rebuildEv(NewCall(fun, done :+ v), ρ1, σ, φ, k)
             case InitProto(fun, args, ρ1)::k =>
-              rebuildEv(NewCall(fun, args), ρ1, σ, φ, k) map { case s => (pos, s) }
+              rebuildEv(NewCall(fun, args), ρ1, σ, φ, k)
             case DoDeleteProperty(a, ρ1)::k =>
-              rebuildEv(Delete(Index(a, v)), ρ1, σ, φ, k) map { case s => (pos, s) }
+              rebuildEv(Delete(Index(a, v)), ρ1, σ, φ, k)
             case GetPropertyAddressOrCreate(a, ρ1)::k =>
-              rebuildEv(Index(a, v), ρ1, σ, φ, k) map { case s => (pos, s) }
+              rebuildEv(Index(a, v), ρ1, σ, φ, k)
             case GetProperty(a, ρ1)::k =>
-              rebuildEv(Index(a, v), ρ1, σ, φ, k) map { case s => (pos, s) }
+              rebuildEv(Index(a, v), ρ1, σ, φ, k)
             case k =>
               None
           }

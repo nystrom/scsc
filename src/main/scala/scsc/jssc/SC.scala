@@ -163,212 +163,14 @@ object SC {
     e1
   }
 
-  trait Interpreter[State] {
-    private type History = List[State]
-
-    // Step to the next state
-    def step(s: State): Option[State]
-
-    // Check if we should stop driving.
-    def whistle(h: List[State]): Boolean
-
-    // Fold the last element of the current history with a previous element, truncating
-    // the history. The new last element of the history generalizes the old last element
-    // and the previous element.
-    // FIXME: other SC algorithms aren't restricted to folding with ancestors.
-    def fold(h: List[State]): Option[List[State]]
-
-    // Construct a new state from the current history.
-    // This is not allowed to fail!
-    def rebuild(h: List[State]): State
-
-    // Reassemble the root with new children.
-    // This can either merge split states or generate a new split.
-    // If a new split, then we resume driving, otherwise we rebuild.
-    def reassemble(root: State, children: List[History]): Either[List[State], State]
-
-    // split the current state, return Nil on failure
-    def split(s: State): List[State]
-  }
-
-  // The supercompiler for language L is implemented as an interpreter of MetaStates.
-  // A State is the state of the L-interpreter.
-  // A MetaState is the state of the supercompiler and consists of a history
-  // of State and a MetaContinuation.
-  // The initial MetaState for State s is
-  // Drive(s, Nil, Nil)
-  // Drive(s, h, k)
-  // --> Drive(s'::Nil, s::h, k) if step(s) = s'
-  // --> Drive(s1, Nil, RunSplit(s2..sn, Nil, s, h)::k) if split(s) = [s1,..,sn]
-  // --> Drive(s', h', k) if opt(s, h) = (s', h')   // including fold?
-  // --> Drive(s', h', k) if fold(s, h) = (s', h')
-  // --> Rebuild(s', k) if rebuild(s, h) = s'
-  // ???
-  // Rebuild(s, RunSplit(s'::todo, done, s0, h0)::k)
-  // --> Drive(s', Nil, RunSplit(todo, done :+ s, s0, h0)::k)
-  // Rebuild(s, RunSplit(Nil, done, s0, h0)::k)
-  // --> Drive(reassemble(s0, done :+ s), h0, k)
-  // Rebuild(s, Nil) --> DONE
-  //
-  // Then in any state, we can do:
-  // whistle blows:
-  // Drive(s, h, k) --> Rebuild(rebuild(s, h), k)
-  // folding:
-  // Drive(s, h, k) --> Rebuild(fold(s, h), k)
-  trait Supercompiler[State] {
-    private type History = List[State]
-
-    sealed trait MetaState
-    case class Drive(state: State, history: History, k: MetaCont) extends MetaState
-    case class Split(state: State, history: History, k: MetaCont) extends MetaState
-    case class Rebuild(state: State, history: History, k: MetaCont) extends MetaState
-    case class Done(state: State) extends MetaState
-
-    sealed trait MetaFrame
-    case class RunSplit(pending: List[State], complete: List[History], root: State, rootHistory: History) extends MetaFrame
-
-    type MetaCont = List[MetaFrame]
-
-    def interp: Interpreter[State]
-
-    def supercompile(start: State): Option[State] = {
-      val ms = Drive(start, Nil, Nil)
-      meta(ms) match {
-        case Done(s) => Some(s)
-        case _ => None
-      }
-    }
-
-    @scala.annotation.tailrec
-    final def meta(ms: MetaState): MetaState = {
-      println(s"META STATE $ms")
-      val next = ms match {
-        case Drive(s, h, k) =>
-          interp.fold(s::h) match {
-            case Some(s1::h1) =>
-              println(s"FOLD")
-              Drive(s1, h1, k)
-            case None =>
-              if (interp.whistle(s::h)) {
-                println(s"WHISTLE")
-                Split(s, h, k)
-              }
-              else {
-                println(s"DRIVE OR SPLIT")
-                interp.step(s) match {
-                  case Some(s1) => Drive(s1, s::h, k)
-                  case None => Split(s, h, k)
-                }
-              }
-          }
-
-        case Split(s, h, k) =>
-          interp.split(s) match {
-            case first::rest => Drive(first, Nil, RunSplit(rest, Nil, s, h)::k)
-            case Nil => Rebuild(s, h, k)
-          }
-
-        case Rebuild(s, h, RunSplit(next::pending, complete, s0, h0)::k) =>
-          Drive(next, Nil, RunSplit(pending, complete :+ (s::h), s0, h0)::k)
-
-        case Rebuild(s, h, RunSplit(Nil, complete, s0, h0)::k) =>
-          interp.reassemble(s0, complete :+ (s::h)) match {
-            case Left(first::rest) =>
-              // resplit
-              Drive(first, Nil, RunSplit(rest, Nil, s0, h0)::k)
-            case Left(Nil) =>
-              // reassemble failed
-              // we need to just back out of the split entirely
-              Rebuild(s0, h0, k)
-            case Right(s1) =>
-              // join successful
-              Rebuild(s1, h0, k)
-          }
-        case Rebuild(s, h, Nil) =>
-          Done(interp.rebuild(s::h))
-        case Done(s) =>
-          // Done, return early
-          return Done(s)
-      }
-
-      meta(next)
-    }
-  }
+  import scsc.core.Interpreter
+  import scsc.core.Supercompiler
 
   object JSSuper extends Supercompiler[States.State] {
     def interp = JSInterp
   }
 
-  trait Whistles[State] {
-    private type History = List[State]
-
-    def isInstance(s1: State, s2: State): Boolean
-    def isSmaller(child: State, ancestor: State): Boolean
-
-    // Return true if the configuration MIGHT diverge and should therefore
-    // be tested using isSmaller.
-    def mightDiverge(c: State): Boolean
-
-    trait Whistle {
-      def blow(h: History): Boolean
-      def |(w: Whistle) = (this, w) match {
-        case (AnyWhistle(ws1), AnyWhistle(ws2)) => AnyWhistle(ws1 ++ ws2)
-        case (AnyWhistle(ws1), w2) => AnyWhistle(ws1 :+ w2)
-        case (w1, AnyWhistle(ws2)) => AnyWhistle(w1::ws2)
-        case (w1, w2) => AnyWhistle(List(w1, w2))
-      }
-      def &(w: Whistle) = (this, w) match {
-        case (AllWhistle(ws1), AllWhistle(ws2)) => AllWhistle(ws1 ++ ws2)
-        case (AllWhistle(ws1), w2) => AllWhistle(ws1 :+ w2)
-        case (w1, AllWhistle(ws2)) => AllWhistle(w1::ws2)
-        case (w1, w2) => AllWhistle(List(w1, w2))
-      }
-    }
-
-    case object NoWhistle extends Whistle {
-      def blow(h: History) = false
-    }
-
-    class StateWhistle(f: State => Boolean) extends Whistle {
-      def blow(h: History) = h match {
-        case Nil => false
-        case s::_ => f(s)
-      }
-    }
-
-    // Whistle blows if the configuation might diverge
-    case class MightDivergeWhistle() extends StateWhistle(mightDiverge _)
-
-    case class DepthWhistle(maxDepth: Int) extends Whistle {
-      def blow(h: History) = h.length > maxDepth
-    }
-
-    case class HEWhistle() extends Whistle {
-      def blow(h: History) = {
-        h match {
-          case Nil => false
-          case s::h =>
-            h.exists {
-              prev => isSmaller(prev, s)
-            }
-        }
-      }
-    }
-
-    class FoldWhistle(ws: List[Whistle], f: (Boolean, Boolean) => Boolean) extends Whistle {
-      def blow(h: History) = {
-        ws match {
-          case Nil => false
-          case w::ws => ws.foldLeft(w.blow(h)) {
-            case (result, w) => f(result, w.blow(h))
-          }
-        }
-      }
-    }
-
-    case class AllWhistle(ws: List[Whistle]) extends FoldWhistle(ws, _ && _)
-    case class AnyWhistle(ws: List[Whistle]) extends FoldWhistle(ws, _ || _)
-  }
+  import scsc.core.Whistles
 
   trait JSWhistles extends Whistles[States.State] {
     type NormalConfig = (Symbol, Exp, Cont)
@@ -454,83 +256,10 @@ object SC {
     def generalize(s1: State, s2: State): Option[State] = None
   }
 
-  object JSSC extends scsc.core.SC {
-    import States._
-
-    type Config = State
-    type NormalConfig = (Symbol, Exp, Cont)
-
-    override def whistle: Whistle = DepthWhistle(1000)
-    // override def whistle: Whistle = DepthWhistle(1000) | (MightDivergeWhistle() & HEWhistle())
-    // override def whistle: Whistle = NoWhistle
-
-    def mightDiverge(s: State) = s match {
-      case Ev(Call(_, _), _, _, _, _) => true
-      case Ev(NewCall(_, _), _, _, _, _) => true
-      case Ev(While(_, _, _), _, _, _, _) => true
-      case Ev(DoWhile(_, _, _), _, _, _, _) => true
-      case Ev(For(_, _, _, _, _), _, _, _, _) => true
-      case Ev(ForIn(_, _, _, _), _, _, _, _) => true
-      case _ => false
-    }
-
-    def normalize(s: State): NormalConfig = s match {
-      case Ev(e, ρ, σ, φ, k) => ('Ev, e, k)
-      case Co(e, σ, φ, k) => ('Co, e, k)
-      case Unwinding(jump, sigma, φ, k) => ('Unwinding, jump, k)
-      case Rebuild(s) => normalize(s)
-      case Halt(v, sigma, φ) => ('Halt, v, Nil)
-      case Err(_, s) => normalize(s)
-    }
-
-    def step(s: State)(implicit context: Context): List[(State, EdgeKind)] = {
-      assert(s == context.currentConfig.get)
-      s.step.toList map { (_, Drive) }
-    }
-
-    def split(s: State)(implicit context: Context): List[(State, EdgeKind)] = {
-      assert(s == context.currentConfig.get)
-      val pos = context.currentPos.get
-      Split.split(s) match {
-        case ss => ss.zipWithIndex map {
-          case (s1, i) => (s1, SplitAt(s, pos, i, ss.length))
-        }
-      }
-    }
-
-    def rebuilds(s: State)(implicit context: Context): List[State] = {
-      assert(s == context.currentConfig.get)
-      // Split.rebuild(s, context.currentPath).toList
-      Nil
-    }
-
-    def rollbacks(s: State)(implicit context: Context): List[(Pos, State)] = {
-      assert(s == context.currentConfig.get)
-      Split.rollback(s, context.currentPath map { case (pos, st, _) => (pos, st) }).toList
-    }
-
-    def unsplit(rootState: State, splitStates: List[(Pos, State)])(implicit context: Context): List[State] = {
-      val paths = splitStates map { case (pos, _) => context.pathToSplit(pos) }
-      val sorted = paths.sortBy { case (path, i, n) => i }
-      val pathsOnly = sorted map { _._1 }
-      // Split.unsplit(rootState, pathsOnly)
-      Nil
-    }
-
-    def generalize(child: State, ancestor: State)(implicit context: Context): Option[State] = None
-
-    def halts(s: State)(implicit context: Context) = s match {
-      case Halt(_, _, _) => true
-      case Err(_, _) => true
-      case _ => false
-    }
-  }
-
   // Evaluator.
   // Step until either the whistle blows or we reach the Done continuation with a value.
   def eval(e: Exp, maxSteps: Int): Exp = {
     import scsc.js.PP
-    import JSDrive.drive
 
     val s0 = inject(e)
 
@@ -540,24 +269,10 @@ object SC {
       case _ =>
         Undefined()
     }
-
-/*
-    drive(Nil, Nil, false)(s0) match {
-      case (s @ Halt(v, σ, φ), memo) =>
-        println(s"HALT SLOW ${PP.pretty(s.residual)}")
-        return alpha(removeDeadCode(appendMemoizedFunctions(memo, s.residual)))
-      case (Err(msg, s), _) =>
-        println(s"FAIL $msg in $s")
-        return Undefined()
-      case (s, _) =>
-        println(s"STUCK $s")
-        return Undefined()
-    }
-    */
   }
-
-  def appendMemoizedFunctions(memo: JSDrive.Memo, e: Exp) = memo.foldRight(e) {
-    case ((_, d), e) => Seq(d, e)
-  }
+  //
+  // def appendMemoizedFunctions(memo: JSDrive.Memo, e: Exp) = memo.foldRight(e) {
+  //   case ((_, d), e) => Seq(d, e)
+  // }
 
 }
