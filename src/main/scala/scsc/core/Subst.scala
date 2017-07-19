@@ -1,4 +1,4 @@
-package scsc.jssc
+package scsc.core
 
 import scsc.js.Trees._
 import scsc.util.FreshVar
@@ -11,7 +11,6 @@ object Subst {
 
   val emptySubst: Subst = Map.empty
 
-  // +-> in THIH
   def singletonSubst(v: Name, t: Exp) = Map(v -> t)
 
   // Merge operations on substitutions.
@@ -20,11 +19,10 @@ object Subst {
     def @@(s2: Subst) = {
       // val s3 = for { (u, t) <- s2 } yield (u, t.subst(s1))
       val s3 = for { (u, t) <- s2 -- s1.keys } yield (u, t.subst(s1))
-      val s4 = for { u <- s1.keys.toList intersect s2.keys.toList }
-        yield s2(u) match {
-          case Residual(v) => (v, s1(u))
-          case t => (u, t.subst(s1))
-        }
+      val s4 = for { u <- s1.keys.toList intersect s2.keys.toList } yield s2(u) match {
+                  case Residual(v) => (v, s1(u))
+                  case t => (u, t.subst(s1))
+                }
       val s5 = s3 ++ s4 ++ s1
       s5
     }
@@ -40,9 +38,9 @@ object Subst {
   }
 
   import scsc.js.TreeWalk._
-  import Continuations.Cont
+  import scsc.jssc.Continuations.Cont
   import scsc.js.TreeWalk.Rewriter
-  import ContWalk.ContRewriter
+  import scsc.jssc.ContWalk.ContRewriter
 
   class ExpSubst(s: Subst) extends Rewriter {
     override def rewrite(e: Exp) = e match {

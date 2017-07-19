@@ -5,13 +5,10 @@ import scsc.js.Trees._
 
 object Eval {
   import Machine._
-  import Continuations._
-  import Residualization._
-  import Context.{ρempty, σempty}
 
   // FIXME: extend to handle residuals, which ARE Not in the store!
   // But they can be if we extend σ to have arbitrary constraints.
-  // Which we should do to handle the Bool vs. CvtBool problem. 
+  // Which we should do to handle the Bool vs. CvtBool problem.
   def extendWithCond(test: Exp, σAfterTest: Store, ρ: Env, result: Boolean): Store = {
     test match {
       case Binary(Binary.&&, e1, e2) if result =>

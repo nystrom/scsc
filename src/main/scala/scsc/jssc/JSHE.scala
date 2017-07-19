@@ -4,11 +4,11 @@ import scala.collection.mutable.ListBuffer
 import scsc.js.Trees._
 
 // We start with a CEK machine for the lambda calculus.
-object HE {
+object JSHE {
   import Machine._
-  import Residualization._
+  import scsc.core.Residualization._
   import Continuations._
-  import Step._
+  import States._
 
   // In SC / PE, we get stuck when focus is a Var!
   // Add continuations for Bin and for Case, etc.
@@ -183,7 +183,7 @@ object HE {
       case (s1 @ Ev(e1, ρ1, σ1, φ1, k1), s2 @ Ev(e2, ρ2, σ2, φ2, k2)) => e1 == e2 && φ1 == φ2 && comparableConts(k1, k2)
       case (s1 @ Unwinding(jump1, σ1, φ1, k1), s2 @ Unwinding(jump2, σ2, φ2, k2)) => jump1 == jump2 && φ1 == φ2 && comparableConts(k1, k2)
       case (s1 @ Co(v1, σ1, φ1, k1), s2 @ Co(v2, σ2, φ2, k2)) => v1 == v2 && φ1 == φ2 && comparableConts(k1, k2)
-      case (s1 @ Stuck(t1), s2 @ Stuck(t2)) => comparableStates(t1, t2)
+      case (s1 @ Rebuild(t1), s2 @ Rebuild(t2)) => comparableStates(t1, t2)
       case _ => false
     }
 
@@ -199,7 +199,7 @@ object HE {
       case (s1, s2) if comparableStates(s1, s2) =>
         def toFinalState(s: St) = {
           // Just drive getting stuck at each Ev
-          Drive.drive(Nil, Nil, true)(s) match {
+          JSDrive.drive(Nil, Nil, true)(s) match {
             case (s, memo) => s
           }
         }

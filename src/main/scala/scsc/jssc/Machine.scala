@@ -6,10 +6,10 @@ object Machine {
   import Continuations._
 
   // The state of the CESK machine:
-  type St = Step.State
+  type St = States.State
 
   // Inject a term into the machine.
-  def inject(e: Exp): St = Step.Ev(e, ρ0, σ0, φ0, k0)
+  def inject(e: Exp): St = States.Ev(e, ρ0, σ0, φ0, k0)
 
   val k0: Cont = Nil
 
@@ -17,20 +17,66 @@ object Machine {
   // We can have gotos between the traces.
   // At the end we reconstruct the trace.
 
-  case class Effect(vars: List[Name], body: Exp) {
-    def extend(vars1: List[Name], body1: Exp) = body match {
-      case Undefined() => Effect(vars ++ vars1, body1)
-      case body => body1 match {
-        case Undefined() => Effect(vars ++ vars1, body)
-        case body1 => Effect(vars ++ vars1, Seq(body, body1))
+  // FIXME:
+  // the body should not be an exp, but rather a set of labeled traces.
+  // Residual(x) is a HANDLE for an effectful expression.
+  // We can reconstruct the expression by traversing the body.
+  // If all residuals are used linearly in the effect, we just collapse into
+  // an expression. Otherwise, we need to introduce assignments.
+
+  // effects should be recreated in the order of the vars.
+  case class Effect(vars: List[Name], traces: Map[Name, Exp]) {
+    def extend(x: Name, e: Exp): Effect = e match {
+      case Undefined() => this
+      case e => Effect(vars :+ x, traces + (x -> e))
+    }
+    def extend(e: Exp): Effect = extend(scsc.util.FreshVar(), e)
+    def seq: Exp = seq(Undefined()) match {
+      case Seq(s, Undefined()) => s
+      case s => s
+    }
+
+    def seq(e: Exp): Exp = {
+      import scsc.js.TreeWalk._
+
+      object Subst extends Rewriter {
+        var used: Set[Name] = Set()
+
+        override def rewrite(e: Exp) = e match {
+          case Residual(x) =>
+            if (used contains x) {
+              Residual(x)
+            }
+            else {
+              traces.get(x) match {
+                case Some(e1) =>
+                  used += x
+                  Assign(None, Residual(x), rewrite(e1))
+                case None =>
+                  Residual(x)
+              }
+            }
+          case e =>
+            super.rewrite(e)
+        }
+      }
+
+      val xs = vars map { x => Residual(x) }
+      (xs :+ e).foldLeft(Undefined(): Exp) {
+        case (Undefined(), x) =>
+          Subst.rewrite(x)
+        case (s, x) =>
+          Seq(s, Subst.rewrite(x))
       }
     }
+
+    def exp(x: Name): Exp = seq(Residual(x))
   }
 
   type Effects = List[Block]
   case class Block(label: Name, vars: List[Name], body: Exp)
 
-  val φ0: Effect = Effect(Nil, Undefined())
+  val φ0: Effect = Effect(Nil, Map())
 
   ////////////////////////////////////////////////////////////////
   // ENVIRONMENTS

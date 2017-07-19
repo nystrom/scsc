@@ -1,20 +1,34 @@
 package scsc.jssc
 
+import scsc.core.Drive
+import scsc.core.HE
 import scala.collection.mutable.ListBuffer
 
-object Drive {
+object JSDrive extends Drive[scsc.jssc.States.State, scsc.js.Trees.VarDef] with HE[scsc.jssc.States.State] {
   import scsc.js.Trees._
   import scsc.js.TreeWalk._
+  import States._
+  import scsc.core.Residualization._
+  import scsc.core.Unifier
   import Machine._
   import Continuations._
-  import Residualization._
-  import Step._
+
+  // override default HE to ignore names and do HE only for small numbers.
+  override protected def coupling[A](x: A, y: A): Boolean = {
+    (x, y) match {
+      case (Local(x), Local(y)) => true
+      case (Residual(x), Residual(y)) => true
+      case (Num(x), Num(y)) if x.abs < 10 || y.abs < 10 => x == y
+      case (Num(x), Num(y)) => true
+      case (x, y) => super.coupling(x, y)
+    }
+  }
 
   // Supercompilation by evaluation generates bindings for each state
   // it supercompiles.
   // We do the same.
 
-  import Subst._
+  import scsc.core.Subst._
 
   // Try to unify the states. We require that s1's continuation be longer than s2's
   def unify(s1: St, s2: St): Option[(Subst, Cont)] = (s1, s2) match {
@@ -48,15 +62,11 @@ object Drive {
     case _ => false
   }
 
-  type Memo = List[(St, VarDef)]
-
   // This is unnecessarily complicated. Better would be to
   // maintain a frontier of states and just advance the frontier.
   // Merging (arbitrarily) when the two states
   // in the frontier have the same continuation.
   def drive(above: List[St], memo: Memo, whistle: Boolean)(initialState: St): (FinalState, Memo) = {
-    import HE._
-
     for ((prevState, VarDef(h, lambda)) <- memo) {
       unify(prevState, initialState) match {
         case Some((subst, k)) =>
@@ -75,7 +85,7 @@ object Drive {
                   val x = scsc.util.FreshVar()
                   val args = xs map { x => Residual(x).subst(subst) }
                   return drive(above, memo, whistle) {
-                    Co(Residual(x), Eval.simulateStore(e)(σ1, ρ1), φ1.extend(x::Nil, Assign(None, Residual(x), Call(Local(h), args))), k.subst(subst))
+                    Co(Residual(x), Eval.simulateStore(e)(σ1, ρ1), φ1.extend(x, Call(Local(h), args)), k.subst(subst))
                   }
               }
             case _ =>
@@ -110,43 +120,31 @@ object Drive {
         case s0 @ Err(msg, s) =>
           return (s0, memo)
 
-        case s0 @ Stuck(Co(v, σ, φ, Nil)) =>
+        case s0 @ Rebuild(Co(v, σ, φ, Nil)) =>
           s = Halt(v, σ, φ)
 
-        case s0 @ Stuck(_) =>
-          // FIXME: don't discard the memo results
-          def d(s: St) = {
-            drive(above ++ hist.toList, memo, whistle)(s) match {
-              case (s, memo1) => s
-            }
-          }
-
-          s = s0.split(d _)
-
-          if (s == s0) {
-            // this happens when we're stuck unwinding
-            return (s0, memo)
-          }
+        case s0 @ Rebuild(_) =>
+          return (s0, memo)
 
         // If the whistle
         case s0 @ Ev(e, ρ, σ, φ, k) if whistle =>
-          s = Stuck(s)
+          s = Rebuild(s)
 
         case s0 @ Ev(e, ρ, σ, φ, k) if mightLoop(s0) =>
           for (prev <- (above ++ hist).reverse) {
-            println(s"COMPARE $prev <<| $s0")
+            println(s"COMPARE $prev ◁ $s0")
             if (s == s0) {
-              if (prev <<| s0) {
-                println(s"WHISTLE $prev <<| $s0")
-                s = Stuck(s0)
+              if (prev ◁ s0) {
+                println(s"WHISTLE $prev ◁ $s0")
+                s = Rebuild(s0)
               }
             }
 
             if (s == s0) {
               unify(prev, s0) match {
                 case Some(_) =>
-                  println(s"WHISTLE 2 $prev <<| $s0")
-                  s = Stuck(s0)
+                  println(s"WHISTLE 2 $prev ◁ $s0")
+                  s = Rebuild(s0)
                 case None =>
               }
             }
@@ -155,14 +153,22 @@ object Drive {
           if (s == s0) {
             hist += s0
 
-            val s1 = s0.step
-            s = s1
+            s0.step match {
+              case Some(s1) =>
+                s = s1
+              case None =>
+                s = Rebuild(s0)
+            }
           }
 
         // Otherwise take a step.
         case s0 =>
-          val s1 = s0.step
-          s = s1
+          s0.step match {
+            case Some(s1) =>
+              s = s1
+            case None =>
+              s = Rebuild(s0)
+          }
       }
     }
 

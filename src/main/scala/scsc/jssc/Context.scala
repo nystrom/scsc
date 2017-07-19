@@ -60,20 +60,23 @@ object Context {
   // This does not include all the built-in objects, which just get
   // reified.
   lazy val defs = Map(
-    "" -> Map("eval" -> Prim("eval"),
+    "Array" -> Map("prototype" -> Prim("Array.prototype")),
+    "Function" -> Map("prototype" -> Prim("Function.prototype")),
+    "Object" -> Map("prototype" -> Prim("Object.prototype"))
+    , "" -> Map(
+                    "eval" -> Prim("eval"),
                     "isFinite" -> Prim("isFinite"),
                     "isNaN" -> Prim("isNaN"),
                     "parseFloat" -> Prim("parseFloat"),
                     "parseInt" -> Prim("parseInt"),
                     "Infinity" -> Num(Double.PositiveInfinity),
-                    "NaN" -> Num(Double.NaN)
-                  ),
+                    "NaN" -> Num(Double.NaN),
+                    "undefined" -> Undefined()
+                  )
+    /*
     "String" -> Map("indexOf" -> Prim("String.indexOf"),
                     "charAt" -> Prim("String.charAt")
     ),
-    "Array" -> Map("prototype" -> Prim("Array.prototype")),
-    "Function" -> Map("prototype" -> Prim("Function.prototype")),
-    "Object" -> Map("prototype" -> Prim("Object.prototype")),
     "Math" -> Map("min" -> Prim("Math.min"),
                     "max" -> Prim("Math.max"),
                     "sin" -> Prim("Math.sin"),
@@ -101,5 +104,6 @@ object Context {
                     "SQRT2" -> Prim("Math.SQRT2"),
                     "SQRT1_2" -> Prim("Math.SQRT1_2")
                     )
+                    */
   )
 }

@@ -1,8 +1,8 @@
-package scsc.jssc
+package scsc.core
 
 import scsc.js.Trees._
-import Continuations._
-import Subst._
+import scsc.jssc.Continuations._
+import scsc.core.Subst._
 
 class Unifier(protected var currSubst: Subst, protected var failed: Boolean) {
   import Unifier._
@@ -88,7 +88,7 @@ object Unifier {
         case (Some(s), (Local(x1), Local(x2))) if x1 < x2 => Some(s @@ singletonSubst(x1, Local(x2)))
         case (Some(s), (Local(x1), Local(x2))) if x1 > x2 => Some(s @@ singletonSubst(x2, Local(x1)))
         case (Some(s), (Local(x1), e2)) => Some(s @@ singletonSubst(x1, e2))
-        
+
         // Unification is asymmetric.
         // case (Some(s), (e1, Residual(x2))) => Some(s @@ singletonSubst(x2, e1))
         case (Some(s), (Binary(op1, _, _), Binary(op2, _, _))) if op1 == op2 => Some(s)

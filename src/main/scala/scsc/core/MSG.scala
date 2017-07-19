@@ -1,4 +1,4 @@
-package scsc.jssc
+package scsc.core
 
 import com.typesafe.scalalogging._
 import scsc.util.FreshVar
@@ -7,60 +7,10 @@ import scsc.util.FreshVar
 // The goal of context reduction is to reduce the list of predicates to
 // a smaller, more managable list.
 object MSG {
+  import scsc.core.Subst._
   import scsc.js.Trees._
 
   val logger = Logger("MSG")
-
-  type Subst = Map[Name, Exp]
-
-  val emptySubst: Subst = Map.empty
-
-  def singletonSubst(v: Name, t: Exp) = Map(v -> t)
-
-  // Merge operations on substitutions.
-  implicit class SubstOps(s1: Subst) {
-    // left-biased non-conflicting merge
-    def @@(s2: Subst) = {
-      // val s3 = for { (u, t) <- s2 } yield (u, t.subst(s1))
-      val s3 = for { (u, t) <- s2 -- s1.keys } yield (u, t.subst(s1))
-      val s4 = for { u <- s1.keys.toList intersect s2.keys.toList }
-        yield s2(u) match {
-          case t @ Local(v) => (v, s1(u))
-          case t => (u, t.subst(s1))
-        }
-      val s5 = s3 ++ s4 ++ s1
-      s5
-    }
-
-    // merge where conflicts are an error
-    def merge(s2: Subst): Option[Subst] = {
-      val agree = (s1.keys.toList intersect s2.keys.toList).forall(v => s1(v) == s2(v))
-      if (agree)
-        Some(s1 ++ s2)
-      else
-        None
-    }
-  }
-
-  implicit class ExpSubst(t: Exp) {
-    import scsc.js.TreeWalk._
-
-    class Subster(s: Subst) extends Rewriter {
-      override def rewrite(e: Exp) = e match {
-        case t @ Local(x) =>
-          s.get(x) match {
-            case Some(u) => u
-            case None => t
-          }
-        case t =>
-          super.rewrite(t)
-      }
-    }
-
-    def subst(s: Subst): Exp = {
-      new Subster(s).rewrite(t)
-    }
-  }
 
   // Generalizes two terms, returning a new variable name,
   // a new lambda that should be bound to that variable, whose body is

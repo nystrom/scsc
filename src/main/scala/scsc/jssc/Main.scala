@@ -27,12 +27,7 @@ object Main extends REPL {
   }
 
   def process(source: Source, e: Exp, config: REPLConfig) {
-    val result = e match {
-      case e: Scope =>
-        CESK.evalProgram(e, 1000)
-      case e =>
-        CESK.eval(e, 1000)
-    }
+    val result = SC.eval(e, 1000)
     config.output().emitln(result)
     config.output().emitln(PP.pretty(result))
   }
