@@ -15,7 +15,7 @@ class Octane_raytrace extends FlatSpec with Matchers {
   "JSSC" should "eval raytrace.js" in {
     val e = Parser.fromFile(test10)
     e match {
-      case Some(e) => CESK.eval(e, 100) shouldBe (Undefined())
+      case Some(e) => SC.eval(e, 100) shouldBe (Undefined())
       case None => fail
     }
   }

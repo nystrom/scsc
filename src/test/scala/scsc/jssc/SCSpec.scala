@@ -38,7 +38,7 @@ class SCSpec extends FlatSpec with Matchers {
     """)
     e match {
       case Some(e) =>
-        val result = CESK.eval(e, 1000)
+        val result = SC.eval(e, 1000)
         result shouldBe (expected)
       case None =>
         fail
@@ -72,7 +72,7 @@ class SCSpec extends FlatSpec with Matchers {
     """)
     e match {
       case Some(e) =>
-        val result = CESK.eval(e, 1000)
+        val result = SC.eval(e, 1000)
         result shouldBe (expected)
       case None =>
         fail

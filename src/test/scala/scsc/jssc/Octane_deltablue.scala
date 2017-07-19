@@ -15,7 +15,7 @@ class Octane_deltablue extends FlatSpec with Matchers {
   "JSSC" should "eval deltablue.js" in {
     val e = Parser.fromFile(test3)
     e match {
-      case Some(e) => CESK.eval(e, 100) shouldBe (Undefined())
+      case Some(e) => SC.eval(e, 100) shouldBe (Undefined())
       case None => fail
     }
   }

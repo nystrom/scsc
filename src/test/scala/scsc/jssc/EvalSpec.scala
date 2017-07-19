@@ -12,7 +12,7 @@ class EvalSpec extends FlatSpec with Matchers {
     val e = Parser.fromString("8")
     e match {
       case Some(e) =>
-        val result = CESK.eval(e, 1000)
+        val result = SC.eval(e, 1000)
         result shouldBe (Num(8.0))
       case None =>
         fail
@@ -23,7 +23,7 @@ class EvalSpec extends FlatSpec with Matchers {
     val e = Parser.fromString("1*2-3+4+5")
     e match {
       case Some(e) =>
-        val result = CESK.eval(e, 1000)
+        val result = SC.eval(e, 1000)
         result shouldBe (Num(8.0))
       case None =>
         fail
@@ -34,7 +34,7 @@ class EvalSpec extends FlatSpec with Matchers {
     val e = Parser.fromString("var o = {x:8}; o.x")
     e match {
       case Some(e) =>
-        val result = CESK.eval(e, 1000)
+        val result = SC.eval(e, 1000)
         result shouldBe (Num(8.0))
       case None =>
         fail
@@ -49,7 +49,7 @@ class EvalSpec extends FlatSpec with Matchers {
     """)
     e match {
       case Some(e) =>
-        val result = CESK.eval(e, 1000)
+        val result = SC.eval(e, 1000)
         result shouldBe (Num(8.0))
       case None =>
         fail
@@ -65,7 +65,7 @@ class EvalSpec extends FlatSpec with Matchers {
     """)
     e match {
       case Some(e) =>
-        val result = CESK.eval(e, 1000)
+        val result = SC.eval(e, 1000)
         result shouldBe (Num(8.0))
       case None =>
         fail
@@ -80,7 +80,7 @@ class EvalSpec extends FlatSpec with Matchers {
     """)
     e match {
       case Some(e) =>
-        val result = CESK.eval(e, 1000)
+        val result = SC.eval(e, 1000)
         result shouldBe (Num(8.0))
       case None =>
         fail
@@ -95,7 +95,7 @@ class EvalSpec extends FlatSpec with Matchers {
     """)
     e match {
       case Some(e) =>
-        val result = CESK.eval(e, 1000)
+        val result = SC.eval(e, 1000)
         result shouldBe {
           Seq(
             VarDef("_v0",Undefined()),
@@ -128,7 +128,7 @@ class EvalSpec extends FlatSpec with Matchers {
     """)
     e match {
       case Some(e) =>
-        val result = CESK.eval(e, 1000)
+        val result = SC.eval(e, 1000)
         result shouldBe (Num(8.0))
       case None =>
         fail
@@ -142,7 +142,7 @@ class EvalSpec extends FlatSpec with Matchers {
     """)
     e match {
       case Some(e) =>
-        val result = CESK.eval(e, 1000)
+        val result = SC.eval(e, 1000)
         result shouldBe (Num(8.0))
       case None =>
         fail
@@ -156,7 +156,7 @@ class EvalSpec extends FlatSpec with Matchers {
     """)
     e match {
       case Some(e) =>
-        val result = CESK.eval(e, 1000)
+        val result = SC.eval(e, 1000)
         result shouldBe (Num(8.0))
       case None =>
         fail
@@ -170,7 +170,7 @@ class EvalSpec extends FlatSpec with Matchers {
     """)
     e match {
       case Some(e) =>
-        val result = CESK.eval(e, 1000)
+        val result = SC.eval(e, 1000)
         result shouldBe (Num(8.0))
       case None =>
         fail
@@ -186,7 +186,7 @@ class EvalSpec extends FlatSpec with Matchers {
     """)
     e match {
       case Some(e) =>
-        val result = CESK.eval(e, 1000)
+        val result = SC.eval(e, 1000)
         result shouldBe (Num(8.0))
       case None =>
         fail
@@ -201,7 +201,7 @@ class EvalSpec extends FlatSpec with Matchers {
     """)
     e match {
       case Some(e) =>
-        val result = CESK.eval(e, 1000)
+        val result = SC.eval(e, 1000)
         result shouldBe (Num(8.0))
       case None =>
         fail
@@ -215,7 +215,7 @@ class EvalSpec extends FlatSpec with Matchers {
     """)
     e match {
       case Some(e) =>
-        val result = CESK.eval(e, 1000)
+        val result = SC.eval(e, 1000)
         result shouldBe (Num(8.0))
       case None =>
         fail
@@ -229,7 +229,7 @@ class EvalSpec extends FlatSpec with Matchers {
     """)
     e match {
       case Some(e) =>
-        val result = CESK.eval(e, 1000)
+        val result = SC.eval(e, 1000)
         result shouldBe (Num(8.0))
       case None =>
         fail
@@ -243,7 +243,7 @@ class EvalSpec extends FlatSpec with Matchers {
     """)
     e match {
       case Some(e) =>
-        val result = CESK.eval(e, 1000)
+        val result = SC.eval(e, 1000)
         result shouldBe (Num(8.0))
       case None =>
         fail
@@ -257,7 +257,7 @@ class EvalSpec extends FlatSpec with Matchers {
     """)
     e match {
       case Some(e) =>
-        val result = CESK.eval(e, 1000)
+        val result = SC.eval(e, 1000)
         result shouldBe (Num(8.0))
       case None =>
         fail
@@ -271,7 +271,7 @@ class EvalSpec extends FlatSpec with Matchers {
     """)
     e match {
       case Some(e) =>
-        val result = CESK.eval(e, 1000)
+        val result = SC.eval(e, 1000)
         result shouldBe (Num(8.0))
       case None =>
         fail
@@ -285,7 +285,7 @@ class EvalSpec extends FlatSpec with Matchers {
     """)
     e match {
       case Some(e) =>
-        val result = CESK.eval(e, 1000)
+        val result = SC.eval(e, 1000)
         result shouldBe (Num(8.0))
       case None =>
         fail
@@ -299,7 +299,7 @@ class EvalSpec extends FlatSpec with Matchers {
     """)
     e match {
       case Some(e) =>
-        val result = CESK.eval(e, 1000)
+        val result = SC.eval(e, 1000)
         result shouldBe (Num(8.0))
       case None =>
         fail
@@ -313,7 +313,7 @@ class EvalSpec extends FlatSpec with Matchers {
     """)
     e match {
       case Some(e) =>
-        val result = CESK.eval(e, 1000)
+        val result = SC.eval(e, 1000)
         result shouldBe (Num(8.0))
       case None =>
         fail
@@ -327,7 +327,7 @@ class EvalSpec extends FlatSpec with Matchers {
     """)
     e match {
       case Some(e) =>
-        val result = CESK.eval(e, 1000)
+        val result = SC.eval(e, 1000)
         result shouldBe (Num(8.0))
       case None =>
         fail
@@ -341,7 +341,7 @@ class EvalSpec extends FlatSpec with Matchers {
     """)
     e match {
       case Some(e) =>
-        val result = CESK.eval(e, 1000)
+        val result = SC.eval(e, 1000)
         result shouldBe (Num(8.0))
       case None =>
         fail
@@ -355,7 +355,7 @@ class EvalSpec extends FlatSpec with Matchers {
     """)
     e match {
       case Some(e) =>
-        val result = CESK.eval(e, 1000)
+        val result = SC.eval(e, 1000)
         result should matchPattern {
           case Seq(
             VarDef(x1,Undefined()),

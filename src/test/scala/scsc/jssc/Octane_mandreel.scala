@@ -15,7 +15,7 @@ class Octane_mandreel extends FlatSpec with Matchers {
   "JSSC" should "eval mandreel.js" in {
     val e = Parser.fromFile(test7)
     e match {
-      case Some(e) => CESK.eval(e, 100) shouldBe (Undefined())
+      case Some(e) => SC.eval(e, 100) shouldBe (Undefined())
       case None => fail
     }
   }

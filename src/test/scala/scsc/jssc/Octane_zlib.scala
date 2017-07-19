@@ -16,7 +16,7 @@ class Octane_zlib extends FlatSpec with Matchers {
   "JSSC" should "eval zlib-data.js" in {
     val e = Parser.fromFile(test16)
     e match {
-      case Some(e) => CESK.eval(e, 100) shouldBe (Undefined())
+      case Some(e) => SC.eval(e, 100) shouldBe (Undefined())
       case None => fail
     }
   }
@@ -24,7 +24,7 @@ class Octane_zlib extends FlatSpec with Matchers {
   "JSSC" should "eval zlib.js" in {
     val e = Parser.fromFile(test17)
     e match {
-      case Some(e) => CESK.eval(e, 100) shouldBe (Undefined())
+      case Some(e) => SC.eval(e, 100) shouldBe (Undefined())
       case None => fail
     }
   }

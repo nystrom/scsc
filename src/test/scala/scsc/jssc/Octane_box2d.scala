@@ -15,7 +15,7 @@ class Octane_box2d extends FlatSpec with Matchers {
   "JSSC" should "eval box2d.js" in {
     val e = Parser.fromFile(test1)
     e match {
-      case Some(e) => CESK.eval(e, 100) shouldBe (Undefined())
+      case Some(e) => SC.eval(e, 100) shouldBe (Undefined())
       case None => fail
     }
   }

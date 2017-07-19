@@ -16,7 +16,7 @@ class Octane_splay extends FlatSpec with Matchers {
     val e = Parser.fromFile(s"$dir/base.js", test13, s"$dir/run.js")
     e match {
       case Some(e) =>
-        val r = CESK.eval(e, 100)
+        val r = SC.eval(e, 100)
         println(scsc.js.PP.pretty(r))
         r shouldBe (Undefined())
       case None => fail

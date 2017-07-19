@@ -15,7 +15,7 @@ class Octane_navier_stokes extends FlatSpec with Matchers {
   "JSSC" should "eval navier-stokes.js" in {
     val e = Parser.fromFile(test8)
     e match {
-      case Some(e) => CESK.eval(e, 100) shouldBe (Undefined())
+      case Some(e) => SC.eval(e, 100) shouldBe (Undefined())
       case None => fail
     }
   }

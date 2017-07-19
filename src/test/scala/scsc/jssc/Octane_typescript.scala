@@ -17,7 +17,7 @@ class Octane_typescript extends FlatSpec with Matchers {
   "JSSC" should "eval typescript-compiler.js" in {
     val e = Parser.fromFile(test14)
     e match {
-      case Some(e) => CESK.eval(e, 100) shouldBe (Undefined())
+      case Some(e) => SC.eval(e, 100) shouldBe (Undefined())
       case None => fail
     }
   }
@@ -25,7 +25,7 @@ class Octane_typescript extends FlatSpec with Matchers {
   "JSSC" should "eval typescript-input.js" in {
     val e = Parser.fromFile(test15)
     e match {
-      case Some(e) => CESK.eval(e, 100) shouldBe (Undefined())
+      case Some(e) => SC.eval(e, 100) shouldBe (Undefined())
       case None => fail
     }
   }
@@ -33,7 +33,7 @@ class Octane_typescript extends FlatSpec with Matchers {
   "JSSC" should "eval typescript.js" in {
     val e = Parser.fromFile(test16)
     e match {
-      case Some(e) => CESK.eval(e, 100) shouldBe (Undefined())
+      case Some(e) => SC.eval(e, 100) shouldBe (Undefined())
       case None => fail
     }
   }

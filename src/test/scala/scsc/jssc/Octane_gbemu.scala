@@ -16,7 +16,7 @@ class Octane_gbemu extends FlatSpec with Matchers {
   "JSSC" should "eval gbemu-part1.js" in {
     val e = Parser.fromFile(test5)
     e match {
-      case Some(e) => CESK.eval(e, 100) shouldBe (Undefined())
+      case Some(e) => SC.eval(e, 100) shouldBe (Undefined())
       case None => fail
     }
   }
@@ -24,7 +24,7 @@ class Octane_gbemu extends FlatSpec with Matchers {
   "JSSC" should "eval gbemu-part2.js" in {
     val e = Parser.fromFile(test6)
     e match {
-      case Some(e) => CESK.eval(e, 100) shouldBe (Undefined())
+      case Some(e) => SC.eval(e, 100) shouldBe (Undefined())
       case None => fail
     }
   }

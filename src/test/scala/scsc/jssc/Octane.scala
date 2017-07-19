@@ -31,7 +31,7 @@ class Octane extends FlatSpec with Matchers {
   "JSSC" should "eval box2d.js" in {
     val e = Parser.fromFile(test1)
     e match {
-      case Some(e) => CESK.eval(e, 100) shouldBe (Undefined())
+      case Some(e) => SC.eval(e, 100) shouldBe (Undefined())
       case None => fail
     }
   }
@@ -39,7 +39,7 @@ class Octane extends FlatSpec with Matchers {
   "JSSC" should "eval crypto.js" in {
     val e = Parser.fromFile(test2)
     e match {
-      case Some(e) => CESK.eval(e, 100) shouldBe (Undefined())
+      case Some(e) => SC.eval(e, 100) shouldBe (Undefined())
       case None => fail
     }
   }
@@ -47,7 +47,7 @@ class Octane extends FlatSpec with Matchers {
   "JSSC" should "eval deltablue.js" in {
     val e = Parser.fromFile(test3)
     e match {
-      case Some(e) => CESK.eval(e, 100) shouldBe (Undefined())
+      case Some(e) => SC.eval(e, 100) shouldBe (Undefined())
       case None => fail
     }
   }
@@ -55,7 +55,7 @@ class Octane extends FlatSpec with Matchers {
   "JSSC" should "eval earley-boyer.js" in {
     val e = Parser.fromFile(test4)
     e match {
-      case Some(e) => CESK.eval(e, 100) shouldBe (Undefined())
+      case Some(e) => SC.eval(e, 100) shouldBe (Undefined())
       case None => fail
     }
   }
@@ -63,7 +63,7 @@ class Octane extends FlatSpec with Matchers {
   "JSSC" should "eval gbemu-part1.js" in {
     val e = Parser.fromFile(test5)
     e match {
-      case Some(e) => CESK.eval(e, 100) shouldBe (Undefined())
+      case Some(e) => SC.eval(e, 100) shouldBe (Undefined())
       case None => fail
     }
   }
@@ -71,7 +71,7 @@ class Octane extends FlatSpec with Matchers {
   "JSSC" should "eval gbemu-part2.js" in {
     val e = Parser.fromFile(test6)
     e match {
-      case Some(e) => CESK.eval(e, 100) shouldBe (Undefined())
+      case Some(e) => SC.eval(e, 100) shouldBe (Undefined())
       case None => fail
     }
   }
@@ -79,7 +79,7 @@ class Octane extends FlatSpec with Matchers {
   "JSSC" should "eval mandreel.js" in {
     val e = Parser.fromFile(test7)
     e match {
-      case Some(e) => CESK.eval(e, 100) shouldBe (Undefined())
+      case Some(e) => SC.eval(e, 100) shouldBe (Undefined())
       case None => fail
     }
   }
@@ -87,7 +87,7 @@ class Octane extends FlatSpec with Matchers {
   "JSSC" should "eval navier-stokes.js" in {
     val e = Parser.fromFile(test8)
     e match {
-      case Some(e) => CESK.eval(e, 100) shouldBe (Undefined())
+      case Some(e) => SC.eval(e, 100) shouldBe (Undefined())
       case None => fail
     }
   }
@@ -95,7 +95,7 @@ class Octane extends FlatSpec with Matchers {
   "JSSC" should "eval pdfjs.js" in {
     val e = Parser.fromFile(test9)
     e match {
-      case Some(e) => CESK.eval(e, 100) shouldBe (Undefined())
+      case Some(e) => SC.eval(e, 100) shouldBe (Undefined())
       case None => fail
     }
   }
@@ -103,7 +103,7 @@ class Octane extends FlatSpec with Matchers {
   "JSSC" should "eval raytrace.js" in {
     val e = Parser.fromFile(test10)
     e match {
-      case Some(e) => CESK.eval(e, 100) shouldBe (Undefined())
+      case Some(e) => SC.eval(e, 100) shouldBe (Undefined())
       case None => fail
     }
   }
@@ -111,7 +111,7 @@ class Octane extends FlatSpec with Matchers {
   "JSSC" should "eval regexp.js" in {
     val e = Parser.fromFile(test11)
     e match {
-      case Some(e) => CESK.eval(e, 100) shouldBe (Undefined())
+      case Some(e) => SC.eval(e, 100) shouldBe (Undefined())
       case None => fail
     }
   }
@@ -119,7 +119,7 @@ class Octane extends FlatSpec with Matchers {
   "JSSC" should "eval richards.js" in {
     val e = Parser.fromFile(test12)
     e match {
-      case Some(e) => CESK.eval(e, 100) shouldBe (Undefined())
+      case Some(e) => SC.eval(e, 100) shouldBe (Undefined())
       case None => fail
     }
   }
@@ -127,7 +127,7 @@ class Octane extends FlatSpec with Matchers {
   "JSSC" should "eval splay.js" in {
     val e = Parser.fromFile(test13)
     e match {
-      case Some(e) => CESK.eval(e, 100) shouldBe (Undefined())
+      case Some(e) => SC.eval(e, 100) shouldBe (Undefined())
       case None => fail
     }
   }
@@ -135,7 +135,7 @@ class Octane extends FlatSpec with Matchers {
   "JSSC" should "eval typescript-compiler.js" in {
     val e = Parser.fromFile(test14)
     e match {
-      case Some(e) => CESK.eval(e, 100) shouldBe (Undefined())
+      case Some(e) => SC.eval(e, 100) shouldBe (Undefined())
       case None => fail
     }
   }
@@ -143,7 +143,7 @@ class Octane extends FlatSpec with Matchers {
   "JSSC" should "eval typescript-input.js" in {
     val e = Parser.fromFile(test15)
     e match {
-      case Some(e) => CESK.eval(e, 100) shouldBe (Undefined())
+      case Some(e) => SC.eval(e, 100) shouldBe (Undefined())
       case None => fail
     }
   }
@@ -151,7 +151,7 @@ class Octane extends FlatSpec with Matchers {
   "JSSC" should "eval zlib-data.js" in {
     val e = Parser.fromFile(test16)
     e match {
-      case Some(e) => CESK.eval(e, 100) shouldBe (Undefined())
+      case Some(e) => SC.eval(e, 100) shouldBe (Undefined())
       case None => fail
     }
   }
