@@ -49,6 +49,37 @@ object Machine {
             }
             else {
               traces.get(x) match {
+                case Some(VarDef(y, e)) =>
+                  used += x
+                  Seq(VarDef(y, rewrite(e)), Assign(None, Residual(x), Local(y)))
+                case Some(s: IfElse) =>
+                  used += x
+                  Seq(rewrite(s), Assign(None, Residual(x), Undefined()))
+                case Some(s: While) =>
+                  used += x
+                  Seq(rewrite(s), Assign(None, Residual(x), Undefined()))
+                case Some(s: For) =>
+                  used += x
+                  Seq(rewrite(s), Assign(None, Residual(x), Undefined()))
+                case Some(s: ForIn) =>
+                  used += x
+                  Seq(rewrite(s), Assign(None, Residual(x), Undefined()))
+                case Some(s: DoWhile) =>
+                  used += x
+                  Seq(rewrite(s), Assign(None, Residual(x), Undefined()))
+                case Some(s: Empty) =>
+                  Empty()
+                case Some(Seq(s1, s2)) =>
+                  used += x
+                  def rewriteSeq(s1: Exp, s2: Exp): Seq = s2 match {
+                    case _: IfElse | _: While | _: DoWhile | _: For | _: ForIn | _: VarDef =>
+                      Seq(s1, s2)
+                    case Seq(s2a, s2b) =>
+                      Seq(s1, rewriteSeq(s2a, s2b))
+                    case e =>
+                      Seq(s1, Assign(None, Residual(x), e))
+                  }
+                  rewriteSeq(rewrite(s1), rewrite(s2))
                 case Some(e1) =>
                   used += x
                   Assign(None, Residual(x), rewrite(e1))

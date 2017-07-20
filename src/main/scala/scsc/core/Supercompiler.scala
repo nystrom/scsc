@@ -28,9 +28,15 @@ trait Supercompiler[State] {
   private type History = List[State]
 
   sealed trait MetaState
-  case class Drive(state: State, history: History, k: MetaCont) extends MetaState
-  case class Split(state: State, history: History, k: MetaCont) extends MetaState
-  case class Rebuild(state: State, history: History, k: MetaCont) extends MetaState
+  case class Drive(state: State, history: History, k: MetaCont) extends MetaState {
+    override def toString = s"Drive($state, _, $k)"
+  }
+  case class Split(state: State, history: History, k: MetaCont) extends MetaState {
+    override def toString = s"Split($state, $history, $k)"
+  }
+  case class Rebuild(state: State, history: History, k: MetaCont) extends MetaState {
+    override def toString = s"Rebuild($state, _, $k)"
+  }
   case class Done(state: State) extends MetaState
 
   sealed trait MetaFrame
@@ -42,24 +48,51 @@ trait Supercompiler[State] {
 
   def supercompile(start: State): Option[State] = {
     val ms = Drive(start, Nil, Nil)
-    meta(ms) match {
+    meta(ms, Nil) match {
       case Done(s) => Some(s)
       case _ => None
     }
   }
 
+  trait MetaWhistles extends Whistles[MetaState] {
+    def isInstance(s1: MetaState, s2: MetaState): Boolean = s1 == s2
+    def isSmaller(child: MetaState, ancestor: MetaState): Boolean = child == ancestor
+    def mightDiverge(ms: MetaState): Boolean = false
+
+    case class SplitDepthWhistle(maxDepth: Int) extends Whistle {
+      def blow(h: List[MetaState]) = h match {
+        case Drive(_, _, k)::_ => k.length > maxDepth
+        case Split(_, _, k)::_ => k.length > maxDepth
+        case _ => false
+      }
+    }
+  }
+
+  object MetaWhistles extends MetaWhistles
+
+  val theMetaWhistle: MetaWhistles.Whistle = MetaWhistles.NoWhistle
+
+  def metaWhistle(mss: List[MetaState]): Boolean = theMetaWhistle.blow(mss)
+
   @scala.annotation.tailrec
-  final def meta(ms: MetaState): MetaState = {
+  final def meta(ms: MetaState, mss: List[MetaState]): MetaState = {
+    lazy val metaStop = metaWhistle(ms::mss)
+
     println(s"META STATE $ms")
     val next = ms match {
       case Drive(s, h, k) =>
         interp.fold(s::h) match {
           case Some(s1::h1) =>
             println(s"FOLD")
-            Drive(s1, h1, k)
+            // After folding, rebuild.
+            Rebuild(s1, h1, k)
           case _ =>
             if (interp.whistle(s::h)) {
               println(s"WHISTLE")
+              Split(s, h, k)
+            }
+            else if (metaStop) {
+              println(s"META WHISTLE")
               Split(s, h, k)
             }
             else {
@@ -73,8 +106,10 @@ trait Supercompiler[State] {
 
       case Split(s, h, k) =>
         interp.split(s) match {
-          case first::rest => Drive(first, Nil, RunSplit(rest, Nil, s, h)::k)
-          case Nil => Rebuild(s, h, k)
+          case first::rest if ! metaStop =>
+            Drive(first, Nil, RunSplit(rest, Nil, s, h)::k)
+          case Nil =>
+            Rebuild(s, h, k)
         }
 
       case Rebuild(s, h, RunSplit(next::pending, complete, s0, h0)::k) =>
@@ -82,16 +117,16 @@ trait Supercompiler[State] {
 
       case Rebuild(s, h, RunSplit(Nil, complete, s0, h0)::k) =>
         interp.reassemble(s0, complete :+ (s::h)) match {
-          case Left(first::rest) =>
+          case Left(first::rest) if ! metaStop =>
             // resplit
             Drive(first, Nil, RunSplit(rest, Nil, s0, h0)::k)
-          case Left(Nil) =>
-            // reassemble failed
+          case Left(_) =>
+            // reassemble failed (or the meta whistle blew)
             // we need to just back out of the split entirely
             Rebuild(s0, h0, k)
           case Right(s1) =>
-            // join successful
-            Rebuild(s1, h0, k)
+            // join successful, continue
+            Drive(s1, h0, k)
         }
       case Rebuild(s, h, Nil) =>
         Done(interp.rebuild(s::h))
@@ -100,6 +135,6 @@ trait Supercompiler[State] {
         return Done(s)
     }
 
-    meta(next)
+    meta(next, ms::mss)
   }
 }

@@ -38,13 +38,13 @@ trait Whistles[State] {
   }
 
   // Whistle blows if the configuation might diverge
-  case class MightDivergeWhistle() extends StateWhistle(mightDiverge _)
+  case object MightDivergeWhistle extends StateWhistle(mightDiverge _)
 
   case class DepthWhistle(maxDepth: Int) extends Whistle {
     def blow(h: History) = h.length > maxDepth
   }
 
-  case class HEWhistle() extends Whistle {
+  case object HEWhistle extends Whistle {
     def blow(h: History) = {
       h match {
         case Nil => false

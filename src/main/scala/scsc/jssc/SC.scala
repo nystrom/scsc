@@ -168,11 +168,14 @@ object SC {
 
   object JSSuper extends Supercompiler[States.State] {
     def interp = JSInterp
+    override val theMetaWhistle = MetaWhistles.DepthWhistle(100) | MetaWhistles.SplitDepthWhistle(20)
   }
 
   import scsc.core.Whistles
 
   trait JSWhistles extends Whistles[States.State] {
+    private type History = List[States.State]
+
     type NormalConfig = (Symbol, Exp, Cont)
 
     def isInstance(s1: State, s2: State): Boolean = {
@@ -197,6 +200,33 @@ object SC {
       case _ => false
     }
 
+    def loop(s: State) = s match {
+      case Ev(While(_, _, _), _, _, _, _) => true
+      case Ev(DoWhile(_, _, _), _, _, _, _) => true
+      case Ev(For(_, _, _, _, _), _, _, _, _) => true
+      case Ev(ForIn(_, _, _, _), _, _, _, _) => true
+      case _ => false
+    }
+
+    // Whistle blows if the configuation might diverge
+    case class LoopWhistle() extends StateWhistle(loop _)
+
+    case class RecursiveCallWhistle() extends Whistle {
+      def blow(h: History) = h match {
+        case Ev(c2: Call, _, _, _, _)::hist =>
+          hist.exists {
+            case Ev(c1: Call, _, _, _, _) => c1 == c2
+            case _ => false
+          }
+        case Ev(c2: NewCall, _, _, _, _)::hist =>
+          hist.exists {
+            case Ev(c1: NewCall, _, _, _, _) => c1 == c2
+            case _ => false
+          }
+        case _ => false
+      }
+    }
+
     def normalize(s: State): NormalConfig = s match {
       case Ev(e, ρ, σ, φ, k) => ('Ev, e, k)
       case Co(e, σ, φ, k) => ('Co, e, k)
@@ -218,8 +248,9 @@ object SC {
     // Check if we should stop driving.
     def whistle(h: History): Boolean = theWhistle.blow(h)
 
-    // val theWhistle: Whistle = DepthWhistle(1000) | (MightDivergeWhistle() & HEWhistle())
-    val theWhistle: Whistle = DepthWhistle(1000)
+    val theWhistle: Whistle = DepthWhistle(50) | (MightDivergeWhistle & HEWhistle)
+    // val theWhistle: Whistle = DepthWhistle(100) | ((LoopWhistle() | RecursiveCallWhistle()) & HEWhistle())
+    // val theWhistle: Whistle = DepthWhistle(100)
     // val theWhistle: Whistle = NoWhistle
 
     // Fold the last element of the current history with a previous element, truncating
@@ -230,9 +261,16 @@ object SC {
     def fold(h: History): Option[History] = h match {
       case Nil => None
       case s::h =>
-        h.span(prev => isInstance(s, prev)) match {
-          case (Nil, h1) => None
-          case (h1 :+ s1, h2) => generalize(s, s1).map(_::h2)
+        // This version of fold replaces a simple loop in the history with the root
+        // of the history.
+        object Generalizes {
+          def unapply(h: History) = h match {
+            case prev::tail => generalize(s, prev) map { _::tail }
+            case _ => None
+          }
+        }
+        h.tails collectFirst {
+          case Generalizes(h) => h
         }
     }
 
@@ -253,7 +291,16 @@ object SC {
     // split the current state, return Nil on failure
     def split(s: State): List[State] = Split.split(s)
 
-    def generalize(s1: State, s2: State): Option[State] = None
+    // Generalize, favoring the second state as the earlier state we're going to replace.
+    def generalize(s1: State, s2: State): Option[State] = (s1, s2) match {
+      case (Ev(e1, ρ1, σ1, φ1, k1), Ev(e2, ρ2, σ2, φ2, k2)) if e1 == e2 && k1 == k2 && ρ1 == ρ2 =>
+        Some(Ev(e2, ρ2, σ2.merge(σ1, ρ2), φ2, k2))
+      // case (Co(v1, σ1, φ1, k1), Co(v2, σ2, φ2, k2)) if v1 == v2 && k1 == k2 =>
+      //   Some(Co(v2, σ2.merge(σ1, ρ2), φ2, k2))
+      // case (Unwinding(jump1, σ1, φ1, k1), Unwinding(jump2, σ2, φ2, k2)) if jump1 == jump2 && k1 == k2 =>
+      //   Some(Unwinding(jump2, σ2.merge(σ1, ρ2), φ2, k2))
+      case _ => None
+    }
   }
 
   // Evaluator.

@@ -296,7 +296,7 @@ object States {
       case Local(x) =>
         ρ.get(x) flatMap {
           case loc =>
-            σ.get(loc) map {
+            σ.get(loc) collect {
               case LocClosure(Loc(v)) =>
                 Co(Path(v, Local(x)), σ, φ, k)
               case ValClosure(v) =>
@@ -621,11 +621,15 @@ object States {
           σ.get(Loc(addr)) match {
             case Some(ObjClosure(FunObject(_, _, ys, Some(body0), _), ρ2)) =>
               // HACK (breaks eval): rename the variables to prevent name collisions
-              val xthis = s"this$callNumber"
-              val xs = ys map { y => s"$y$callNumber" }
-              val subst = ("this", xthis) :: (ys zip xs)
-              val body = new Subst(subst.toMap).rewrite(body0)
 
+              // val xthis = s"this$callNumber"
+              val xthis = "this"
+              // val xs = ys map { y => s"$y$callNumber" }
+              val xs = ys
+              val subst = ("this", xthis) :: (ys zip xs)
+              // val body = new Subst(subst.toMap).rewrite(body0)
+              val body = body0
+              
               // Pad the arguments with undefined.
               def pad(params: List[Name], args: List[Exp]): List[Exp] = (params, args) match {
                 case (Nil, _) => Nil
@@ -787,6 +791,7 @@ object States {
               case result =>
                 Co(result, σ.assign(lhs, result, ρ1), φ, k)
             }
+          case _ => None
         }
 
       case DoAssign(op, lhs, ρ1)::k => None
@@ -814,6 +819,7 @@ object States {
                     }
                     Co(resultValue, σ.assign(loc, newValue, ρ1), φ, k)
                 }
+              case _ => None
             }
 
           case v =>

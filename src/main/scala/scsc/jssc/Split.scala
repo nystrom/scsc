@@ -265,6 +265,44 @@ object Split {
   // in general we might return either a rebuilt state
   // or we return a state from which we can continue driving.
   def unsplit(root: State, children: List[List[State]]): Either[List[State], State] = root match {
+    case Ev(Call(fun, Nil), ρ, σ, φ, k) =>
+      println(s"UNSPLIT $root")
+      rebuildEv(Call(fun, Nil), ρ, σ, φ, k) match { case Some(s) => Right(s) case _ => Left(Nil) }
+
+    case Ev(Call(fun, args), ρ, σ, φ, k) =>
+      println(s"UNSPLIT $root")
+      children match {
+        case hist::Nil =>
+          println(s"UNSPLIT hist = $hist")
+          val newCall = hist collectFirst {
+            case Co(v, σ1, φ1, EvalMoreArgsForResidual(_, Nil, args, _)::Nil) =>
+              rebuildEv(Call(fun, args :+ v), ρ, σ1, φ1, k)
+          }
+          println(s"UNSPLIT newCall = $newCall")
+          newCall match {
+            case Some(Some(s)) => Right(s)
+            case _ => Left(Nil)
+          }
+        case _ => Left(Nil)
+      }
+
+    case Ev(NewCall(fun, Nil), ρ, σ, φ, k) =>
+      rebuildEv(NewCall(fun, Nil), ρ, σ, φ, k) match { case Some(s) => Right(s) case _ => Left(Nil) }
+
+    case Ev(NewCall(fun, args), ρ, σ, φ, k) =>
+      children match {
+        case hist::Nil =>
+          val newCall = hist collectFirst {
+            case Co(v, σ1, φ1, EvalMoreArgsForNewResidual(_, Nil, args, _)::Nil) =>
+              rebuildEv(NewCall(fun, args :+ v), ρ, σ1, φ1, k)
+          }
+          newCall match {
+            case Some(Some(s)) => Right(s)
+            case _ => Left(Nil)
+          }
+        case _ => Left(Nil)
+      }
+
     case Ev(While(label, test, body), ρ, σ, φ, k) =>
       children match {
         case (Stopped(v2, σ2, φ2)::hist)::Nil =>
@@ -353,7 +391,6 @@ object Split {
       // because of the information loss after the join, despite
       // exponential code growth.
 
-
       val kont = {
         if (LONG_CONTINUATIONS)
           Nil
@@ -374,7 +411,7 @@ object Split {
           // should continue driving with ss
           // (inputs zip ss) map { (s0, s1) => g.focus(s0).addChild(s1, Extend) }
 
-          // But we don't have the interface for that. Instead, just return a new Co and try again.
+          // But we don't have the interface for that. Instead, just return a new Co and try to split again.
           Left(Co(v, σ, φ, BranchCont(kt, kf, ρ)::k)::Nil)
       }
 
