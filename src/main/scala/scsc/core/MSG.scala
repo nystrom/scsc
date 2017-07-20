@@ -3,20 +3,16 @@ package scsc.core
 import com.typesafe.scalalogging._
 import scsc.util.FreshVar
 
-// Context reduction.
-// The goal of context reduction is to reduce the list of predicates to
-// a smaller, more managable list.
-object MSG {
-  import scsc.core.Subst._
-  import scsc.js.Trees._
-
+trait MSG[Exp] extends Subst[Exp] {
   val logger = Logger("MSG")
+
+  implicit def nameOrd: Ordering[Name]
 
   // Generalizes two terms, returning a new variable name,
   // a new lambda that should be bound to that variable, whose body is
   // the generalization, and then two applications of the new function,
   // equivalent to t1 and t2.
-  def msgTerms(t1: Exp, t2: Exp): Option[(Name, Exp, Exp, Exp)] = {
+  def msgTerms(t1: Exp, t2: Exp): Option[(Subst, Exp)] = {
     generalize(t1, t2) map {
       case (vars, s1, s2, t) =>
         // At this point, t is a generalization of t1 and t2,
@@ -31,32 +27,36 @@ object MSG {
         val s = for {
           (a, u) <- s1.toList
           (b, v) <- s1.toList
-          if a < b        // always replace with the least variable
+          if nameOrd.lt(a, b)       // always replace with the least variable
           if u == v                 // a and b map to the same type in s1
           if s2.get(a) == s2.get(b) // a and b map to the same type in s2, or s2 does not contain either a or b
-        } yield (b, Local(a))
+        } yield (b, name(a))
+
         logger.debug("  s1 = " + s1)
         logger.debug("  s2 = " + s2)
         logger.debug("   s = " + s.toMap)
+
+        (s.toMap, t)
+        /*
         val f = FreshVar()
         val vars1 = vars diff s.map(_._1)
         val lam = vars1.foldRight(t.subst(s.toMap): Exp) {
           case (x, e) => Lambda(x::Nil, e)
         }
-        val app1 = vars1.foldLeft(Local(f): Exp) {
+        val app1 = vars1.foldLeft(name(f): Exp) {
           case (e, x) => Call(e, s1(x)::Nil)
         }
-        val app2 = vars1.foldLeft(Local(f): Exp) {
+        val app2 = vars1.foldLeft(name(f): Exp) {
           case (e, x) => Call(e, s2(x)::Nil)
         }
 
         val vars2 = fv(lam).toList
 
         val vapp1 = vars2.foldLeft(app1: Exp) {
-          case (e, x) => Call(e, Local(x)::Nil)
+          case (e, x) => Call(e, name(x)::Nil)
         }
         val vapp2 = vars2.foldLeft(app2: Exp) {
-          case (e, x) => Call(e, Local(x)::Nil)
+          case (e, x) => Call(e, name(x)::Nil)
         }
         val vlam = vars2.foldRight(lam: Exp) {
           case (x, lam) => Lambda(x::Nil, lam)
@@ -65,6 +65,7 @@ object MSG {
         // Bind f to a new lambda that generalizes t1 and t2.
         // app1 and app2 are calls to f that should be equivalent to t1 and t2.
         (f, vlam, vapp1, vapp2)
+        */
     }
   }
 
@@ -73,8 +74,7 @@ object MSG {
   //   and vars are the newly introduced variables in the generalized types.
   // Fails if t1 and t2 have different types (unimplemented).
   private def generalize(t1: Exp, t2: Exp): Option[(List[Name], Subst, Subst, Exp)] = (t1, t2) match {
-    case (Local(a), Local(b)) if a == b => Some((Nil, emptySubst, emptySubst, Local(a)))
-    case (Num(a), Num(b)) if a == b => Some((Nil, emptySubst, emptySubst, Num(a)))
+    case (name(a), name(b)) if a == b => Some((Nil, emptySubst, emptySubst, name(a)))
     // // FIXME
     // case (Lam(ax, a), Lam(bx, b)) if ax == bx =>
     //   for {
@@ -125,7 +125,7 @@ object MSG {
     case (t1, t2) =>
       // head of the terms not equal. Introduce a new variable.
       val a = FreshVar()
-      Some((a::Nil, singletonSubst(a, t1), singletonSubst(a, t2), Local(a)))
+      Some((a::Nil, singletonSubst(a, t1), singletonSubst(a, t2), name(a)))
   }
 
 }

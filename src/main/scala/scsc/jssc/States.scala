@@ -44,8 +44,8 @@ object States {
   }
 
   object Stopped {
-    def unapply(s: State): Option[(Val, Store, Effect)] = s match {
-      case Halt(v2, σ2, φ2) => Some((v2, σ2, φ2))
+    def unapply(s: State): Option[(Exp, Store, Effect)] = s match {
+      case Rebuilt(v2, σ2, φ2, k) => Some((v2, σ2, φ2))
       case Co(v2, σ2, φ2, k) => Some((v2, σ2, φ2))
       case Ev(e, ρ, σ, φ, k) => Split.rebuildEv(e, ρ, σ, φ, k).flatMap(unapply _)
       case Unwinding(jump, σ2, φ2, k) => Some((Undefined(), σ2, φ2.extend(jump)))
@@ -53,12 +53,206 @@ object States {
     }
   }
 
-  case class Halt(v: Val, σ: Store, φ: Effect) extends FinalState {
+  // Like a Co, but with a rebuilt expression in the focus.
+  case class Rebuilt(e: Exp, σ: Store, φ: Effect, k: Cont) extends State {
     def residual: Exp = {
-      val seq = φ.seq(v)
+      val seq = φ.seq(e)
       φ.vars.foldRight(seq) {
         case (x, e) => Seq(VarDef(x, Undefined()), e)
       }
+    }
+
+    def step = k match {
+      case Nil => None
+
+      // Here we're about to branch with a residual test.
+      case BranchCont(kt, kf, ρ)::k => Some {
+        val x = FreshVar()
+        Co(Residual(x), σ, φ.extend(x, e), BranchCont(kt, kf, ρ)::k)
+      }
+
+      case CondBranchCont(kt, kf, ρ)::k => Some {
+        val x = FreshVar()
+        Co(Residual(x), σ, φ.extend(x, e), CondBranchCont(kt, kf, ρ)::k)
+      }
+
+      case StartLoop(loop, ρ1, σ1, φ1)::k => Some {
+        Rebuilt(loop, σ1, φ1, k)
+      }
+
+      // discard useless break and continue frames
+      case BreakFrame(_)::k => Some {
+        Rebuilt(e, σ, φ, k)
+      }
+
+      case ContinueFrame(_)::k => Some {
+        Rebuilt(e, σ, φ, k)
+      }
+
+      ////////////////////////////////////////////////////////////////
+      // Blocks.
+      ////////////////////////////////////////////////////////////////
+
+      // Discard the value and evaluate the sequel.
+      case SeqCont(s2, ρ1)::k => Some {
+        Rebuilt(Seq(e, s2), σ, φ, k)
+      }
+
+      // Change the focus
+      case FocusCont(v2)::k => Some {
+        Rebuilt(Seq(e, v2), σ, φ, k)
+      }
+
+      ////////////////////////////////////////////////////////////////
+      // Assignment.
+      ////////////////////////////////////////////////////////////////
+
+      case EvalAssignRhs(op, rhs, ρ1)::k => Some {
+        Rebuilt(Assign(op, e, rhs), σ, φ, k)
+      }
+
+      case DoAssign(op, lhs, ρ1)::k => Some {
+        // Normal assignment... the result is the rhs value
+        Rebuilt(Assign(op, reify(lhs), e), σ, φ, k)
+      }
+
+      case DoIncDec(op, ρ1)::k => Some {
+        Rebuilt(IncDec(op, e), σ, φ, k)
+      }
+
+      case DoTypeof(ρ1)::k => Some {
+        Rebuilt(Typeof(e), σ, φ, k)
+      }
+
+      case DoUnaryOp(op, ρ1)::k => Some {
+        Rebuilt(Unary(op, e), σ, φ, k)
+      }
+
+      case EvalBinaryOpRight(op, e2, ρ1)::k => Some {
+        Rebuilt(Binary(op, e, reify(e2)), σ, φ, k)
+      }
+
+      case DoBinaryOp(op, v1, ρ1)::k => Some {
+        Rebuilt(Binary(op, reify(v1), e), σ, φ, k)
+      }
+
+      ////////////////////////////////////////////////////////////////
+      // Calls and lambda.
+      // FIXME
+      // Environment handling is completely broken here.
+      // See the old SCSC implementation.
+      ////////////////////////////////////////////////////////////////
+
+      case EvalMethodProperty(m, es, ρ1)::k => Some {
+        Rebuilt(Call(Index(e, m), es), σ, φ, k)
+      }
+
+      case EvalArgs(thisValue, args, ρ1)::k => Some {
+        Rebuilt(Call(e, args), σ, φ, k)
+      }
+
+      case EvalMoreArgs(fun, thisValue, args, done, ρ1)::k => Some {
+        Rebuilt(Call(reify(fun), done ++ (e::args)), σ, φ, k)
+      }
+
+      // The function is unknown, so just residualize after evaluating
+      // the arguments.
+      case EvalMoreArgsForResidual(fun, args, done, ρ1)::k => Some {
+        Rebuilt(Call(reify(fun), done ++ (e::args)), σ, φ, k)
+      }
+
+      ///////////////////////////////////////////////////////////////, k/
+      // Return. Pop the continuations until we hit the caller.
+      ////////////////////////////////////////////////////////////////
+
+      case DoReturn()::k => Some {
+        e match {
+          case Undefined() =>
+            Rebuilt(Return(None), σ, φ, k)
+          case e =>
+            Rebuilt(Return(Some(e)), σ, φ, k)
+        }
+      }
+
+      // If we run off the end of the function body, act like we returned normally.
+      case CallFrame(ρ1)::k => Some {
+        Rebuilt(e, σ, φ, k)
+      }
+
+
+      ////////////////////////////////////////////////////////////////
+      // Throw. This is implemented similarly to Return.
+      ////////////////////////////////////////////////////////////////
+
+      case DoThrow()::k => Some {
+        Rebuilt(Throw(e), σ, φ, k)
+      }
+
+      // Run the finally block, if any. Then restore the value.
+      case FinallyFrame(fin, ρ1)::k => Some {
+        Rebuilt(TryFinally(e, fin), σ, φ, k)
+      }
+
+      // If not throwing, just discard catch frames.
+      case CatchFrame(cs, ρ1)::k => Some {
+        Rebuilt(TryCatch(e, cs), σ, φ, k)
+      }
+
+      ////////////////////////////////////////////////////////////////
+      // Objects and arrays.
+      ////////////////////////////////////////////////////////////////
+
+      // new Point(x, y)
+      // creates a new empty object
+      // binds the object to this
+      // sets this.__proto__ to Point.prototype
+      // calls the Point function
+
+      case EvalArgsForNew(args, ρ1)::k => Some {
+        Rebuilt(NewCall(e, args), σ, φ, k)
+      }
+
+      case EvalMoreArgsForNew(fun, args, done, ρ1)::k => Some {
+        Rebuilt(NewCall(reify(fun), done ++ (e::args)), σ, φ, k)
+      }
+
+      case EvalMoreArgsForNewResidual(fun, args, done, ρ1)::k => Some {
+        Rebuilt(NewCall(reify(fun), done ++ (e::args)), σ, φ, k)
+      }
+
+      case InitProto(fun, args, ρ1)::k => Some {
+        Rebuilt(NewCall(reify(fun), args :+ e), σ, φ, k)
+      }
+
+      case EvalPropertyNameForDel(i, ρ1)::k => Some {
+        Rebuilt(Delete(Index(e, i)), σ, φ, k)
+      }
+
+      case DoDeleteProperty(a, ρ1)::k => Some {
+        Rebuilt(Delete(Index(a, e)), σ, φ, k)
+      }
+
+      case EvalPropertyNameForSet(i, ρ1)::k => Some {
+        Rebuilt(Index(e, i), σ, φ, k)
+      }
+
+      case GetPropertyAddressOrCreate(a, ρ1)::k => Some {
+        Rebuilt(Index(a, e), σ, φ, k)
+      }
+
+      case EvalPropertyNameForGet(i, ρ1)::k => Some {
+        Rebuilt(Index(e, i), σ, φ, k)
+      }
+
+      // restrict the property to values to ensure == during property lookup works correctly
+      // otherwise, a[f()] will result in undefined rather than a reified access
+      case GetProperty(a, ρ1)::k => Some {
+        Rebuilt(Index(a, e), σ, φ, k)
+      }
+
+      /////////////////
+      // No more cases....
+      /////////////////
     }
   }
 
@@ -140,9 +334,9 @@ object States {
 
       // e ? s1 : s2
       case Cond(e, s1, s2) => Some {
-        Ev(e, ρ, σ, φ, BranchCont(SeqCont(s1, ρ)::Nil,
-                                  SeqCont(s2, ρ)::Nil,
-                                  ρ)::k)
+        Ev(e, ρ, σ, φ, CondBranchCont(SeqCont(s1, ρ)::Nil,
+                                      SeqCont(s2, ρ)::Nil,
+                                      ρ)::k)
       }
 
       ////////////////////////////////////////////////////////////////
@@ -481,10 +675,6 @@ object States {
     }
   }
 
-  case class Rebuild(s: State) extends FinalState {
-    override def step = None
-  }
-
   // The Unwinding state just pops continuations until hitting a call or loop or catch.
   case class Unwinding(jump: Exp, σ: Store, φ: Effect, k: Cont) extends State {
   //   override def toString = s"""Unwinding
@@ -616,20 +806,21 @@ object States {
     def doCall(fun: Val, thisValue: Val, args: List[Val], result: Option[Val], ρ1: Env, σ: Store, k: Cont): Option[St] = {
       val callNumber = CallCounter()
 
+      val SUBST_PARAMS = false
+
       fun match {
         case Path(addr, path) =>
           σ.get(Loc(addr)) match {
             case Some(ObjClosure(FunObject(_, _, ys, Some(body0), _), ρ2)) =>
               // HACK (breaks eval): rename the variables to prevent name collisions
-
-              // val xthis = s"this$callNumber"
-              val xthis = "this"
-              // val xs = ys map { y => s"$y$callNumber" }
-              val xs = ys
+              val xthis = if (SUBST_PARAMS) s"this$callNumber" else "this"
+              val xs = if (SUBST_PARAMS) ys map { y => s"$y$callNumber" } else ys
               val subst = ("this", xthis) :: (ys zip xs)
-              // val body = new Subst(subst.toMap).rewrite(body0)
-              val body = body0
-              
+              val body = if (SUBST_PARAMS)
+                new Subst(subst.toMap).rewrite(body0)
+              else
+                body0
+
               // Pad the arguments with undefined.
               def pad(params: List[Name], args: List[Exp]): List[Exp] = (params, args) match {
                 case (Nil, _) => Nil
@@ -670,10 +861,21 @@ object States {
     def step = k match {
       // Done!
       case Nil => Some {
-        Halt(v, σ, φ)
+        Rebuilt(v, σ, φ, Nil)
       }
 
       case BranchCont(kt, kf, ρ)::k =>
+        v match {
+          case v @ CvtBool(true) => Some {
+            Co(v, σ, φ, kt ++ k)
+          }
+          case v @ CvtBool(false) => Some {
+            Co(v, σ, φ, kf ++ k)
+          }
+          case _ => None
+        }
+
+      case CondBranchCont(kt, kf, ρ)::k =>
         v match {
           case v @ CvtBool(true) => Some {
             Co(v, σ, φ, kt ++ k)
@@ -985,7 +1187,6 @@ object States {
       case CallFrame(ρ1)::k => Some {
         Co(v, σ, φ, k)
       }
-
 
       ////////////////////////////////////////////////////////////////
       // Throw. This is implemented similarly to Return.

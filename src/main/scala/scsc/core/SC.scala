@@ -2,29 +2,9 @@ package scsc.core
 
 // The supercompiler for language L is implemented as an interpreter of MetaStates.
 // A State is the state of the L-interpreter.
-// A MetaState is the state of the supercompiler and consists of a history
+// A MetaState is the state of the supercompiler and consists of a command, a history
 // of State and a MetaContinuation.
-// The initial MetaState for State s is
-// Drive(s, Nil, Nil)
-// Drive(s, h, k)
-// --> Drive(s'::Nil, s::h, k) if step(s) = s'
-// --> Drive(s1, Nil, RunSplit(s2..sn, Nil, s, h)::k) if split(s) = [s1,..,sn]
-// --> Drive(s', h', k) if opt(s, h) = (s', h')   // including fold?
-// --> Drive(s', h', k) if fold(s, h) = (s', h')
-// --> Rebuild(s', k) if rebuild(s, h) = s'
-// ???
-// Rebuild(s, RunSplit(s'::todo, done, s0, h0)::k)
-// --> Drive(s', Nil, RunSplit(todo, done :+ s, s0, h0)::k)
-// Rebuild(s, RunSplit(Nil, done, s0, h0)::k)
-// --> Drive(reassemble(s0, done :+ s), h0, k)
-// Rebuild(s, Nil) --> DONE
-//
-// Then in any state, we can do:
-// whistle blows:
-// Drive(s, h, k) --> Rebuild(rebuild(s, h), k)
-// folding:
-// Drive(s, h, k) --> Rebuild(fold(s, h), k)
-trait Supercompiler[State] {
+trait SC[State] {
   private type History = List[State]
 
   sealed trait MetaState
@@ -39,8 +19,10 @@ trait Supercompiler[State] {
   }
   case class Done(state: State) extends MetaState
 
+  type Unsplit = List[List[State]] => Either[List[State], State]
+
   sealed trait MetaFrame
-  case class RunSplit(pending: List[State], complete: List[History], root: State, rootHistory: History) extends MetaFrame
+  case class RunSplit(pending: List[State], complete: List[History], root: State, rootHistory: History, unsplit: Unsplit) extends MetaFrame
 
   type MetaCont = List[MetaFrame]
 
@@ -88,48 +70,69 @@ trait Supercompiler[State] {
             Rebuild(s1, h1, k)
           case _ =>
             if (interp.whistle(s::h)) {
-              println(s"WHISTLE")
+              println(s"WHISTLE: SPLIT")
               Split(s, h, k)
             }
             else if (metaStop) {
-              println(s"META WHISTLE")
+              println(s"META WHISTLE: SPLIT")
               Split(s, h, k)
             }
             else {
-              println(s"DRIVE OR SPLIT")
+              println(s"DRIVE")
               interp.step(s) match {
-                case Some(s1) => Drive(s1, s::h, k)
-                case None => Split(s, h, k)
+                case Some(s1) =>
+                  println(s"DRIVE TOOK A STEP")
+                  Drive(s1, s::h, k)
+                case None =>
+                  println(s"DRIVE FAILED: SPLIT")
+                  Split(s, h, k)
               }
             }
         }
 
       case Split(s, h, k) =>
         interp.split(s) match {
-          case first::rest if ! metaStop =>
-            Drive(first, Nil, RunSplit(rest, Nil, s, h)::k)
-          case Nil =>
+          case Some((first::rest, unsplit)) if ! metaStop =>
+            println(s"SPLIT SUCCESS: DRIVE")
+            Drive(first, Nil, RunSplit(rest, Nil, s, h, unsplit)::k)
+          case _ =>
+            println(s"SPLIT FAILED: REBUILD")
             Rebuild(s, h, k)
         }
 
-      case Rebuild(s, h, RunSplit(next::pending, complete, s0, h0)::k) =>
-        Drive(next, Nil, RunSplit(pending, complete :+ (s::h), s0, h0)::k)
+      case Rebuild(s, h, RunSplit(next::pending, complete, s0, h0, unsplit)::k) =>
+        println("REBUILD: DRIVE NEXT")
+        Drive(next, Nil, RunSplit(pending, complete :+ (s::h), s0, h0, unsplit)::k)
 
-      case Rebuild(s, h, RunSplit(Nil, complete, s0, h0)::k) =>
-        interp.reassemble(s0, complete :+ (s::h)) match {
+      case Rebuild(s, h, RunSplit(Nil, complete, s0, h0, unsplit)::k) =>
+        println("REBUILD COMPLETE: REASSEMBLE")
+        unsplit(complete :+ (s::h)) match {
           case Left(first::rest) if ! metaStop =>
+            println("REASSEMBLE: RESPLIT")
             // resplit
-            Drive(first, Nil, RunSplit(rest, Nil, s0, h0)::k)
+            Drive(first, Nil, RunSplit(rest, Nil, s0, h0, unsplit)::k)
           case Left(_) =>
+            println("REASSEMBLE FAILED: REBUILD")
             // reassemble failed (or the meta whistle blew)
             // we need to just back out of the split entirely
             Rebuild(s0, h0, k)
           case Right(s1) =>
+            println("REASSEMBLE SUCCESS: DRIVE")
             // join successful, continue
             Drive(s1, h0, k)
         }
+
       case Rebuild(s, h, Nil) =>
-        Done(interp.rebuild(s::h))
+        println("REBUILD: ROLLBACK")
+        interp.rollback(s::h) match {
+          case s1::h1 =>
+            println("ROLLBACK: DRIVE")
+            Drive(s1, h1, Nil)
+          case Nil =>
+            println("ROLLBACK FAILED: DONE")
+            Done(interp.rebuild(s::h))
+        }
+
       case Done(s) =>
         // Done, return early
         return Done(s)

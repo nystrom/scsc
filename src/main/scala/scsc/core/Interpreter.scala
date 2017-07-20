@@ -17,13 +17,18 @@ trait Interpreter[State] {
 
   // Construct a new state from the current history.
   // This is not allowed to fail!
+  // Since states in the history are all equivalent, we can just reutrn
+  // any state in the history, but clearly the first (newest) state is best.
   def rebuild(h: History): State
 
-  // Reassemble the root with new children.
-  // This can either merge split states or generate a new split.
-  // If a new split, then we resume driving, otherwise we rebuild.
-  def reassemble(root: State, children: List[History]): Either[List[State], State]
+  // Rebuild the c
+  // Replace the history with a new history. Returns Nil on failure.
+  def rollback(h: History): History
 
-  // split the current state, return Nil on failure
-  def split(s: State): List[State]
+  // split the current state, return None on failure
+  def split(s: State): Option[(List[State], Unsplit)]
+
+  // reassemble a split using the root state and the histories of the
+  // split states
+  type Unsplit = List[List[State]] => Either[List[State], State]
 }

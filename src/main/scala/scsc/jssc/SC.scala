@@ -163,20 +163,18 @@ object SC {
     e1
   }
 
+  import scsc.core.Whistles
   import scsc.core.Interpreter
-  import scsc.core.Supercompiler
+  import scsc.core.SC
+  import States.State
 
-  object JSSuper extends Supercompiler[States.State] {
+  object JSSuper extends SC[State] {
     def interp = JSInterp
     override val theMetaWhistle = MetaWhistles.DepthWhistle(100) | MetaWhistles.SplitDepthWhistle(20)
   }
 
-  import scsc.core.Whistles
-
-  trait JSWhistles extends Whistles[States.State] {
-    private type History = List[States.State]
-
-    type NormalConfig = (Symbol, Exp, Cont)
+  trait JSWhistles extends Whistles[State] {
+    private type History = List[State]
 
     def isInstance(s1: State, s2: State): Boolean = {
       object HE extends scsc.core.HE[NormalConfig]
@@ -227,17 +225,18 @@ object SC {
       }
     }
 
+    type NormalConfig = (Symbol, Exp, Cont)
+
     def normalize(s: State): NormalConfig = s match {
       case Ev(e, ρ, σ, φ, k) => ('Ev, e, k)
       case Co(e, σ, φ, k) => ('Co, e, k)
       case Unwinding(jump, sigma, φ, k) => ('Unwinding, jump, k)
-      case Rebuild(s) => normalize(s)
-      case Halt(v, sigma, φ) => ('Halt, v, Nil)
+      case Rebuilt(e, σ, φ, k) => ('Rebuilt, e, k)
       case Err(_, s) => normalize(s)
     }
   }
 
-  object JSInterp extends Interpreter[States.State] with JSWhistles {
+  object JSInterp extends Interpreter[State] with JSWhistles {
     import States._
 
     private type History = List[State]
@@ -276,21 +275,25 @@ object SC {
 
     // Construct a new state from the current history.
     // This is not allowed to fail!
-    // We can always just return the oldest element of the history.
-    // This means no evaluation happens, though.
+    // Since states in the history are all equivalent, we can just reutrn
+    // any state in the history, but clearly the first (newest) state is best.
+    // However, the point is to be able to produce a residual term from
+    // the state, so we actually try to convert the history to a Rebuilt.
     def rebuild(h: History): State = h match {
-      case (s: Halt)::h => s
-      case h => h.last
+      case s::h => s
+      case Nil => ???
     }
 
-    // Reassemble the root with new children.
-    // This can either merge split states or generate a new split.
-    // If a new split, then we resume driving, otherwise we rebuild.
-    def reassemble(root: State, children: List[History]): Either[List[State], State] = Split.unsplit(root, children)
+    def rollback(h: History): History = h match {
+      case Rebuilt(_, _, _, _)::h => Nil
+      case h => Split.rollback(h).getOrElse(Nil)
+    }
 
     // split the current state, return Nil on failure
-    def split(s: State): List[State] = Split.split(s)
-
+    def split(s: State): Option[(List[State], Unsplit)] = {
+      Split.split(s)
+    }
+    
     // Generalize, favoring the second state as the earlier state we're going to replace.
     def generalize(s1: State, s2: State): Option[State] = (s1, s2) match {
       case (Ev(e1, ρ1, σ1, φ1, k1), Ev(e2, ρ2, σ2, φ2, k2)) if e1 == e2 && k1 == k2 && ρ1 == ρ2 =>
@@ -312,7 +315,7 @@ object SC {
 
     JSSuper.supercompile(s0) match {
       case Some(s @ Stopped(v, σ, φ)) =>
-        Halt(v, σ, φ).residual
+        Rebuilt(v, σ, φ, Nil).residual
       case _ =>
         Undefined()
     }

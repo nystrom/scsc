@@ -20,7 +20,7 @@ object ZipStrategy {
         None
       }
       val keys = tx.asInstanceOf[Map[Any, Any]].keySet
-      zipSeq(strat, keys map { k => tx.asInstanceOf[Map[Any, Any]](k) } toList, 
+      zipSeq(strat, keys map { k => tx.asInstanceOf[Map[Any, Any]](k) } toList,
                     keys map { k => ty.asInstanceOf[Map[Any, Any]](k) } toList) match {
         case Some((sx, sy)) =>
           Some((sx.asInstanceOf[Seq[(Any, Any)]].toMap, sy.asInstanceOf[Seq[(Any, Any)]].toMap))

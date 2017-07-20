@@ -87,6 +87,9 @@ object Continuations {
   case class BranchCont(ifTrue: Cont, ifFalse: Cont, ρ: Env) extends ContFrame {
     override def toString = s"if (☐) { $ifTrue } else { $ifFalse }"
   }
+  case class CondBranchCont(ifTrue: Cont, ifFalse: Cont, ρ: Env) extends ContFrame {
+    override def toString = s"☐ ? $ifTrue : $ifFalse"
+  }
   case class BreakFrame(label: Option[Name]) extends ContFrame
   case class ContinueFrame(label: Option[Name]) extends ContFrame
 
