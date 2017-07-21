@@ -10,21 +10,6 @@ object SC {
   import scsc.core.Residualization._
   import States._
 
-  // Check for termination at these nodes.
-  // In SCSC, we only checked at Local nodes, but here we need to check
-  // loops also since we can have non-termination evaluating any variables.
-  object CheckHistory {
-    def unapply(e: Exp) = e match {
-      case Local(x) => Some(e)
-      case While(label, test, body) => Some(e)
-      case DoWhile(label, body, test) => Some(e)
-      case For(label, Empty(), test, iter, body) => Some(e)
-      case ForEach(label, Empty(), test, iter, body) => Some(e)
-      case ForIn(label, Empty(), iter, body) => Some(e)
-      case _ => None
-    }
-  }
-
   // remove unused assignments and variable declarations.
   def removeDeadCode(e: Exp): Exp = {
     var used: Set[Name] = Set()
@@ -167,6 +152,7 @@ object SC {
   import scsc.core.Interpreter
   import scsc.core.SC
   import States.State
+  import scsc.core.Unsplit._
 
   object JSSuper extends SC[State] {
     def interp = JSInterp
@@ -176,33 +162,30 @@ object SC {
   trait JSWhistles extends Whistles[State] {
     private type History = List[State]
 
-    def isInstance(s1: State, s2: State): Boolean = {
-      object HE extends scsc.core.HE[NormalConfig]
-      import HE._
-      (s1 eq s2) || (normalize(s1) ≈ normalize(s2))
-    }
+    type NormalConfig = (Symbol, Exp, Int, Int, Cont)
 
-    def isSmaller(child: State, ancestor: State): Boolean = {
-      object HE extends scsc.core.HE[NormalConfig]
-      import HE._
-      (child eq ancestor) || (normalize(ancestor) ◁ normalize(child))
+    def normalize(s: State): NormalConfig = s match {
+      case Ev(e, ρ, σ, k) => ('Ev, e, ρ.size, σ.size, k)
+      case Co(e, σ, k) => ('Co, e, 0, σ.size, k)
+      case Unwinding(jump, σ, k) => ('Unwinding, jump, 0, σ.size, k)
+      case Rebuilt(e, σ, k) => ('Rebuilt, e, 0, σ.size, k)
     }
 
     def mightDiverge(s: State) = s match {
-      case Ev(Call(_, _), _, _, _, _) => true
-      case Ev(NewCall(_, _), _, _, _, _) => true
-      case Ev(While(_, _, _), _, _, _, _) => true
-      case Ev(DoWhile(_, _, _), _, _, _, _) => true
-      case Ev(For(_, _, _, _, _), _, _, _, _) => true
-      case Ev(ForIn(_, _, _, _), _, _, _, _) => true
+      case Ev(Call(_, _), _, _, _) => true
+      case Ev(NewCall(_, _), _, _, _) => true
+      case Ev(While(_, _, _), _, _, _) => true
+      case Ev(DoWhile(_, _, _), _, _, _) => true
+      case Ev(For(_, _, _, _, _), _, _, _) => true
+      case Ev(ForIn(_, _, _, _), _, _, _) => true
       case _ => false
     }
 
     def loop(s: State) = s match {
-      case Ev(While(_, _, _), _, _, _, _) => true
-      case Ev(DoWhile(_, _, _), _, _, _, _) => true
-      case Ev(For(_, _, _, _, _), _, _, _, _) => true
-      case Ev(ForIn(_, _, _, _), _, _, _, _) => true
+      case Ev(While(_, _, _), _, _, _) => true
+      case Ev(DoWhile(_, _, _), _, _, _) => true
+      case Ev(For(_, _, _, _, _), _, _, _) => true
+      case Ev(ForIn(_, _, _, _), _, _, _) => true
       case _ => false
     }
 
@@ -211,29 +194,20 @@ object SC {
 
     case class RecursiveCallWhistle() extends Whistle {
       def blow(h: History) = h match {
-        case Ev(c2: Call, _, _, _, _)::hist =>
+        case Ev(c2: Call, _, _, _)::hist =>
           hist.exists {
-            case Ev(c1: Call, _, _, _, _) => c1 == c2
+            case Ev(c1: Call, _, _, _) => c1 == c2
             case _ => false
           }
-        case Ev(c2: NewCall, _, _, _, _)::hist =>
+        case Ev(c2: NewCall, _, _, _)::hist =>
           hist.exists {
-            case Ev(c1: NewCall, _, _, _, _) => c1 == c2
+            case Ev(c1: NewCall, _, _, _) => c1 == c2
             case _ => false
           }
         case _ => false
       }
     }
 
-    type NormalConfig = (Symbol, Exp, Cont)
-
-    def normalize(s: State): NormalConfig = s match {
-      case Ev(e, ρ, σ, φ, k) => ('Ev, e, k)
-      case Co(e, σ, φ, k) => ('Co, e, k)
-      case Unwinding(jump, sigma, φ, k) => ('Unwinding, jump, k)
-      case Rebuilt(e, σ, φ, k) => ('Rebuilt, e, k)
-      case Err(_, s) => normalize(s)
-    }
   }
 
   object JSInterp extends Interpreter[State] with JSWhistles {
@@ -247,10 +221,15 @@ object SC {
     // Check if we should stop driving.
     def whistle(h: History): Boolean = theWhistle.blow(h)
 
-    val theWhistle: Whistle = DepthWhistle(50) | (MightDivergeWhistle & HEWhistle)
+    val theWhistle: Whistle = DepthWhistle(50) | (MightDivergeWhistle & TagbagWhistle)
     // val theWhistle: Whistle = DepthWhistle(100) | ((LoopWhistle() | RecursiveCallWhistle()) & HEWhistle())
     // val theWhistle: Whistle = DepthWhistle(100)
     // val theWhistle: Whistle = NoWhistle
+
+    def isInstance(s1: State, s2: State): Boolean = {
+      import org.bitbucket.inkytonik.kiama.util.Comparison.same
+      same(s1, s2) || generalize(s1, s2).nonEmpty
+    }
 
     // Fold the last element of the current history with a previous element, truncating
     // the history. The new last element of the history generalizes the old last element
@@ -285,23 +264,19 @@ object SC {
     }
 
     def rollback(h: History): History = h match {
-      case Rebuilt(_, _, _, _)::h => Nil
+      case Rebuilt(_, _, _)::h => Nil
       case h => Split.rollback(h).getOrElse(Nil)
     }
 
     // split the current state, return Nil on failure
-    def split(s: State): Option[(List[State], Unsplit)] = {
-      Split.split(s)
+    def split(s: State): Option[(List[State], Unsplitter[State])] = {
+      s.split
     }
-    
+
     // Generalize, favoring the second state as the earlier state we're going to replace.
     def generalize(s1: State, s2: State): Option[State] = (s1, s2) match {
-      case (Ev(e1, ρ1, σ1, φ1, k1), Ev(e2, ρ2, σ2, φ2, k2)) if e1 == e2 && k1 == k2 && ρ1 == ρ2 =>
-        Some(Ev(e2, ρ2, σ2.merge(σ1, ρ2), φ2, k2))
-      // case (Co(v1, σ1, φ1, k1), Co(v2, σ2, φ2, k2)) if v1 == v2 && k1 == k2 =>
-      //   Some(Co(v2, σ2.merge(σ1, ρ2), φ2, k2))
-      // case (Unwinding(jump1, σ1, φ1, k1), Unwinding(jump2, σ2, φ2, k2)) if jump1 == jump2 && k1 == k2 =>
-      //   Some(Unwinding(jump2, σ2.merge(σ1, ρ2), φ2, k2))
+      case (Ev(e1, ρ1, σ1, k1), Ev(e2, ρ2, σ2, k2)) if e1 == e2 && k1 == k2 && ρ1 == ρ2 =>
+        Some(Ev(e2, ρ2, σ2.merge(σ1, ρ2), k2))
       case _ => None
     }
   }
@@ -314,12 +289,13 @@ object SC {
     val s0 = inject(e)
 
     JSSuper.supercompile(s0) match {
-      case Some(s @ Stopped(v, σ, φ)) =>
-        Rebuilt(v, σ, φ, Nil).residual
+      case Some(s @ Stopped(v, σ)) =>
+        Rebuilt(v, σ, Nil).residual
       case _ =>
         Undefined()
     }
   }
+
   //
   // def appendMemoizedFunctions(memo: JSDrive.Memo, e: Exp) = memo.foldRight(e) {
   //   case ((_, d), e) => Seq(d, e)

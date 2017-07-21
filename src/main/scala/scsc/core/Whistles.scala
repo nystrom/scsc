@@ -4,7 +4,6 @@ trait Whistles[State] {
   private type History = List[State]
 
   def isInstance(s1: State, s2: State): Boolean
-  def isSmaller(child: State, ancestor: State): Boolean
 
   // Return true if the configuration MIGHT diverge and should therefore
   // be tested using isSmaller.
@@ -44,13 +43,55 @@ trait Whistles[State] {
     def blow(h: History) = h.length > maxDepth
   }
 
-  case object HEWhistle extends Whistle {
+  def tagOf(a: Any): Any = a match {
+    case n: Int if n > 3 => 3
+    case n: Int if n < -3 => -3
+    case n: Int => n
+    case n: Long if n > 3 => 3
+    case n: Long if n < -3 => -3
+    case n: Long => n
+    case n: Float => 0.0
+    case n: Double => 0.0
+    case n: Char => n
+    case n: String => ""
+    case n: Boolean => n
+    case n => n.getClass.getName
+  }
+
+  def tagbag(s: State) = {
+    import org.bitbucket.inkytonik.kiama.rewriting.Rewriter._
+    lazy val makeBag = collectl[Any] {
+      case n => tagOf(n)
+    }
+    makeBag(s)
+  }
+
+  def size(s: State): Int = {
+    import org.bitbucket.inkytonik.kiama.rewriting.Rewriter._
+    count {
+      case a => 1
+    } (s)
+  }
+
+  case object TagbagWhistle extends Whistle {
+    def isSmaller(s1: State, s2: State): Boolean = {
+      import org.bitbucket.inkytonik.kiama.util.Comparison.same
+      val bag1 = tagbag(s1)
+      val bag2 = tagbag(s2)
+      same(s1, s2) || (bag1.length < bag2.length && bag1.toSet == bag2.toSet)
+    }
+
     def blow(h: History) = {
       h match {
         case Nil => false
         case s::h =>
           h.exists {
-            prev => isSmaller(prev, s)
+            prev =>
+              val v = isSmaller(prev, s)
+              if (v) println(s"""
+$prev < $s
+""")
+              v
           }
       }
     }
@@ -60,9 +101,13 @@ trait Whistles[State] {
     def blow(h: History) = {
       ws match {
         case Nil => false
-        case w::ws => ws.foldLeft(w.blow(h)) {
-          case (result, w) => f(result, w.blow(h))
-        }
+        case w::ws =>
+          println(s"Whistle $w says ${w.blow(h)}")
+          ws.foldLeft(w.blow(h)) {
+            case (result, w) =>
+              println(s"Whistle $w says ${w.blow(h)}")
+              f(result, w.blow(h))
+          }
       }
     }
   }

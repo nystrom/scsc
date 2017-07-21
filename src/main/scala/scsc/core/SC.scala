@@ -1,12 +1,21 @@
 package scsc.core
 
+object Unsplit {
+  type Unsplitter[State] = List[List[State]] => UnsplitResult[State]
+
+  sealed trait UnsplitResult[State]
+  case class Resplit[State](ss: List[State], unsplit: Unsplitter[State]) extends UnsplitResult[State] {
+    require(ss.nonEmpty)
+  }
+  case class UnsplitOk[State](s: State) extends UnsplitResult[State]
+  case class UnsplitFail[State]() extends UnsplitResult[State]
+}
+
 // The supercompiler for language L is implemented as an interpreter of MetaStates.
 // A State is the state of the L-interpreter.
 // A MetaState is the state of the supercompiler and consists of a command, a history
 // of State and a MetaContinuation.
 trait SC[State] {
-  private type History = List[State]
-
   sealed trait MetaState
   case class Drive(state: State, history: History, k: MetaCont) extends MetaState {
     override def toString = s"Drive($state, _, $k)"
@@ -19,10 +28,11 @@ trait SC[State] {
   }
   case class Done(state: State) extends MetaState
 
-  type Unsplit = List[List[State]] => Either[List[State], State]
+  import Unsplit._
+  private type History = List[State]
 
   sealed trait MetaFrame
-  case class RunSplit(pending: List[State], complete: List[History], root: State, rootHistory: History, unsplit: Unsplit) extends MetaFrame
+  case class RunSplit(pending: List[State], complete: List[History], root: State, rootHistory: History, unsplit: Unsplitter[State]) extends MetaFrame
 
   type MetaCont = List[MetaFrame]
 
@@ -38,7 +48,6 @@ trait SC[State] {
 
   trait MetaWhistles extends Whistles[MetaState] {
     def isInstance(s1: MetaState, s2: MetaState): Boolean = s1 == s2
-    def isSmaller(child: MetaState, ancestor: MetaState): Boolean = child == ancestor
     def mightDiverge(ms: MetaState): Boolean = false
 
     case class SplitDepthWhistle(maxDepth: Int) extends Whistle {
@@ -52,7 +61,7 @@ trait SC[State] {
 
   object MetaWhistles extends MetaWhistles
 
-  val theMetaWhistle: MetaWhistles.Whistle = MetaWhistles.NoWhistle
+  val theMetaWhistle: MetaWhistles.Whistle = MetaWhistles.SplitDepthWhistle(10) | MetaWhistles.TagbagWhistle
 
   def metaWhistle(mss: List[MetaState]): Boolean = theMetaWhistle.blow(mss)
 
@@ -107,19 +116,23 @@ trait SC[State] {
       case Rebuild(s, h, RunSplit(Nil, complete, s0, h0, unsplit)::k) =>
         println("REBUILD COMPLETE: REASSEMBLE")
         unsplit(complete :+ (s::h)) match {
-          case Left(first::rest) if ! metaStop =>
+          case UnsplitOk(s1) =>
+            println("REASSEMBLE SUCCESS: DRIVE")
+            // join successful, continue
+            Drive(s1, h0, k)
+          case Resplit(first::rest, unsplit) if ! metaStop =>
             println("REASSEMBLE: RESPLIT")
             // resplit
             Drive(first, Nil, RunSplit(rest, Nil, s0, h0, unsplit)::k)
-          case Left(_) =>
+          case Resplit(states, unsplit) =>
+            println("REASSEMBLE: RESPLIT META WHISTLE")
+            // resplit
+            Rebuild(s0, h0, k)
+          case _ =>
             println("REASSEMBLE FAILED: REBUILD")
             // reassemble failed (or the meta whistle blew)
             // we need to just back out of the split entirely
             Rebuild(s0, h0, k)
-          case Right(s1) =>
-            println("REASSEMBLE SUCCESS: DRIVE")
-            // join successful, continue
-            Drive(s1, h0, k)
         }
 
       case Rebuild(s, h, Nil) =>
@@ -129,8 +142,7 @@ trait SC[State] {
             println("ROLLBACK: DRIVE")
             Drive(s1, h1, Nil)
           case Nil =>
-            println("ROLLBACK FAILED: DONE")
-            Done(interp.rebuild(s::h))
+            Done(s)
         }
 
       case Done(s) =>

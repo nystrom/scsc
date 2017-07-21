@@ -26,9 +26,6 @@ trait Interpreter[State] {
   def rollback(h: History): History
 
   // split the current state, return None on failure
-  def split(s: State): Option[(List[State], Unsplit)]
-
-  // reassemble a split using the root state and the histories of the
-  // split states
-  type Unsplit = List[List[State]] => Either[List[State], State]
+  import Unsplit._
+  def split(s: State): Option[(List[State], Unsplitter[State])]
 }
