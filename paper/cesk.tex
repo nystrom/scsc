@@ -1,0 +1,592 @@
+\section{Adding state}
+
+CESK machine for IMP
+
+\begin{align*}
+    e &::= v \\
+        & \bnf x \\
+        & \bnf e_1 \oplus e_2 \\
+        & \bnf \c{while}~(e_1)~e_2 \\
+        & \bnf \c{if}~(e_0)~e_1~\c{else}~e_2 \\
+        & \bnf \c{var}~x;~e \\
+        & \bnf x = e \\
+        & \bnf e_1;~e_2 \\
+        & \bnf \{ \overline{x} = \overline{e} \} \\
+        & \bnf e.x \\
+        & \bnf e.x = e \\
+    v &::= n \bnf \c{true} \bnf \c{false} \bnf \ell
+\end{align*}
+
+The main point to notice is that \c{var} allocates a location and
+adds x to the scope.
+
+Unlike with Felleisen and Friedman's CESK machine, continuations
+are not stored in the store.
+
+\newcommand\then[2]{(\bullet;~#1, #2)}
+\newcommand\branch[3]{(\c{if}~(\bullet)~#1~\c{else}~#2, #3)}
+\newcommand\init[3]{(\bullet.#1 = #2, #3)}
+
+\newcommand{\residual}[1]{\langle\!\langle{#1}\rangle\!\rangle}
+
+
+\begin{figure*}
+  \begin{center}
+\begin{align*}
+  \omit [\textsc{var}] &&
+    (x, \rho, \sigma, k)
+    & \longrightarrow
+    (\sigma(\rho(x)), \rho, \sigma, k)
+\\
+  \omit [\textsc{let}] &&
+    (\c{var}~x;~e, \rho, \sigma, k)
+    & \longrightarrow
+    (e, \rho', \sigma', k) 
+        \\ &&& (\rho' = \rho[x := \ell], \sigma' = \sigma[\ell := \c{false}], \ell~\mbox{fresh})
+\\
+  \omit [\textsc{op1}] &&
+    (e_1 \oplus  e_2, \rho, \sigma, k)
+    & \longrightarrow
+    (e_1, \rho, \sigma, (\bullet \oplus e_2,\rho)::k)
+\\
+  \omit [\textsc{op2}] &&
+    (v_1, \rho, \sigma, (\bullet \oplus e_2,\rho')::k)
+    & \longrightarrow
+    (e_2, \rho', \sigma, (v_1\oplus \bullet,\rho')::k)
+\\
+  \omit [\textsc{op3}] &&
+    (v_2, \rho, \sigma, (v_1 \oplus \bullet,\rho')::k)
+    & \longrightarrow
+    (v_1 \oplus v_2, \rho', \sigma, k)
+\\
+  \omit [\textsc{seq1}] &&
+    (e_1;~e_2, \rho, \sigma, k)
+    & \longrightarrow
+    (e_1, \rho, \sigma, \then{e_2}{\rho}::k)
+\\
+  \omit [\textsc{seq2}] &&
+    (v, \rho, \sigma, \then{e_2}{\rho'}::k)
+    & \longrightarrow
+    (e_2, \rho', \sigma, k)
+\\
+  \omit [\textsc{if}] &&
+    (\c{if}~(e_0)~e_1~\c{else}~e_2, \rho, \sigma, k)
+    & \longrightarrow
+    (e_0, \rho, \sigma, \branch{e_1}{e_2}{\rho}::k)
+\\
+  \omit [\textsc{ifTrue}] &&
+    (\c{true}, \rho, \sigma, \branch{e_1}{e_2}{\rho'}::k)
+    & \longrightarrow
+    (e_1, \rho', \sigma, k)
+\\
+  \omit [\textsc{ifFalse}] &&
+    (\c{false}, \rho, \sigma, \branch{e_1}{e_2}{\rho'}::k)
+    & \longrightarrow
+    (e_2, \rho', \sigma, k)
+\\
+  \omit [\textsc{while}] &&
+    (\c{while}~(e_1)~e_2, \rho, \sigma, k)
+    & \longrightarrow
+    (\c{if}~(e_1)~(e_2;~ \c{while}~(e_1)~e_2)~\c{else}~\c{false}, \rho, \sigma, k)
+\\
+  \omit [\textsc{setVar1}] &&
+    (x = e, \rho, \sigma, k)
+    & \longrightarrow
+    (\rho(x), \rho, \sigma, (\bullet = e, \rho)::k)
+\\
+  \omit [\textsc{setVar2}] &&
+    (\ell, \rho, \sigma, (\bullet = e, \rho')::k)
+    & \longrightarrow
+    (e, \rho', \sigma, (\ell = \bullet, \rho)::k)
+\\
+  \omit [\textsc{assign}] &&
+    (v, \rho, \sigma, (\ell = \bullet, \rho')::k)
+    & \longrightarrow
+    (v, \rho', \sigma[\ell := v], k)
+\\
+  \omit [\textsc{new1}] &&
+    (\{ \overline{x} = \overline{e} \}, \rho, \sigma, k)
+    & \longrightarrow
+    (\ell, \rho, \sigma', (\init{\overline{x}}{\overline{e}}{\rho}::k)
+        \\ &&& (\sigma' = \sigma[\ell := \c{\{\}}], \ell~\mbox{fresh})
+\\
+  \omit [\textsc{new2}] &&
+    (\ell, \rho, \sigma, \init{x_0,\overline{x}}{e_0,\overline{e}}{\rho'}::k)
+    & \longrightarrow
+    (\ell.x_0 = e_0, \rho', \sigma,
+    \then{\ell}{\rho'}::\init{\overline{x}}{\overline{e}}{\rho'}::k)
+\\
+  \omit [\textsc{new3}] &&
+    (\ell, \rho, \sigma, \init{\cdot}{\cdot}{\rho'}::k)
+    & \longrightarrow
+    (\ell, \rho', \sigma, k)
+\\
+  \omit [\textsc{getField1}] &&
+    (e.x, \rho, \sigma, k)
+    & \longrightarrow
+    (e, \rho, \sigma, (\bullet.x, \rho)::k)
+\\
+  \omit [\textsc{getField2}] &&
+    (\ell, \rho, \sigma, (\bullet.x_i, \rho')::k)
+    & \longrightarrow
+    (\sigma(\ell_i), \rho', \sigma, k)
+        \\ &&& (\sigma(\ell) = \{ \overline{x} = \overline{\ell}\})
+\\
+  \omit [\textsc{setField1}] &&
+    (e_1.x = e_2, \rho, \sigma, k)
+    & \longrightarrow
+    (e_1, \rho, \sigma, (\bullet.x = e_2, \rho)::k)
+\\
+  \omit [\textsc{setField2}] &&
+    (\ell, \rho, \sigma, (\bullet.x_i = e, \rho')::k)
+    & \longrightarrow
+    (e, \rho', \sigma, (\ell_i = \bullet, \rho)::k)
+        \\ &&& (\sigma(\ell) = \{ \overline{x} = \overline{\ell}\})
+\\
+  \omit [\textsc{setField3}] &&
+    (\ell, \rho, \sigma, (\bullet.x_0 = e, \rho')::k)
+    & \longrightarrow
+    (e, \rho', \sigma', (\ell_0 = \bullet, \rho)::k)
+        \\ &&& (
+                \sigma(\ell) = \{ \overline{x} = \overline{\ell} \},
+                \sigma' =
+                \sigma[\ell := \{ x_0 = \ell_0, \overline{x} = \overline{\ell} \}
+                       ][\ell_0 := \c{false}], \ell_0~\mbox{fresh})
+\\
+\end{align*}
+  \end{center}
+
+\caption{Evaluation semantics for IMP}
+\label{fig:imp-cesk}
+\end{figure*}
+    
+
+\begin{figure*}
+  \begin{center}
+\begin{align*}
+  \omit [\textsc{r-var}] &&
+    (x, \rho, \sigma, k)
+    & \longrightarrow
+    (\residual{x}, \rho, \sigma, k)
+        \\ &&& (x \not\in \mathop{dom} \rho \vee \sigma(\rho(x)) = \bot)
+\\
+  \omit [\textsc{r-op3a}] &&
+    (v_2, \rho, \sigma, (\residual{e_1} \oplus \bullet,\rho')::k)
+    & \longrightarrow
+    (\residual{v_2}, \rho, \sigma, (\residual{e_1} \oplus \bullet,\rho')::k)
+\\
+  \omit [\textsc{r-op3c}] &&
+    (\residual{e_2}, \rho, \sigma, (\residual{e_1} \oplus \bullet,\rho')::k)
+    & \longrightarrow
+    (\residual{e_1 \oplus e_2}, \rho', \sigma, k)
+\\
+  \omit [\textsc{r-op3b}] &&
+    (\residual{e_2}, \rho, \sigma, (v_1 \oplus \bullet,\rho')::k)
+    & \longrightarrow
+    (\residual{e_2}, \rho, \sigma, (\residual{e_1} \oplus \bullet,\rho')::k)
+\\
+  \omit [\textsc{r-seq2}] &&
+    (\residual{e_1}, \rho, \sigma, \then{e_2}{\rho'}::k)
+    & \longrightarrow
+    (e_2, \rho', \sigma, (\residual{e_1;~\bullet}, \rho)::k)
+\\
+  \omit [\textsc{r-seq3a}] &&
+    (v_2, \rho, \sigma, (\residual{e_1;~\bullet}, \rho')::k)
+    & \longrightarrow
+    (\residual{e_1}, \rho', \sigma, k)
+\\
+  \omit [\textsc{r-seq3b}] &&
+    (\residual{e_2}, \rho, \sigma, (\residual{e_1;~\bullet}, \rho')::k)
+    & \longrightarrow
+    (\residual{e_1;~e_2}, \rho', \sigma, k)
+\\
+  \omit [\textsc{r-if1}] &&
+    (\residual{e}, \rho, \sigma, \branch{e_1}{e_2}{\rho'}::k)
+    & \longrightarrow
+    (e_1, \rho', \sigma, (\residual{\c{if}~(e)~\bullet~\c{else}~e_2}, \sigma, \rho')::k)
+\\
+  \omit [\textsc{r-if2}] &&
+    (\residual{e_1}, \rho, \sigma, (\residual{\c{if}~(e)~\bullet~\c{else}~e_2}, \sigma', \rho')::k)
+    & \longrightarrow
+    (e_2, \rho', \sigma', (\residual{\c{if}~(e)~e_1~\c{else}~\bullet}, \sigma, \rho')::k)
+\\
+  \omit [\textsc{r-if3}] &&
+    (\residual{e_2}, \rho, \sigma, (\residual{\c{if}~(e)~e_1~\c{else}~\bullet}, \sigma', \rho')::k)
+    & \longrightarrow
+    (\residual{\c{if}~(e)~e_1~\c{else}~e_2}, \rho', \sigma \sqcap \sigma', k)
+\\
+  \omit [\textsc{r-if2}] &&
+    (v_1, \rho, \sigma, (\residual{\c{if}~(e)~\bullet~\c{else}~e_2}, \sigma', \rho')::k)
+    & \longrightarrow
+    (\residual{v_1}, \rho, \sigma, (\residual{\c{if}~(e)~\bullet~\c{else}~e_2}, \sigma', \rho')::k)
+\\
+  \omit [\textsc{r-if3}] &&
+    (v_2, \rho, \sigma, (\residual{\c{if}~(e)~e_1~\c{else}~\bullet}, \sigma', \rho')::k)
+    & \longrightarrow
+    (\residual{v_2}, \rho, \sigma, (\residual{\c{if}~(e)~e_1~\c{else}~\bullet}, \sigma', \rho')::k)
+\\
+  \omit [\textsc{r-setVar1}] &&
+    (x = e, \rho, \sigma, k)
+    & \longrightarrow
+    (e, \rho, \sigma, (\residual{x = \bullet}, \rho)::k)
+        \\ &&& (x \not\in \rho)
+\\
+  \omit [\textsc{r-assign-a}] &&
+    (v, \rho, \sigma, (\residual{x = \bullet}, \rho')::k)
+    & \longrightarrow
+    (\residual{x = v}, \rho', \sigma, k)
+\\
+  \omit [\textsc{r-assign-b}] &&
+    (\residual{e}, \rho, \sigma, (\residual{x = \bullet}, \rho')::k)
+    & \longrightarrow
+    (\residual{x = e}, \rho', \sigma, k)
+\\
+  \omit [\textsc{r-assign-c}] &&
+    (\residual{e}, \rho, \sigma, (\ell = \bullet, \rho')::k)
+    & \longrightarrow
+    (\residual{z = e}, \rho', \sigma[\ell := \residual{z}], k \mathbin{+\!+}
+    [\residual{\c{var}~z;~\bullet}, \emptyset])
+        \\ &&& (z~\mbox{fresh})
+\\
+  \omit [\textsc{r-getField2}] &&
+    (\residual{e}, \rho, \sigma, (\bullet.x, \rho')::k)
+    & \longrightarrow
+    (\residual{e.x}, \rho', \sigma, k)
+\\
+  \omit [\textsc{r-getField2-bot}] &&
+    (\ell, \rho, \sigma, (\bullet.x_i, \rho')::k)
+    & \longrightarrow
+    (\mathit{accessPath}(\ell, \sigma, \rho), \rho, \sigma, (\bullet.x_i, \rho')::k)
+        \\ &&& (\sigma(\ell.x_i) = \bot)
+\\
+  \omit [\textsc{r-setField2}] &&
+    (\residual{e_1}, \rho, \sigma, (\bullet.x = e_2, \rho')::k)
+    & \longrightarrow
+    (e_2, \rho', \sigma, (\residual{e_1.x = \bullet}, \rho)::k)
+\\
+  \omit [\textsc{r-setField3}] &&
+    (\residual{e_2}, \rho, \sigma, (\residual{e_1.x = \bullet}, \rho')::k)
+    & \longrightarrow
+    (\residual{e_1.x = e_2}, \rho', \mathit{sanitize}(\sigma, x), k)
+\\
+  \omit [\textsc{r-setField3}] &&
+    (v_2, \rho, \sigma, (\residual{e_1.x = \bullet}, \rho')::k)
+    & \longrightarrow
+    (\residual{e_1.x = v_2}, \rho', \mathit{sanitize}(\sigma, x), k)
+\\
+  \omit [\textsc{let'}] &&
+    (\c{var}~x;~e, \rho, \sigma, k)
+    & \longrightarrow
+    (e, \rho', \sigma', \then{e_2}{\rho'}::(\c{var}~x;~\bullet, \rho)::k) 
+        \\ &&& (\rho' = \rho[x := \ell], \sigma' = \sigma[\ell := \c{false}], \ell~\mbox{fresh})
+\\
+  \omit [\textsc{r-make-let}] &&
+    (\residual{e}, \rho, \sigma, (\c{var}~x;~\bullet, \rho')::k)
+    & \longrightarrow
+    (\residual{\c{var}~x;~e}, \rho', \sigma, k) 
+        \\ &&& (x \in \mathit{FV}(e))
+\\
+  \omit [\textsc{r-make-let}] &&
+    (\residual{e}, \rho, \sigma, (\c{var}~x;~\bullet, \rho')::k)
+    & \longrightarrow
+    (\residual{e}, \rho', \sigma, k) 
+        \\ &&& (x \not\in \mathit{FV}(e))
+\\
+  \omit [\textsc{r-make-let}] &&
+    (v, \rho, \sigma, (\c{var}~x;~\bullet, \rho')::k)
+    & \longrightarrow
+    (v, \rho', \sigma, k) 
+\\
+\end{align*}
+  \end{center}
+
+\caption{Evaluation semantics for IMP with residuals}
+\label{fig:imp-cesk-res}
+\end{figure*}
+    
+To extend the abstract machine to a partial evaluator:
+\begin{enumerate}
+\item Add residual values and extend the evaluation semantics
+to use residual values.
+The main difficulty here is ensuring that residual values in the store
+are shared correctly and that memory locations can be residualized.
+\item From any state, we need to be able to generate a residual program
+in a finite number of steps.
+\item Implement a \emph{whistle} on terms to conservatively detect
+loops in the computation.
+\item Implement generalization of terms.
+\end{enumerate}
+
+\section{Driving}
+
+Driving is straightforward.
+
+Extending the semantics with residuals is straightforward.
+
+If an \c{if} is encountered where the condition is a residual,
+both branches of the \c{if} are evaluated to produce a residual
+\c{if} expression.
+Before evaluating the true branch, the 
+store is saved in the continuation.
+After the true branch, the resulting store is saved and
+the false branch is evaluated in the same original store
+as the true branch.
+After both branches are evaluated, the resulting stores
+are merged. If both stores map a location to the same
+value, the merged store maps the locaiton to that value. If the stores
+map a location differently, the merged store maps the location
+to the special unknown value $\bot$. 
+Otherwise, the merged store does not contain a mapping for that location.
+
+\[
+  \sigma_1 \sqcap \sigma_2
+         = \{ (\ell, \sigma_1(\ell)) |
+                \sigma_1(\ell) = 
+                \sigma_2(\ell) 
+                \}
+         \cup
+           \{ (\ell, \bot) |
+                \sigma_1(\ell) \not= \sigma_2(\ell)
+                \}
+\]
+
+$\bot$ is not a legal value.
+The semantics are written so that if
+if a store lookup evaluates to $\bot$, the lookup results
+in a residual value.
+
+\section{Residualizing memory locations}
+
+When looking up a location
+
+\begin{align*}
+  \mathit{accessPath}(\ell, \rho, \sigma) &= \residual{x} ~\mbox{if}~\rho(x) = \ell \\ 
+  \mathit{accessPath}(\ell, \rho, \sigma) &= \residual{p.x}
+        ~\mbox{if}~
+  \mathit{accessPath}(\ell', \rho, \sigma) = \residual{p}
+  \wedge
+  \sigma(\ell'.x) = \ell \\
+\end{align*}
+
+\section{Optimizations}
+
+To evaluate the branches more precisely, we can extend the environment
+with information known about the branch condition.
+For instance, 
+we can modify \textsc{r-if1} (and \textsc{r-if2} similarly) as follows:
+  \[
+    (\residual{e}, \rho, \sigma, \branch{e_1}{e_2}{\rho'}::k)
+    \longrightarrow
+    (e_1, \rho', \sigma', (\residual{\c{if}~(e)~\bullet~\c{else}~e_2}, \sigma, \rho')::k)
+        ~\mbox{where}~\sigma' = \mathit{addPredicate}(e_1, \c{true}, \rho', \sigma)
+      \]
+
+\begin{align*}
+  \mathit{addPredicate}(x, v, \rho, \sigma) &= \sigma[\rho(x) := v] \\ 
+  \mathit{addPredicate}(\c{not}~e, v, \rho, \sigma) &=
+    \mathit{addPredicate}(e, \lnot v, \rho, \sigma) \\
+  \mathit{addPredicate}(x \mbox{\verb~==~} v, \mathtt{true}, \rho, \sigma) &= \sigma[\rho(x) := v] \\ 
+  \mathit{addPredicate}(v \mbox{\verb~==~} x, \mathtt{true}, \rho, \sigma) &= \sigma[\rho(x) := v] \\ 
+  \mathit{addPredicate}(x \mbox{\verb~!=~} v, \mathtt{false}, \rho, \sigma) &= \sigma[\rho(x) := v] \\ 
+  \mathit{addPredicate}(v \mbox{\verb~!=~} x, \mathtt{false}, \rho, \sigma) &= \sigma[\rho(x) := v] \\ 
+\end{align*}
+
+This optimization is a form of \emph{splitting}.
+
+\section{The Whistle}
+
+In the supercompilation literature, the \emph{whistle}
+is a subroutine that detects if the supercompiler 
+might not terminate. If the whistle blows, the supercompiler 
+halts driving and splitting and a residual program is produced.
+Typically, the whistle is based on an \emph{well-quasi-ordering} of 
+supercompiler states. 
+States of the supercompiler are stored in a history.
+When a new state is entered, it is compared to previous states
+in the history. If an new state is greater than or equal according to the WQO to a previous
+state, then 
+there is a potential infinite sequence of states
+the supercompiler will pass through. The supercompiler halts to avoid
+running forever.
+Various WQOs have been used in the SC literature [cite].
+Typically, they are based on a homeomorphic embedding of states.
+
+Since the whistle is necessarily conservative, we implement a simple
+optimization: our supercompiler partially evaluates the program for a finite number
+of steps. If evaluation terminates in those steps, the residual program is output.
+Otherwise, the evaluation is rerun using a whistle based on a homeomorphic embedding of states.
+This approach ensures that the whistle does not blow prematurely for simple programs that should always terminate quickly.
+In our implementation we use a threshold of 1000 steps.
+
+To compare two states, we residualize the states, then compare the resulting
+terms using the HE.
+
+\section{Resualizing a machine state}
+
+To convert a machine state to a residual term
+we perform the following process: 
+\begin{enumerate}
+  \item The state $(e, \rho, \sigma, k)$
+    is transformed into $(\residual{e}, \rho, \sigma, k)$
+  \item The machine is advanced to the next state.
+  \item Repeat steps 1 and 2 until the continuation is empty.
+\end{enumerate}
+
+This process is guaranteed to terminate.
+
+\section{Generalization}
+
+If the whistle finds that a given state is embedded within another, the supercompiler attempts to generalize those states.
+
+WTF does this mean??
+
+Compare states. Introduce a function that generalizes the focus
+of the states.
+to the same function, but with different arguments, introduce
+a new function
+
+
+Soundness
+if the program would evaluate to termination in full environment and store,
+the program will evaluate to termination in a partial environment and store.
+
+Progress
+if a step can be taken with a full env,
+a step can be taken in a partial env with a residual value.
+
+the machine can always take a step.
+If we arrive at a state from which no step can be taken, 
+we residualize the focus 
+
+In BB, each state maps to a name.
+Each state corresponds to just an expression being evaluated,
+not a complete program.
+Each state maps to a name.
+If a state is encountered again, we replace the state
+with a call to the function of that name.
+
+when we start supercompiling a state, record it with a name,
+then replace it with the optimized binding
+
+
+
+
+\section{Residualizing the state}
+
+One problem that occurs is how to residualize a term
+containing an abstract memory location.
+We take the following approach:
+whenever we compute a location
+(either by looking up a variable
+in the environment or by looking up property in the store),
+we annotate the location with the access path used to compute it.
+The path is only used when the address is in the focus
+of the machine state or when the address is stored in a continuation.
+
+The path is only used to residualize the location.
+
+For new objects, the path is a new object expression.
+For local variables, it is the name of the variable.
+For field accesses, it is the path computed for the object's location
+plus the field name.
+
+If stored in a continuation, 
+we need to ensure the path is not invalidated
+before it is used.
+When reifying the continuation, although the 
+path may have changed, between the time the path is put into the
+continuation and the time the continuation is popped,
+when the continuation (and therefore the path) is reified,
+the path was valid.
+        XXX need to argume better
+
+
+To compute a term from a state, we residualize the focus
+and evaluate the continuation, always residualizing the focus
+between each step.
+The main problem is to residualize memory locations.
+To do this, we compute for each location an access path for that 
+location. The access path is computed by performing a breadth-first search through the store, starting with the locations in the environment.
+While traversing the store, we build up an access path to the location, appending property accesses.
+Using BFS gives us the shortest access path possible for the given
+environment.
+For this to work, we must ensure that each live location is reachable 
+from the environment and not just from a continuation.
+If a location is unreachable from the environment, it must either be garbage (in which case it should not be reified at all), or it must be reachable from
+the continuation only.
+In the latter case, the location must be a newly created object
+that has yet to be stored in a variable.
+We disallow reification of these locations: instead we step the
+machine to a state where the new object is store in a variable
+and then reify the state.
+
+More simply: we do not reify states with locations unreachable from
+from the environment. To ensure these do not exist, we introduce
+local variables to ensure locations get stored immediately after creation.
+
+We transform loc(0) into a local variable \c{loc_0}.
+We replace assignments in the continuation 
+
+We transform the program as follows.
+
+\begin{verbatim}
+        { x : e } --> t = {}; t.x = e; t
+
+        // in this case the new object is reachable from either this
+        // (in the body of the F constructor)
+        // or from t at all points
+        new F(e) --> t = new F(e); t
+
+        // any object returned from f is made reachable again from t
+        f() --> t = f(); t
+
+        // we add t to the environment
+\end{verbatim}
+
+When are locations reified?
+
+        when used in a binary expression and the other operand
+        is unknown
+
+        when used in a call and the function is unknown
+
+        when used in a property lookup and the property is unknown
+
+        we ensure that 
+
+        reifying the branches of a conditional when the test is unknown
+
+                x ? new C : new D
+
+OR:
+        every location stores its path
+        just have to be careful of linearity
+        when creating a location, store the residual for that location
+        when updating a location, update the residual
+
+                x ? new C : new D
+        ->
+                x ? { y = new C ; y }
+                  : { z = new D ; z }
+
+
+\section{Overall structure}
+
+We traverse the JavaScript AST.
+
+We add each (open) term to the environment as a named function.
+We supercompile each function.
+If we encounter a term again, we replace it with a call.
+Or we inline the call.
+Which terms do we add then?
+
+The body of any lambda encountered is supercompiled in an abstract
+environment.
+
+Tying the knot.
+Each time the focus changes to a residual, we add the focus to the store with
+a name. If there's already a function there, we replace the residual with a
+call to that function.
+
+
+

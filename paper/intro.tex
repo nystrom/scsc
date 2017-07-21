@@ -1,0 +1,531 @@
+\newcommand\R[1]{\langle\!\langle#1\rangle\!\rangle}
+
+\section{Introduction}
+\label{sec:intro}
+
+Partial evaluation is the well-known 
+idea of specializing a program on some of its inputs~\cite{jones}.
+Supercompilation is a partial evaluation technique that
+attempts to evaluate programs as much as possible
+at compile time~\cite{turchin}.
+The name \emph{supercompilation} is a portmanteau of supervisor and compiler.
+The supercompiler works by monitoring the execution of a (partial) evaluator.
+When evaluation cannot proceed from a given program state, the
+state is \emph{split} and evaluation is performed recursively. The
+supercompiler conservatively identifies states from which continued evaluation
+and splitting will not terminate and \emph{generalizes}
+these states, ensuring the supercompiler terminates and 
+producing a residual program
+that (hopefully) implements the original program more efficiently.
+
+Supercompilation has received considerable attention in the functional
+programming 
+literature because it subsumes common optimizations like deforestation~\cite{
+  supercompilation-by-eval,supercompilation-blah}.
+However, the design and implementation of a practical supercompiler is
+elusive.
+It is
+not yet in mainstream use in any compiler because of the following
+practical considerations: (1) supercompilation has a large compile time
+compared to traditional optimization, and (2) supercompilation can generate
+exponentially large code.
+Attempts to address these issues have been made in
+other work \cite{taming-code-explosion}, but not yet applied to 
+mainstream languages such as Haskell or Scala.
+To address these issues, more experiments need be done with different
+supercompilation algorithms.
+
+To further this research,
+we describe a Scala framework for implementing 
+partial evaluators and supercompilers.
+To build a supercompiler for a given language, the programmer
+need only provide the following:
+\begin{enumerate}
+\item Abstract syntax trees for the terms of the language.
+\item An interpreter implemented as small-step rewrite rules
+between equivalent program states. 
+The interpreter can be implemented by term rewriting or as
+an abstract machine~\cite{danvy,cesk}, allowing, for instance,
+mutable variables or unstructured control-flow to be more easily supported.
+\item Extensions of the interpreter to 
+support \emph{residual states}. These are states that represent 
+the residual program being constructed.
+Stepping a residual state produces another residual state, and
+ultimately results in the residual program.
+\item A \emph{split} function to decompose a ``stuck'' program state into
+one or more other states.
+This function is used, for instance, when branching on an abstract value,
+to return two states one which assumes the value was true, the other false.
+After these two states are evaluated, the stuck state can be reassembled
+into a rebuilt state from which more evaluation can be done.
+\item A \emph{generalization} function 
+that takes two states, producing a new state that generalizes the two.
+\end{enumerate}
+
+The framework provides the supercompilation algorithm and data structures
+as well as code for detecting possible nontermination,
+performing variable substitutions, and generalizations. Framework
+code can be used as is, but supercompiler instances can override
+the framework implementation for more precision. 
+
+\paragraph*{Outline}
+The rest of this paper is organized as follows.
+Section~\ref{sec:nutshell} sketches how supercompilation works using
+a small example.
+In the Section~\ref{sec:framework}, we describe the interface
+and implementation of our supercompiler framework.
+Section~\ref{sec:cesk} describes the process of extending an abstract machine interpreter
+to construct a supercompiler.
+We use our framework to implement a supercompiler for JavaScript,
+described in Section~\ref{sec:js}.
+% Section~\ref{sec:experiments} describes some experiments.
+Related work is discussed in Section~\ref{sec:related}.
+Finally, we conclude in Section~\ref{sec:conclusions} with a discussion of
+future work.
+
+\section{Supercompilation in a nutshell}
+\label{sec:nutshell}
+
+To get an idea of what supercompilation does and how it works, consider the
+\c{map} function on lists.\footnote{Examples are presented in Scala syntax.
+The map example is due to \citeN{supercompilation-by-eval}.}
+\begin{verbatim}
+  def map[A,B](f: A => B, as: List[A]): List[A] =
+    as match {
+      case Nil => Nil
+      case b::bs => f(b)::map(f, bs)
+    }
+\end{verbatim}
+
+Consider the call \c{map(_ + 1, zs)}.
+Supercompiling this call constructs a specialized version of \c{map}
+that increments each element of the list by 1.
+
+Evaluation is called \emph{driving} in the supercompiler literature.
+We illustrate driving this expression by showing the state of the evaluator
+as a pair $(e; k)$. The expression $e$ is the expression being
+evaluated and $k$ is the continuation of the expression.
+The initial state of the evaluation is the pair of the expression and the
+empty continuation:
+  \[
+    \c{map(_ + 1, zs)};~k = \bullet
+  \]
+Since the list argument is statically unknown, 
+we pass an \emph{abstract value} into the 
+\c{map} function.
+To keep the presentation simple, we substitute the actual arguemnts for the
+formal parameters.
+  \[
+    \begin{array}{l}
+      \c{zs~match~\{} \\ 
+    \c{~~~case~Nil \Rightarrow Nil}  \\
+      \c{~~~case~b::bs \Rightarrow  (b+1)::map(\_+1, bs)~\}};~k = \bullet
+  \end{array}
+  \]
+The body of \c{map}
+performs a pattern match on the abstract value \c{zs}).
+However, since \c{zs} is not statically known, the evaluator has reached an impasse.
+Here the supercompiler steps in and 
+\emph{splits} the evaluation state into two: oone where \c{zs} is \c{Nil}, the
+other where it is not.
+
+Assuming \c{zs} is \c{Nil}, we arrive immediately in this state:
+    \[
+      \c{Nil};~k = \bullet
+    \]
+Here driving stops.
+The supercompiler produces a residual expression $\R{\c{Nil}}$.
+we write
+$\R{e}$ for a residual expression $e$ to be output 
+by the supercompiler. For purposes of
+this example, residual expressions may be considered values.
+Applying a continuation to a residual expression produces a larger residual
+expression.\footnote{In
+practice, residual expressions as values
+must be treated a \emph{linear} values to avoid work duplication.
+For instance, we cannot simply substitute a residual expression
+for a function parameter since that would duplicate the expression
+for each occurrence of the parameter in the function body.}
+
+On the other hand, if \c{zs} is not \c{Nil}, we drive as follows:
+    \begin{align*}
+       \c{(b+1)::map(\_+1, bs)};~& k = \bullet \\
+       \downarrow&\\
+       \c{(b+1)};~& k = \c{\bullet::map(\_+1, bs)} \\
+       \downarrow&\\
+       \c{b};~& k = \c{(\bullet+1)::map(\_+1, bs)} 
+    \end{align*}
+Here again driving is stuck because \c{b} is unknown.
+Unlike before, we cannot split the evaluator state, instead we \emph{rebuild},
+generating a residual
+expression $\R{\c{b}}$:
+       \[
+       \R{\c{b}};~ k = \c{(\bullet+1)::map(\_+1, bs)}
+     \]
+After continued driving:
+    \begin{align*}
+       \R{\c{b+1}};~& k = \c{\bullet::map(\_+1, bs)} \\
+       \downarrow&\\
+       \c{map(\_+1, bs)};~& k = \c{\R{b+1}::\bullet} 
+    \end{align*}
+the supercompiler arrives in a state where
+the focus expression is a call to \c{map}.
+Indeed, the arguments are a renaming of the original function arguments.
+At this point, the supercompiler \emph{folds}.
+It generates a function stub that generalizes the two calls:
+\begin{verbatim}
+  def map1(as: List[A]): List[A] = ...
+\end{verbatim}
+and replaces the focus expression with a residual call to that function.
+To construct the body of the new function, it continues driving the residual
+expression.
+    \begin{align*}
+      \c{\R{map1(bs)}};~& k = \c{\R{b+1}::\bullet} \\
+       \downarrow&\\
+      \c{\R{(b+1)::map1(bs)}};~& k = \bullet 
+    \end{align*}
+Here again, driving has stopped.
+After splitting on \c{zs}, the evaluator has produced two residual expressions
+\c{Nil} and $\c{\R{(b+1)::map1(bs)}}$.
+The supercompiler reassembles the pattern match from the split states and produces 
+the final residual program:
+\begin{verbatim}
+  def map1(as: List[A]): List[A] =
+    as match {
+      case Nil => Nil
+      case b::bs => (b+1)::map1(bs)
+    }
+
+  map1(zs)
+\end{verbatim}
+
+\section{Our framework}
+\label{sec:framework}
+
+Our focus is on building supercompilers for program specialization and
+optimization. Supercompilation has been used in other applications, in
+particular for theorem proving and function inversion~\cite{mrsc}.
+These applications have different tradeoffs. For instance, in theorem proving
+applications, the program being supercompiled is 
+typically a pure functional program with call-by-name semantics,
+and efficiency and size of the generated code is often not a big concern.
+
+
+\subsection{The interpreter}
+
+To implement a supercompiler for a given language, the user must provide an
+interpreter for the language. The framework requires the interpreter be
+implemented by stepping from one program state to another. This implementation
+supports different modes of interpretation, in particular term rewriting
+and abstract machines.
+
+An interpreter implements the \c{Interpreter} trait shown in Figure~\ref{fig:interpreter}.
+The interface is functional: the state of the interpreter should 
+be maintained only in a \c{State} value, on which the trait is parameterized.
+The trait requires a \c{step} method
+that advances the interpreter to the next state.
+Importantly, 
+this method need not be total:
+the interpreter can get ``stuck'' in a state because of missing
+information. If the interpreter becomes stuck, the supercompiler can
+still make further progress, as outlined below.
+Indeed, we take advantage of this property to implement
+a supercompiler for JavaScript. Indeed, our JavaScript interpreter does not
+support all features of JavaScript, but using our framework,
+any JavaScript program can be supercompiled.
+A more complete interpreter implementation leads to
+a more effective supercompiler, however, completeness is not required.
+
+When the \c{step} method returns \c{None}, the supercompiler calls \c{split}
+on the current interpreter state.
+If successful, \c{split} returns a list of states the supercompiler should 
+attempt to drive. It also returns an \c{Unsplitter}, which is a function
+that attempts to recombine the results of the split states.
+
+If both \c{step} and \c{split} fail, the supercompiler calls \c{rollback}.
+This takes the history of states the supercompiler executed (up to the
+previous split), and returns a new history, which replaces the old.
+This Orwellian rewriting of history is needed by some interpreter
+implementations to help construct residuals program in later states.
+
+The \c{fold} method attempt to fold the current state (the last
+state in the history) with a previous state. A new generalized state
+is returned. Fold is called before each attempt to \c{step}.
+
+Finally the \c{whistle} function checks for possible nontermination
+of a history.
+If it returns \c{true} (``the whistle blows''), the supercompiler stops driving as if \c{step}
+returned \c{None}. Our framework provides several whistle implementations
+that can be used by the interpreter. Different whistle implementations are
+a topic of ongoing research.
+
+\begin{figure*}
+  \begin{verbatim}
+trait Interpreter[State] {
+  // Step to the next state, if possible.
+  def step(s: State): Option[State]
+
+  // Split the current state, if possible.
+  def split(s: State): Option[(List[State], Unsplitter[State])]
+
+  type History = List[State]
+
+  // Replace the history with a new history. Returns Nil on failure.
+  def rollback(h: History): History
+
+  // Fold the current state (the last state in the history)
+  // with a state in the history. If successful, returns a
+  // new state that generalizes the two folded states.
+  def fold(h: History): Option[State]
+
+  // Check if we should stop driving.
+  def whistle(h: History): Boolean
+}
+  \end{verbatim}
+  \caption{Interprter trait}
+  \label{fig:interpreter}
+\end{figure*}
+
+\subsection{The supercompilation algorithm}
+
+We present supercompilation itself as evaluation on an abstract machine.
+The states of the machine are shown in Figure~\ref{fig:sc-data}.
+To distinguish between supercompiler states and interpreter state we refer
+to the latter as metastates.
+
+Each metastate contains the current interpreter state, a (possibly truncated or
+revised) history of previous states and a continuation. 
+There are four kinds of metastate: \c{Drive}, \c{Split}, \c{Rebuild},
+and \c{Done}.
+Continuations are stacks of \c{Meta}\-\c{Frame}. The continuation manages the
+splitter of the supercompiler.
+The \c{RunSplit} frame
+contains the list of unprocessed split states, completed split histories,
+as well as the root state that caused the split, its history, and an \c{Unsplitter}
+function that takes the completed split histories and attempts to rebuild
+the root state.
+
+\begin{figure*}
+  \begin{verbatim}
+type History = List[State]
+type MetaCont = List[MetaFrame]
+
+sealed trait MetaState
+case class Drive(state: State, history: History, k: MetaCont) extends MetaState
+case class Split(state: State, history: History, k: MetaCont) extends MetaState
+case class Rebuild(state: State, history: History, k: MetaCont) extends MetaState
+case class Done(state: State) extends MetaState
+
+sealed trait MetaFrame
+case class RunSplit(pending: List[State], complete: List[History],
+                    root: State, rootHistory: History,
+                    unsplit: Unsplitter[State]) extends MetaFrame
+  \end{verbatim}
+  \caption{Supercompiler data types}
+  \label{fig:sc-data}
+\end{figure*}
+
+The supercompiler implementation is shown in Figure~\ref{fig:sc}.
+The \c{sc} function takes the current metastate and a history of
+metastates, computes the next metastate and then calls itself recursively
+if the metastate is not \c{Done}.
+
+If the metastate is \c{Drive}, the supercompiler tries to fold
+the current history. If successful it enters the \c{Rebuild}
+metastate with the new folded history.
+Otherwise, if the whistle blows, indicating 
+the current interpreter state might lead to nontermination,
+the supercompiler enters the \c{Split} metastate.
+Otherwise, the supercompiler tries to take a step, splitting on failure.
+
+In the \c{Split} metastate, the supercompiler attempts to split
+the current interpreter state.
+If successful, it \c{Drives} the first split state, pushing a continuation to
+evaluate the other split states.
+On failure, the supercompiler \c{Rebuilds}.
+
+In the \c{Rebuild} metastate, the supercompiler
+either starts driving the next pending split state 
+or, if the split is complete, attempts to reassemble the root
+state of the split. Three outcomes are possible: either a
+new root state is produced, or the unsplit function forces
+another split, or the unsplit fails.
+In the last case, the supercompiler attempts to rollback
+the current history. If the rollback succeeds, driving continues,
+otherwise the split (meta)frame is popped and 
+the root of the split is rebuilt.
+
+If in the \c{Rebuild} state and the continuation is empty,
+a rollback is attempted. If the rollback fails, the supercompiler
+terminates.
+
+\begin{figure*}
+  \begin{verbatim}
+def sc(ms: MetaState, mhistory: List[MetaState]): MetaState = {
+  val next = ms match {
+    // Try to drive
+    case Drive(s, h, k) =>
+      interp.fold(s::h) match {
+        case Some(s1::h1) =>
+          Rebuild(s1, h1, k)   // fold successful
+        case _ if (interp.whistle(s::h) || metaWhistle(ms::mhistory)) =>
+          Split(s, h, k)
+        case _ =>
+          interp.step(s) match {
+            case Some(s1) => Drive(s1, s::h, k)
+            case None     => Split(s, h, k)     } }
+
+    // Try to split
+    case Split(s, h, k) =>
+      interp.split(s) match {
+        case Some((first::rest, unsplit)) if ! metaWhistle(ms::mhistory) =>
+          Drive(first, Nil, RunSplit(rest, Nil, s, h, unsplit)::k)
+        case _ => Rebuild(s, h, k) }
+
+    // Run the next split state
+    case Rebuild(s, h, RunSplit(next::pending, complete, s0, h0, unsplit)::k) =>
+      Drive(next, Nil, RunSplit(pending, complete :+ (s::h), s0, h0, unsplit)::k)
+
+    // All the split states are done. Try to reassemble
+    case Rebuild(s, h, RunSplit(Nil, complete, s0, h0, unsplit)::k) =>
+      unsplit(complete :+ (s::h)) match {
+        case UnsplitOk(s1) =>
+          Drive(s1, h0, k)
+        case Resplit(states, unsplit) if metaWhistle(ms::mhistory) =>
+          Rebuild(s0, h0, k)
+        case Resplit(first::rest, unsplit) =>
+          Drive(first, Nil, RunSplit(rest, Nil, s0, h0, unsplit)::k)
+        case _ =>
+          interp.rollback(s::h) match {
+            case s1::h1 => Drive(s1, h1, k)
+            case Nil    => Rebuild(s0, h0, k)   }
+
+    case Rebuild(s, h, Nil) =>
+      interp.rollback(s::h) match {
+        case s1::h1 => Drive(s1, h1, Nil)
+        case Nil    => Done(s) }
+
+    case Done(s) =>
+      // Finished
+      return Done(s)
+  }
+
+  sc(next, ms::mhistory) // Keep going
+}
+  \end{verbatim}
+  \caption{Supercompiler algorithm}
+  \label{fig:sc}
+\end{figure*}
+
+
+\subsection{The whistle}
+
+In the supercompilation literature, the \emph{whistle}
+is a subroutine that detects if the supercompiler
+might not terminate.
+This can happen, of course, when evaluating an actual infinite loop, but also 
+when evaluating loops where the loop condition is statically unknown, or
+when evaluating recursive calls. Indeed nontermination occurs more often
+during partial evaluation than normal evaluation because of missing
+information.
+
+If the whistle blows, the supercompiler
+stops driving and splits the current state.
+Our supercompiler uses two whistles: the first operates
+on interpreter states (implemented by \c{Interpreter.whistle})
+and ensures termination of driving. The second operates on states of the supercompiler
+itself and ensures termination of splitting.
+
+Whistles are an ongoing topic of research~\cite{whistles64}.
+Typically, the whistle is based on an \emph{well-quasi-ordering} (WQO) of
+interpreter states.
+Indeed, any WQO on states can be used as a whistle.
+States of the supercompiler are stored in a history.
+When a new state is entered, it is compared to previous states
+in the history. If the new state is greater than or equal a previous state,
+according to the WQO, then
+there is a potential infinite sequence of states
+the supercompiler will pass through. The supercompiler halts driving or
+splitting to avoid running forever.
+
+Various WQOs have been used in the supercompiler literature.
+Typically, they are based on a homeomorphic embedding of
+states~\cite{whistles64}.
+Our framework provides several whistles: a whistle that
+never blows (thus allowing nontermination), a whistle that 
+blows when the state size becomes too large or when the history of states becomes too
+long.
+The default whistle provided by the framework uses a \emph{tag-bag}.
+In our implementation, 
+the tag-bag of a state is a bag (multiset) of 
+Scala class names in the state.
+One state is less than another if it has the same set of tags
+in the bag, but the bag is smaller.
+\begin{align*}
+  s \preceq s'
+   \iff&
+  \mathit{set}(\mathit{tagbag}(s))
+  =
+  \mathit{set}(\mathit{tagbag}(s')) \\
+  &
+  \wedge
+  |\mathit{tagbag}(s)|
+  \le
+  |\mathit{tagbag}(s')|
+\end{align*}
+
+The implementation works for arbitrary state implementations, using the Kiama
+library~\cite{kiama} to traverse data structures, collecting class names.
+Users of the framework can override the tagging operation for more precision,
+for instance by including constant values occurring in the state as additional tags.
+
+\subsection{Folding and generalization}
+
+Another component of the supercompilation is the \c{fold} function.
+Like the whistle,
+folding compares the current state with previous states in the history.
+If two states are identical up to renaming, the states can be \emph{generalized}.
+For instance, in the example from Section~\ref{sec:nutshell},
+the \c{map} function is called initally as
+\c{map(\_ + 1, zs)}
+and then later
+\c{map(\_ + 1, bs)}.
+When supercompilation is complete the residual of the first call (with \c{zs})
+will be the body of a function that maps \c{\_ + 1} over the free
+variable \c{zs}.
+We can generalize these two calls by introducing a new function
+that takes \c{zs} as a parameter. 
+Folding replaces the call in the current state
+with a call to the new function, and then builds the residual function body.
+The history is rolled back to the previous state, with the original call
+replaced with a call to the new function.
+
+The framework provides methods for generalizing terms.
+A generalization of two terms
+replaces differing subterms of the two terms with a variable.
+The \emph{most-specific generalization}
+(MSG) 
+performs the fewest substitutions possible~\cite{supercompilation-blah}.
+
+\begin{verbatim}
+trait MSG[Term, Var <: Term] {
+  type Subst = Map[Var, Term]
+  def freshVar: Var
+  def msg(t1: Term, t2: Term):
+    Option[(Term, Subst, Subst)] = ...
+}
+\end{verbatim}
+
+To use this functionality, the user implements the \c{MSG} trait
+providing a method to generate fresh variable terms.
+The \c{msg} method returns not only the MSG term, but also two substitutions, one 
+that when applied to the MSG returns the first term \c{t1}
+and the other that when applied to the MSG returns \c{t2}.
+The framework provides methods for building and applying substitutions.
+The MSG \emph{always} exists, but the \c{msg} method fails if the MSG
+is just a variable, meaning the head of the two terms
+is of a different shape.
+If the two terms are identical upto renaming, they are
+required to be folded. This is one of the key distinctions between supercompilation and simple
+partial evaluation.
+

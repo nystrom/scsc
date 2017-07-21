@@ -1,0 +1,29 @@
+
+\section{A supercompiler for JavaScript}
+\label{sec:js}
+
+To demonstrate that our framework is practical and can be used for 
+realistic languages, we implemented a supercompiler for JavaScript.
+
+We started with an interpreter written as a CESK-like abstract machine.
+To parse JavaScript we 
+used the Nashorn JavaScript parser included in JDK 8.
+The interpreter handles most of JavaScript.
+Some of the more esoteric corners of the language are not implemented, but
+they are nevertheless supported by the supercompiler.
+The \c{eval} is supported by parsing its argument
+using the Nashorn parser
+then evaluating the resulting abstract syntax tree.
+
+JavaScript is a notoriously difficult language to implement, with a complex
+semantics for even the simplest operations~\cite{ecma,lambda-js}. However, one advantage of
+implementing a partial evaluator versus a interpreter is that the difficult
+cases can simply be residualized: that is, rather than implement the precise semantics
+for some language features, we allow the evaluator to get stuck, forcing a split and later
+residualization. In a similar vein, we do not implement many JavaScript primitives,
+instead leaving calls to these primitives in the residual program.
+
+Unfortunately, we did not have time to 
+run performance measurements on the supercompiler output.
+These will be reported in the final version of the paper.
+

@@ -1,0 +1,734 @@
+\section{Supercompiling imperative languages}
+
+Our focus in building the framework, and indeed our primary use case,
+is for program optimization and specialization.
+To that end our framework provides support for 
+implementing interpreters (and therefore supercompiler
+driving and rebuilding) for imperative languages.
+The framework provides traits for implementing interpreters
+in CESK-machine style. 
+These traits need not be used in the interpreter implementtion,
+however they help support
+typical features of imperative languaes.
+In particular, the framework provides code for managing an abstract store,
+and utilities for 
+splitting, unsplitting, and
+residualization of loops, functions, and exceptions.
+
+\subsection{CESK interpreters}
+
+In a CESK interpreter, the interpreter state is given by a 4-tuple:
+(control, environment, store, kontinuation [sic])~\cite{cesk}.
+We implement the interpreter using
+``apply, eval, continue'' style of Danvy~\cite{danvy}.
+An eval state $\c{Ev}(e, \rho, \sigma, k)$
+has a control (or focus) expression $e$, an environment $\rho$,
+which maps names to memory locations, a store $\sigma$, which maps
+memory locations to values, and a continuation $k$.
+An \c{Ev} state
+dispatches on the focus expression $e$ and
+changes the focus of the interpreter to a subexpression of $e$, pushing a new continuation frame.
+A continue state $\c{Co}(v, \sigma, k)$
+has a value $v$ as its focus, dispatches on the continuation, performing an
+operation. 
+Our implementation treats apply states (which apply operations)
+as a special case of continue states.
+
+For example, the evaluate the assignment \c{x = 1+2}, the interpreter goes through the following
+states:
+\begin{align*}
+& \c{Ev}(\c{x = 1+2}, \rho, \sigma, \bullet) \\ 
+& \c{Ev}(\c{1+2}, \rho, \sigma, (\c{x = \bullet},\rho)::\bullet) \\
+& \c{Ev}(\c{1}, \rho, \sigma, (\c{\bullet+2},\rho)::(\c{x = \bullet},\rho)::\bullet) \\
+& \c{Co}(\c{1}, \sigma, (\c{\bullet+2},\rho)::(\c{x = \bullet},\rho)::\bullet) \\
+& \c{Ev}(\c{2}, \rho, \sigma, (\c{1+\bullet},\rho)::(\c{x = \bullet},\rho)::\bullet) \\
+& \c{Co}(\c{2}, \sigma, (\c{1+\bullet},\rho)::(\c{x = \bullet},\rho)::\bullet) \\
+& \c{Co}(\c{3}, \sigma, (\c{x = \bullet},\rho)::\bullet) \\
+& \c{Co}(\c{3}, \sigma[\c{x}\mapsto\c{3}], \bullet)
+\end{align*}
+
+To these two kinds of state, we add an
+$\c{Unwinding}(j, \sigma, k)$ state, which is like a \c{Co}, but has a jump statement
+$j$
+as the focus. \c{Unwinding} states are used to implement unstructured control
+flow like return, throw, break, and continue statements.
+Evaluating an \c{Unwinding} state pops continuations until reaching
+the jump target (e.g., the caller frame if the jump is a return).
+\c{try}--\c{finally} statements can be supported by evaluating them during the
+stack unwinding.
+
+We also add a 
+$\c{Residual}(e, \sigma, k)$ state, which contains 
+a residual expression $\R{e}$. Stepping \c{Residual} state
+generally produces another \c{Residual} state with a larger residual
+expression.
+
+All states in the framework implement the following trait:
+\begin{verbatim}
+trait State {
+  def step: Option[State]
+  def split: Option[(List[State], Unsplitter[State])]
+}
+\end{verbatim}
+
+
+\subsection{The abstract store}
+
+The main difficulty with supercompilation of imperative languages 
+is simulating the store.
+In our framework, 
+the store maps memory locations to either values or 
+to a special \emph{unknown} value.
+If, during evaluation, a memory location maps to the unknown value,
+driving stops, triggering a split.
+
+When constructing a \c{Residual} state, the effect of the residual expression
+on the store must be simulated. Any variables assigned in the
+residual expression are ``forgotten'' by mapping their locations to unknown.
+Simulating a call conservatively forgets all values in the store except variables
+in the environment.
+
+If a branching expression (for instance an \c{if}) is split,
+the then- and else-branches of the \c{if} are evaluated with the same store.
+When reassembling an \c{if}, the resulting stores must be \emph{merged}.
+Two stores $\sigma_1$ and $\sigma_2$ are merged by preserving mappings where the same location
+is mapped to the same value and mapping other locations to the unknown value.
+Essentially this forgets any information about locations that differ in the
+two stores.
+
+To evaluate the branches more precisely, we extend the store
+with information known about the branch condition.
+For instance if branching on a variable \c{x}, we evaluate the then-branch with \c{x} set to \c{true} and the
+else-branch with \c{x} set to \c{false}.
+This optimization is often done in functional language
+supercompilers~\cite{supercompilation-by-eval,mitchell-supero},
+which propagate pattern matches into case arms.
+
+Loops present another compilation.
+To split and reassemble loops we must simulate the effect of a possibly
+infinite sequence of loop interations on the store.
+Consider, for instance, a while loop \c{while~(e)~s}.
+When split, the supercompiler 
+evaluates the sequence \c{e;~s}. During reassembly, if the final store after evaluating the sequence differs from
+the initial store, the stores are merged and the loop is re-split.
+The \c{e;~s} sequence is re-evaluated and again
+reassembly is attempted. Re-splitting until the final state equals the (merged) initial store.
+Repeated re-splitting is guaranteed to terminate because merging only forgets
+information: eventually a fixed point is reached. Effectively, this approach discards from the heap any values
+that are not loop invariant.\footnote{The store could be made more precise after
+the loop by simulating a \c{false} loop condition, as is done
+with the condition for else-branches of \c{if}. However, \c{break} statements complicate this optimization.}
+
+To support reassembly of split states, methods are provided for inspecting the
+histories of states. For instance, after splitting an $n$-argument call expression,
+say \c{f(x+1,2+3,4+z)}, the three operands are evaluated to produce arguments for 
+a rebuilt call to \c{f}.
+Because evaluation must capture store effects, the splitter does not return
+three different states, but rather just one state that evaluates the operands
+in sequence. Evaluation starts with an empty continuation.
+Evaluation of each operand grows, then shrinks the continuation. 
+After each operand but the last finishes evaluation, the continuation of the resulting state is
+the same. After the last operand is evaluated, the continuation is again empty.
+The framework provides utility functions for extracting from the final states for each operand
+from a history of states.
+
+\eat{
+
+consider splitting on the call \c{1+2+x)}.
+We would like the residual to be \c{3+x}.
+Evaluation of this expression goes through the following states:
+\begin{align*}
+        \c{1+2+x};~& k = \c{\bullet+x} \\
+        \c{1+2};~& k = \c{\bullet+x} \\
+        \c{1};~& k = \c{(\bullet+2)+x} \\ 
+        \c{2};~& k = \c{(1+\bullet)+x} \\ 
+        \c{3};~& k = \c{\bullet+x} \\ 
+        \c{x};~& k = \c{3+\bullet} \\ 
+        \c{\R{x}};~& k = \c{3+\bullet} \\ 
+        \c{\R{3+x}};~& k = \c{\bullet} \\ 
+\end{align*}
+
+}
+
+\eat{
+\subsection{Residualizing the state}
+
+One problem that occurs is how to residualize a term
+containing an abstract memory location.
+We take the following approach:
+whenever we compute a location
+(either by looking up a variable
+in the environment or by looking up property in the store),
+we annotate the location with the access path used to compute it.
+The path is only used when the address is in the focus
+of the machine state or when the address is stored in a continuation.
+
+The path is only used to residualize the location.
+
+For new objects, the path is a new object expression.
+For local variables, it is the name of the variable.
+For field accesses, it is the path computed for the object's location
+plus the field name.
+
+If stored in a continuation,
+we need to ensure the path is not invalidated
+before it is used.
+When reifying the continuation, although the
+path may have changed, between the time the path is put into the
+continuation and the time the continuation is popped,
+when the continuation (and therefore the path) is reified,
+the path was valid.
+}
+
+\section{From a CESK machine to supercompilation}
+\label{sec:cesk}
+
+To get a better idea of how the framework is used, we defined
+a simple imperative language and a CESK-like abstract machine
+for the language.
+We then extend the interpreter to handle residual states
+and then describe how splitting and reassembly are implemented.
+The syntax for our language is given in Figure~\ref{fig:imp-syntax}.
+Most constructs are standard. The language has mutable variable,
+records with mutable fields, and control-flow expressions.
+Values include memory locations $\ell$.
+
+\begin{figure}
+\begin{align*}
+    e &::= v \\
+        & \bnf x \\
+        & \bnf e_1 \oplus e_2 \\
+        & \bnf \c{while}~(e_1)~e_2 \\
+        & \bnf \c{if}~(e_0)~e_1~\c{else}~e_2 \\
+        & \bnf \c{var}~x;~e \\
+        & \bnf x = e \\
+        & \bnf e_1;~e_2 \\
+        & \bnf \{ \overline{x} = \overline{e} \} \\
+        & \bnf e.x \\
+        & \bnf e.x = e \\
+    v &::= n \bnf \c{true} \bnf \c{false} \bnf \ell
+\end{align*}
+  \caption{Syntax for example imperative language}
+  \label{fig:imp-syntax}
+\end{figure}
+
+\subsection{Driving}
+
+The operational semantics of the language are given in Figure~\ref{fig:imp-cesk}.
+As described above, machine states are either \c{Ev} or \c{Co} states.
+Unlike with Felleisen and Friedman's CESK machine, continuations
+are not stored in the store (because the language does not support first-class
+continuations). 
+The rules are largely standard.
+The \c{var} epxression allocates a location and
+adds \c{x} to the scope (rule \textsc{Ev-let}).
+Assigning to a field 
+either updates 
+an existing field (\textsc{Co-setField})
+or creates a new field (\textsc{Co-createField}).
+
+\newcommand\then[2]{(\bullet;~#1, #2)}
+\newcommand\branch[3]{(\c{if}~(\bullet)~#1~\c{else}~#2, #3)}
+\newcommand\init[3]{(\bullet.#1 = #2, #3)}
+
+\newcommand{\residual}[1]{\langle\!\langle{#1}\rangle\!\rangle}
+
+
+\begin{figure*}
+  \begin{center}
+\begin{align*}
+  \omit [\textsc{Ev-val}] &&
+    \c{Ev}(v, \rho, \sigma, k)
+    & \longrightarrow
+    \c{Co}(v, \sigma, k)
+\\
+  \omit [\textsc{Ev-var}] &&
+    \c{Ev}(x, \rho, \sigma, k)
+    & \longrightarrow
+    \c{Co}(\sigma(\rho(x)), \sigma, k)
+\\
+  \omit [\textsc{Ev-let}] &&
+    \c{Ev}(\c{var}~x;~e, \rho, \sigma, k)
+    & \longrightarrow
+    \c{Ev}(e, \rho', \sigma', k) 
+        \\ &&& (\rho' = \rho[x := \ell], \sigma' = \sigma[\ell := \c{false}], \ell~\mbox{fresh})
+\\
+  \omit [\textsc{Ev-op}] &&
+    \c{Ev}(e_1 \oplus  e_2, \rho, \sigma, k)
+    & \longrightarrow
+    \c{Ev}(e_1, \rho, \sigma, (\bullet \oplus e_2,\rho)::k)
+\\
+  \omit [\textsc{Co-op1}] &&
+    \c{Co}(v_1, \sigma, (\bullet \oplus e_2,\rho')::k)
+    & \longrightarrow
+    \c{Ev}(e_2, \rho', \sigma, (v_1\oplus \bullet,\rho')::k)
+\\
+  \omit [\textsc{Co-op2}] &&
+    \c{Co}(v_2, \sigma, (v_1 \oplus \bullet,\rho')::k)
+    & \longrightarrow
+    \c{Co}(v_1 \oplus v_2, \sigma, k)
+\\
+  \omit [\textsc{Ev-seq}] &&
+    \c{Ev}(e_1;~e_2, \rho, \sigma, k)
+    & \longrightarrow
+    \c{Ev}(e_1, \rho, \sigma, \then{e_2}{\rho}::k)
+\\
+  \omit [\textsc{Co-seq}] &&
+    \c{Co}(v, \sigma, \then{e_2}{\rho'}::k)
+    & \longrightarrow
+    \c{Ev}(e_2, \rho', \sigma, k)
+\\
+  \omit [\textsc{Ev-if}] &&
+    \c{Ev}(\c{if}~(e_0)~e_1~\c{else}~e_2, \rho, \sigma, k)
+    & \longrightarrow
+    \c{Ev}(e_0, \rho, \sigma, \branch{e_1}{e_2}{\rho}::k)
+\\
+  \omit [\textsc{Co-ifTrue}] &&
+    \c{Co}(\c{true}, \sigma, \branch{e_1}{e_2}{\rho'}::k)
+    & \longrightarrow
+    \c{Ev}(e_1, \rho', \sigma, k)
+\\
+  \omit [\textsc{Co-ifFalse}] &&
+    \c{Co}(\c{false}, \sigma, \branch{e_1}{e_2}{\rho'}::k)
+    & \longrightarrow
+    \c{Ev}(e_2, \rho', \sigma, k)
+\\
+  \omit [\textsc{Ev-while}] &&
+    \c{Ev}(\c{while}~(e_1)~e_2, \rho, \sigma, k)
+    & \longrightarrow
+    \c{Ev}(\c{if}~(e_1)~(e_2;~ \c{while}~(e_1)~e_2)~\c{else}~\c{false}, \rho, \sigma, k)
+\\
+  \omit [\textsc{Ev-setVar}] &&
+    \c{Ev}(x = e, \rho, \sigma, k)
+    & \longrightarrow
+    \c{Co}(\rho(x), \sigma, (\bullet = e, \rho)::k)
+\\
+  \omit [\textsc{Co-setVar}] &&
+    \c{Co}(\ell, \sigma, (\bullet = e, \rho')::k)
+    & \longrightarrow
+    \c{Ev}(e, \rho', \sigma, (\ell = \bullet, \rho)::k)
+\\
+  \omit [\textsc{Co-assign}] &&
+    \c{Co}(v, \sigma, (\ell = \bullet, \rho')::k)
+    & \longrightarrow
+    \c{Co}(v, \sigma[\ell := v], k)
+\\
+  \omit [\textsc{Ev-new}] &&
+    \c{Ev}(\{ \overline{x} = \overline{e} \}, \rho, \sigma, k)
+    & \longrightarrow
+    \c{Co}(\ell, \sigma', (\init{\overline{x}}{\overline{e}}{\rho}::k)
+        \\ &&& (\sigma' = \sigma[\ell := \c{\{\}}], \ell~\mbox{fresh})
+\\
+  \omit [\textsc{Co-init}] &&
+    \c{Co}(\ell, \sigma, \init{x_0,\overline{x}}{e_0,\overline{e}}{\rho'}::k)
+    & \longrightarrow
+    \c{Ev}(\ell.x_0 = e_0, \rho', \sigma,
+    \then{\ell}{\rho'}::\init{\overline{x}}{\overline{e}}{\rho'}::k)
+\\
+  \omit [\textsc{Co-obj}] &&
+    \c{Co}(\ell, \sigma, \init{\cdot}{\cdot}{\rho'}::k)
+    & \longrightarrow
+    \c{Co}(\ell, \sigma, k)
+\\
+  \omit [\textsc{Ev-getField}] &&
+    \c{Ev}(e.x, \rho, \sigma, k)
+    & \longrightarrow
+    \c{Ev}(e, \rho, \sigma, (\bullet.x, \rho)::k)
+\\
+  \omit [\textsc{Co-getField}] &&
+    \c{Co}(\ell, \sigma, (\bullet.x_i, \rho')::k)
+    & \longrightarrow
+    \c{Ev}(\sigma(\ell_i), \rho', \sigma, k)
+        \\ &&& (\sigma(\ell) = \{ \overline{x} = \overline{\ell}\})
+\\
+  \omit [\textsc{Ev-setField}] &&
+    \c{Ev}(e_1.x = e_2, \rho, \sigma, k)
+    & \longrightarrow
+    \c{Ev}(e_1, \rho, \sigma, (\bullet.x = e_2, \rho)::k)
+\\
+  \omit [\textsc{Co-setField}] &&
+    \c{Co}(\ell, \sigma, (\bullet.x_i = e, \rho')::k)
+    & \longrightarrow
+    \c{Ev}(e, \rho', \sigma, (\ell_i = \bullet, \rho)::k)
+        \\ &&& (\sigma(\ell) = \{ \overline{x} = \overline{\ell}\})
+\\
+  \omit [\textsc{Co-createField}] &&
+    \c{Co}(\ell, \sigma, (\bullet.x_0 = e, \rho')::k)
+    & \longrightarrow
+    \c{Ev}(e, \rho', \sigma', (\ell_0 = \bullet, \rho)::k)
+        \\ &&& (
+                \sigma(\ell) = \{ \overline{x} = \overline{\ell} \},
+                \sigma' =
+                \sigma[\ell := \{ x_0 = \ell_0, \overline{x} = \overline{\ell} \}
+                       ][\ell_0 := \c{false}], \ell_0~\mbox{fresh})
+\\
+\end{align*}
+  \end{center}
+
+\caption{Evaluation semantics for the example language}
+\label{fig:imp-cesk}
+\end{figure*}
+
+To implement the interpreter for this language 
+a \c{step} method is implemented that matches the current state
+and returns the next state (wrapped in an \c{Option}) if one of the above
+rules applies.
+If one the rules does not match, the supercompiler performs splitting.
+Splitting is described below.
+
+\subsection{Rollback and residual states}
+
+If splitting fails, a \c{Residual} state is created with the stuck focus
+as if the following two rules were added:
+\begin{align*}
+     \c{Co}(v, \sigma, k)
+        & \longrightarrow
+        \c{Residual}(\R{v}, \sigma', k) \\ 
+     \c{Ev}(e, \rho, \sigma, k)
+        & \longrightarrow
+        \c{Residual}(\R{e}, \sigma', k) \\
+\end{align*}
+In these ``rule'', $\sigma'$ is the store obtained by simulating the focus
+expression on $\sigma$.
+In the implementation, this rewriting is done
+by the \c{rollback} method of the \c{Interpreter} trait (see Figure~\ref{fig:interpreter}).
+
+One problem that occurs is how to residualize a term
+containing an abstract memory location since these are not legal surface
+syntax and exist only as part of the interpreter state.
+Given the state $\c{Co}(\ell, \sigma, k)$ we can walk back through
+the history to the earlier state $\c{Ev}(e, \sigma', k)$ that created the location $\ell$
+and residualize $\ell$ as $\c{Residual}(\R{e}, \sigma', k)$.
+We assume a function $\mathit{reify}(\ell)$ that returns the access path used
+to compute $\ell$.
+
+Another detail is that we need to residualize variable declarations to ensure
+they are declared in the residual. We modify \textsc{Ev-let} as follows, and
+add a rule to pop the \c{var}-rebuilding continuation if not needed:
+\[
+  \begin{array}{l} \c{Ev}(\c{var}~x;~e, \rho, \sigma, k)
+     \longrightarrow
+    \c{Ev}(e, \rho, \sigma', (\c{var}~x;~\bullet, \rho)::k)
+        \\ \qquad  (\rho' = \rho[x := \ell], \sigma' = \sigma[\ell := \c{false}], \ell~\mbox{fresh})
+      \\
+    \c{Co}(v, \sigma, (\c{var}~x;~\bullet, \rho)::k)
+     \longrightarrow
+    \c{Co}(v, \sigma, k) \\
+  \end{array}
+\]
+
+Once we have residual states we want to compute with them. The step function
+for \c{Residual} states is shown in Figure~\ref{fig:imp-cesk-res}.
+In general, for each \c{Co} rule, there should be a \c{Re} rule that
+grows the residual state.
+Rules \textsc{Re-let-free} and \textsc{Re-let-bound} ensure 
+that any free variables in the residual are declared.
+Several rules update the store. The function $\mathit{sanitize}(\sigma, x)$
+removes all fields named \c{x} from the store.
+The $\sigma \sqcap \sigma'$ is the merge of two stores.
+
+Stepping with residual rules always terminates: each rule consumes one 
+frame of the continuation.
+This ensures the supercompiler itself terminates.
+When the whistle blows or driving or splitting cannot be done,
+the interpreter transitions to a residual state, producing the residual
+program in a finite number of steps.
+
+The rules make no attempt to be clever, for instance, evaluating both branches
+of the \c{if}. This is the job of the splitter.
+If the splitter works well, residual rules are used for only short continuations,
+leaving the generated residual small.
+
+\begin{figure*}
+  \begin{center}
+\begin{align*}
+  \omit [\textsc{Re-op}] &&
+    \c{Re}(\residual{e_2}, \sigma, (v_1 \oplus \bullet,\rho')::k)
+    & \longrightarrow
+    \c{Re}(\residual{v_1 \oplus e_2}, \sigma, k)
+\\
+  \omit [\textsc{Re-seq}] &&
+    \c{Re}(\residual{e_1}, \sigma, \then{e_2}{\rho'}::k)
+    & \longrightarrow
+    \c{Re}(\residual{e_1;~e_2}, \sigma, k)
+\\
+  \omit [\textsc{Re-if}] &&
+    \c{Re}(\residual{e}, \sigma, \branch{e_1}{e_2}{\rho'}::k)
+    & \longrightarrow
+    \c{Re}(\residual{\c{if}~(e)~e_1~\c{else}~e_2}, \sigma \sqcap \sigma', k)
+\\
+  \omit [\textsc{Re-assign}] &&
+    \c{Re}(\residual{e},\sigma, (\ell = \bullet, \rho')::k)
+    & \longrightarrow
+    \c{Re}(\residual{p = e}, \sigma[\ell := \bot], k)
+        \\ &&& (p = \mathit{reify}(\ell))
+\\
+  \omit [\textsc{Re-getField}] &&
+    \c{Re}(\residual{e},\sigma, (\bullet.x, \rho')::k)
+    & \longrightarrow
+    \c{Re}(\residual{e.x}, \sigma, k)
+\\
+  \omit [\textsc{Re-setField}] &&
+    \c{Re}(\residual{e_1},\sigma, (\bullet.x = e_2, \rho')::k)
+    & \longrightarrow
+    \c{Re}(\residual{e_1.x = e_2}, \mathit{sanitize}(\sigma, x), k)
+\\
+  \omit [\textsc{Re-let-free}] &&
+    \c{Re}(\residual{e},\sigma, (\c{var}~x;~\bullet, \rho')::k)
+    & \longrightarrow
+    \c{Re}(\residual{\c{var}~x;~e}, \sigma, k) 
+        \\ &&& (x \in \mathit{FV}(e))
+\\
+  \omit [\textsc{Re-let-bound}] &&
+    \c{Re}(\residual{e}, \sigma, (\c{var}~x;~\bullet, \rho')::k)
+    & \longrightarrow
+    \c{Re}(\residual{e}, \sigma, k) 
+        \\ &&& (x \not\in \mathit{FV}(e))
+\\
+\end{align*}
+  \end{center}
+
+\caption{Evaluation semantics for example language with residuals}
+\label{fig:imp-cesk-res}
+\end{figure*}
+    
+\subsection{Splitting}
+
+The splitter is responsible for further evaluating subexpressions from
+a stuck state. The interpreter can get stuck either because no rule applies
+or because the whistle signals that driving should stop.
+
+This splitter is implemented by providing the \c{split} method of the \c{Interpreter}
+trait. In the CESK interpreter, each \c{State} has a \c{split} method
+which returns a list of \c{State} and an \c{Unsplitter} function, shown
+in see Figure~\ref{fig:unsplit}.
+
+\begin{figure*}
+\begin{verbatim}
+object Unsplit {
+  type Unsplitter[State] = List[List[State]] => UnsplitResult[State]
+
+  sealed trait UnsplitResult[State]
+  case class Resplit[State](ss: List[State], unsplit: Unsplitter[State]) extends UnsplitResult[State] {
+    require(ss.nonEmpty)
+  }
+  case class UnsplitOk[State](s: State) extends UnsplitResult[State]
+  case class UnsplitFail[State]() extends UnsplitResult[State]
+}
+\end{verbatim}
+\caption{Unsplitter interface}
+\label{fig:unsplit}
+\end{figure*}
+
+Branches are the most interesting case for the splitter.
+If the interpreter is stuck in the following state:
+\[
+    \c{Co}(v, \sigma, \branch{e_1}{e_2}{\rho'}::k)
+\]
+The splitter returns two states:
+\[
+    \c{Ev}(e_1, \rho', \sigma_1, \bullet)
+    \quad
+    \quad
+    \mbox{and}
+    \quad
+    \quad
+    \c{Ev}(e_2, \rho', \sigma_2, \bullet)
+\]
+Note that the continuation of these states is empty.
+This is a design choice: including the continuation $k$ in the split states
+might provide better performance, but would also lead to exponential code
+growth. Essentially, this would put the continuation of the rest of the
+program after the \c{if} in each branch of the \c{if}.
+
+The two states are provided with different stores.
+$\sigma_1$ is obtained by adding information about the branch test
+$v$ to the store, assuming $v$ is \c{true}.
+$\sigma_2$ is obtained by assuming $v$ is \c{false}.
+
+After driving these two states,
+the end result should be two \c{Residual} states.
+The unsplitter attempts to produce a new \c{Ev} or \c{Co} state from these states.
+For instance, if the two resulting states are identical values, the \c{if}
+can be discarded and replaced with the value, the two result states are merged
+and driving can continue.
+In the worst case the unsplitter
+reconstructs the \c{if}, producing a new \c{Residual} state.
+
+If the language were extended with unstructured control flow, for instance a
+\c{break} statement, the unsplitter has another option.
+If may be that one branch gets stuck trying to unwind the continuation
+to exit a loop, while the other branch completes normally. This can happen
+with an expression like:
+\begin{verbatim}
+  while (..) {
+    if (..)
+      break
+    else
+      work()
+    more()
+  }
+\end{verbatim}
+The interpreter gets stuck if the continuation of the \c{break} runs out before
+the enclosing loop is found.
+In this case, rather than failing, we can \emph{extend} the continuation of
+both branches, for instance, adding \c{more()} and the next loop iteration
+to the continuation of the branch. The state is then \emph{resplit} with the
+new continuations. This would result in the following residual program:
+\begin{verbatim}
+  while (..) {
+    if (..)
+      break
+    else {
+      work()
+      more()
+    }
+  }
+\end{verbatim}
+
+\eat{
+
+Soundness
+if the program would evaluate to termination in full environment and store,
+the program will evaluate to termination in a partial environment and store.
+
+Progress
+if a step can be taken with a full env,
+a step can be taken in a partial env with a residual value.
+
+the machine can always take a step.
+If we arrive at a state from which no step can be taken, 
+we residualize the focus 
+
+In BB, each state maps to a name.
+Each state corresponds to just an expression being evaluated,
+not a complete program.
+Each state maps to a name.
+If a state is encountered again, we replace the state
+with a call to the function of that name.
+
+when we start supercompiling a state, record it with a name,
+then replace it with the optimized binding
+
+
+
+
+\section{Residualizing the state}
+
+One problem that occurs is how to residualize a term
+containing an abstract memory location.
+We take the following approach:
+whenever we compute a location
+(either by looking up a variable
+in the environment or by looking up property in the store),
+we annotate the location with the access path used to compute it.
+The path is only used when the address is in the focus
+of the machine state or when the address is stored in a continuation.
+
+The path is only used to residualize the location.
+
+For new objects, the path is a new object expression.
+For local variables, it is the name of the variable.
+For field accesses, it is the path computed for the object's location
+plus the field name.
+
+If stored in a continuation, 
+we need to ensure the path is not invalidated
+before it is used.
+When reifying the continuation, although the 
+path may have changed, between the time the path is put into the
+continuation and the time the continuation is popped,
+when the continuation (and therefore the path) is reified,
+the path was valid.
+        XXX need to argume better
+
+
+To compute a term from a state, we residualize the focus
+and evaluate the continuation, always residualizing the focus
+between each step.
+The main problem is to residualize memory locations.
+To do this, we compute for each location an access path for that 
+location. The access path is computed by performing a breadth-first search through the store, starting with the locations in the environment.
+While traversing the store, we build up an access path to the location, appending property accesses.
+Using BFS gives us the shortest access path possible for the given
+environment.
+For this to work, we must ensure that each live location is reachable 
+from the environment and not just from a continuation.
+If a location is unreachable from the environment, it must either be garbage (in which case it should not be reified at all), or it must be reachable from
+the continuation only.
+In the latter case, the location must be a newly created object
+that has yet to be stored in a variable.
+We disallow reification of these locations: instead we step the
+machine to a state where the new object is store in a variable
+and then reify the state.
+
+More simply: we do not reify states with locations unreachable from
+from the environment. To ensure these do not exist, we introduce
+local variables to ensure locations get stored immediately after creation.
+
+We transform loc(0) into a local variable \c{loc_0}.
+We replace assignments in the continuation 
+
+We transform the program as follows.
+
+\begin{verbatim}
+        { x : e } --> t = {}; t.x = e; t
+
+        // in this case the new object is reachable from either this
+        // (in the body of the F constructor)
+        // or from t at all points
+        new F(e) --> t = new F(e); t
+
+        // any object returned from f is made reachable again from t
+        f() --> t = f(); t
+
+        // we add t to the environment
+\end{verbatim}
+
+When are locations reified?
+
+        when used in a binary expression and the other operand
+        is unknown
+
+        when used in a call and the function is unknown
+
+        when used in a property lookup and the property is unknown
+
+        we ensure that 
+
+        reifying the branches of a conditional when the test is unknown
+
+                x ? new C : new D
+
+OR:
+        every location stores its path
+        just have to be careful of linearity
+        when creating a location, store the residual for that location
+        when updating a location, update the residual
+
+                x ? new C : new D
+        ->
+                x ? { y = new C ; y }
+                  : { z = new D ; z }
+
+
+\section{Overall structure}
+
+We traverse the JavaScript AST.
+
+We add each (open) term to the environment as a named function.
+We supercompile each function.
+If we encounter a term again, we replace it with a call.
+Or we inline the call.
+Which terms do we add then?
+
+The body of any lambda encountered is supercompiled in an abstract
+environment.
+
+Tying the knot.
+Each time the focus changes to a residual, we add the focus to the store with
+a name. If there's already a function there, we replace the residual with a
+call to that function.
+
+}
+

@@ -1,0 +1,25 @@
+\section{Related work}
+\label{sec:related}
+
+We are aware of one other toolkit for building supercompilers in Scala. MRSC~\cite{mrsc}
+provides a framework based on a graph representation.
+The supercompiler steps from one graph configuration to another.
+The framework is more general than our approach, supporting different types
+of supercompilation, in particular multi-result supercompilation, but
+provides a lower-level interface than our framework.
+In our framework, the user must only consider source language states,
+and sequences of these states, and not a separate graph model.
+
+The work most similar to ours is Bolingbroke
+and Peyton Jones's work on building a practical supercompiler for
+Haskell~\cite{supercompilation-by-eval}.
+They describe building a supercompiler for
+a call-by-need language (essentially core Haskell).
+The supercompiler interleaves driving and splitting phases.
+When driving cannot take a step, splitting is performed and driving is resumed if possible.
+The evaluator is specified as a CEK-like abstract machine.
+Our work differs in that it abstracts over the language being supercompiled.
+It would be interesting to implement their abstract machine interpreter in our framework.
+
+
+

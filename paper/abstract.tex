@@ -1,0 +1,14 @@
+
+Partial evaluation is the well-known idea of specializing a program
+on some of its inputs. 
+Supercompilation is a related technique 
+that has been proposed for program optimization, especially
+for function languages.
+Supercompilation extends traditional partial evaluation by recognizing repeated computations and generalizing to ensure the partial evaluator terminates.
+We describe a framework for building partial evaluators and supercompilers 
+directly from an interpreter.
+The user specifies the interpreter using rewrite rules
+and the framework 
+handles termination checking, generalization, and residualization.
+We demonstrate the approach by implementing a supercompiler for
+JavaScript.

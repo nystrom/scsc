@@ -1,0 +1,34 @@
+\section{Conclusions and future work}
+\label{sec:conclusions}
+
+Our goal with the framework is to make 
+it possible to implement efficient supercompilers for arbitrary programming languages.
+The framework takes care of most details of generalization and the whistle, leaving
+the programmer free to focus on the programming language implementation.
+
+We are working to better support residualization in the framework.
+Beyond writing an interpreter for the subject language,
+the user must
+write code to split and later reassemble states.
+It turns out that this code is often rather subtle.
+We did not want to constrain the framework to use a particular representation
+of terms in the subject language, however, use of a zipper representation
+for terms
+has been shown~\cite{taming-code-explosion} to be a good representation.
+It may be possible to 
+automatically construct splitting and reassembly code
+using generic programming approaches, for instance
+using lenses from the Shapeless library~\cite{shapeless}.
+
+Beyond JavaScript, the framework is being used to construct supercompilers 
+for other languages under development in our research group.
+We are 
+extending the framework to support other kinds of supercompilation,
+including nondeterministic and multi-result supercompilation~\cite{mrsc,mrsc1}.
+% Since our JavaScript interpreter is based on abstract machines, we are
+% also looking at using the framework to implement static analyses.
+Since our supercompiler framework is itself implemented as an abstract machine
+interpreter, naturally, we should be supercompiling the supercompiler itself.
+
+Source code for the framework is available at \url{http://github.com/nystrom/scsc}.
+
