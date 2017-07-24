@@ -1,6 +1,6 @@
 package scsc.imp.sc
 
-class RebuildStep[M <: Machine](val machine: M) {
+class ResidualStep[M <: Machine](val machine: M) {
   import machine._
   import terms._
   import states._

@@ -14,7 +14,7 @@ trait States extends imp.States with scsc.sc.States {
 
   trait Re extends State with ResidualLike
 
-  val ReStep: RebuildStep[machine.type]
+  val ReStep: ResidualStep[machine.type]
 
   def step(s: State) = s match {
     case s @ Re(e, sigma, k) =>
