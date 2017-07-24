@@ -1,1 +1,0 @@
-JavaScript interpreter and supercompiler
