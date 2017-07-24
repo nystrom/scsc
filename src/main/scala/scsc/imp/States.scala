@@ -29,7 +29,4 @@ trait States extends machine.States {
       case frame::k => frame.unwind(this)
     }
   }
-  trait Re extends State with ResidualLike {
-    def step = None
-  }
 }

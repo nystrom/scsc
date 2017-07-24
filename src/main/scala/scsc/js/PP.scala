@@ -40,14 +40,6 @@ class PP[M <: Machine](val machine: M) {
             line <> text("σ") <+> text("=") <+> any(σ) <>
             line <> text("k") <+> text("=") <+> any(k)
           )
-      case Re(e, σ, k) =>
-        text("Re") <>
-          nest(
-            line <> text("e") <+> text("=") <+> show(e) <>
-            line <> text("e") <+> text("=") <+> any(e) <>
-            line <> text("σ") <+> text("=") <+> any(σ) <>
-            line <> text("k") <+> text("=") <+> any(k)
-          )
       case s => any(s) <> line
     }
   }

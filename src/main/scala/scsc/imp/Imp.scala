@@ -30,11 +30,9 @@ object Imp extends Machine {
     object Ev extends EvFactory
     object Co extends CoFactory
     object Unwinding extends UnwindingFactory
-    object Re extends ResidualFactory
     case class Ev(focus: Term, ρ: Env, σ: Store, k: Cont) extends super.Ev
     case class Co(focus: Value, σ: Store, k: Cont) extends super.Co
     case class Unwinding(jump: Jump, σ: Store, k: Cont) extends super.Unwinding
-    case class Re(residual: Term, σ: Store, k: Cont) extends super.Re
   }
 
   object ImpTerms extends Terms {

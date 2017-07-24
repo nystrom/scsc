@@ -39,21 +39,6 @@ trait States {
     def k: List[Frame]
   }
 
-  // Like a Continue, but with a residual expression in the focus.
-  trait ResidualLike extends StateLike {
-    def residual: Term
-    def σ: Store
-    def k: List[Frame]
-  }
-
-  // Abstract extractors
-  // val Ev: EvExtractor
-  // trait EvExtractor {
-  //   // def unapply(s: EvalLike) = s match {
-  //   //   case s: EvalLike => Some((s.focus, s.ρ, s.σ, s.k))
-  //   //   case _ => None
-  //   // }
-  // }
   import terms.Term
   import continuations.Cont
 
@@ -76,26 +61,5 @@ trait States {
   trait UnwindingFactory {
     def apply(focus: Jump, σ: Store, k: Cont): Unwinding
     def unapply(s: Unwinding): Option[(Jump, Store, Cont)]
-  }
-
-  type Re <: State with ResidualLike
-  val Re: ResidualFactory
-  trait ResidualFactory {
-    def apply(focus: Term, σ: Store, k: Cont): Re
-    def unapply(s: Re): Option[(Term, Store, Cont)]
-  }
-}
-
-trait SplittableStates {
-  val machine: Machine
-  import machine._
-  import states._
-
-  import scsc.core.Unsplit.Unsplitter
-
-  def split(s: State): Option[(List[State], Unsplitter[State])]
-
-  trait Splittable {
-    def split: Option[(List[State], Unsplitter[State])]
   }
 }
