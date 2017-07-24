@@ -13,4 +13,11 @@ trait States extends imp.States with scsc.sc.States {
   trait Unwinding extends super.Unwinding with State
 
   trait Re extends State with ResidualLike
+
+  val ReStep: RebuildStep[machine.type]
+
+  def step(s: State) = s match {
+    case s @ Re(e, sigma, k) =>
+      ReStep.step(s)
+  }
 }

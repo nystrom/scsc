@@ -227,23 +227,27 @@ trait Continuations extends machine.Continuations {
   // Branches
   ////////////////////////////////////////////////////////////////
 
-  case class BranchCont(branches: List[PartialFunction[Value, Exp]], ρ: Env) extends Frame {
+  trait AbsBranchCont extends Frame {
+    def pass: Exp
+    def fail: Exp
+    def ρ: Env
+
     override def step(s: Co) = s match {
       case Co(v, σ, _::k) =>
-        val arms = branches flatMap { pf => pf.lift(v) }
-        arms match {
-          case e::Nil =>
-            Some(Ev(e, ρ, σ, k))
-          case e::es =>
-            // ambiguous.. get stuck
-            super.step(s)
-          case Nil =>
-            // failed
+        evalPredicate(v) match {
+          case Some(true) =>
+            Some(Ev(pass, ρ, σ, k))
+          case Some(false) =>
+            Some(Ev(fail, ρ, σ, k))
+          case _ =>
             super.step(s)
         }
       case s => super.step(s)
     }
   }
+
+  case class BranchCont(pass: Exp, fail: Exp, ρ: Env) extends AbsBranchCont
+  case class CondBranchCont(pass: Exp, fail: Exp, ρ: Env) extends AbsBranchCont
 
   ////////////////////////////////////////////////////////////////
   // Loops

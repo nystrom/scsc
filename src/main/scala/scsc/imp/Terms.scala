@@ -163,15 +163,11 @@ trait Terms extends machine.Terms {
 
       // if e then s1 else s2
       case IfElse(e, s1, s2) =>
-        val f1: PartialFunction[Value, Exp] = { case BooleanLit(true) => s1 }
-        val f2: PartialFunction[Value, Exp] = { case BooleanLit(false) => s2 }
-        Some(Ev(e, ρ, σ, BranchCont(f1::f2::Nil, ρ)::k))
+        Some(Ev(e, ρ, σ, BranchCont(s1, s2, ρ)::k))
 
       // e ? s1 : s2
       case Cond(e, s1, s2) =>
-        val f1: PartialFunction[Value, Exp] = { case BooleanLit(true) => s1 }
-        val f2: PartialFunction[Value, Exp] = { case BooleanLit(false) => s2 }
-        Some(Ev(e, ρ, σ, BranchCont(f1::f2::Nil, ρ)::k))
+        Some(Ev(e, ρ, σ, CondBranchCont(s1, s2, ρ)::k))
 
       ////////////////////////////////////////////////////////////////
       // Loops.
