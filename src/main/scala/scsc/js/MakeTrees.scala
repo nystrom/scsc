@@ -1,11 +1,12 @@
 package scsc.js
 
-import Trees._
-
 // Make SCSC ASTs from Nashorn ASTs.
-object MakeTrees {
+class MakeTrees[M <: Machine](val machine: M) {
   import jdk.nashorn.internal.ir
   import jdk.nashorn.internal.parser.TokenType
+
+  import machine.terms._
+  import machine.TreeWalk
 
   import scsc.js.Visitor
   import scsc.util.FreshVar
@@ -328,7 +329,7 @@ object MakeTrees {
     override def leaveBIND(n: ir.BinaryNode): ir.Node = {
       val right = pop
       val left = pop
-      push(Binary(Binary.BIND, left, right))
+      push(Binary(JSBinary.BIND, left, right))
       n
     }
 
@@ -360,7 +361,7 @@ object MakeTrees {
     override def leaveCOMMALEFT(n: ir.BinaryNode): ir.Node = {
       val right = popR
       val left = popR
-      push(Binary(Binary.COMMALEFT, left, right))
+      push(Binary(JSBinary.COMMALEFT, left, right))
       n
     }
 
@@ -368,7 +369,7 @@ object MakeTrees {
     override def leaveCOMMARIGHT(n: ir.BinaryNode): ir.Node = {
       val right = popR
       val left = popR
-      push(Binary(Binary.COMMARIGHT, left, right))
+      push(Binary(JSBinary.COMMARIGHT, left, right))
       n
     }
 
@@ -392,7 +393,7 @@ object MakeTrees {
     override def leaveEQ_STRICT(n: ir.BinaryNode): ir.Node = {
       val right = popR
       val left = popR
-      push(Binary(Binary.===, left, right))
+      push(Binary(JSBinary.===, left, right))
       n
     }
 
@@ -416,7 +417,7 @@ object MakeTrees {
     override def leaveIN(n: ir.BinaryNode): ir.Node = {
       val right = popR
       val left = popR
-      push(Binary(Binary.IN, left, right))
+      push(Binary(JSBinary.IN, left, right))
       n
     }
 
@@ -424,7 +425,7 @@ object MakeTrees {
     override def leaveINSTANCEOF(n: ir.BinaryNode): ir.Node = {
       val right = popR
       val left = popR
-      push(Binary(Binary.INSTANCEOF, left, right))
+      push(Binary(JSBinary.INSTANCEOF, left, right))
       n
     }
 
@@ -471,7 +472,7 @@ object MakeTrees {
     override def leaveNE_STRICT(n: ir.BinaryNode): ir.Node = {
       val right = popR
       val left = popR
-      push(Binary(Binary.!==, left, right))
+      push(Binary(JSBinary.!==, left, right))
       n
     }
 
@@ -835,9 +836,9 @@ object MakeTrees {
       // push(Property(StringLit(k), v, getter, setter))
       k match {
         case Local(x) =>
-          push(Property(StringLit(x), v, getter, setter))
+          push(Property(StringLit(x), v))
         case k =>
-          push(Property(k, v, getter, setter))
+          push(Property(k, v))
       }
       n
     }
@@ -958,7 +959,7 @@ object MakeTrees {
         case Nil => push(e2)
         case cs2 => push(TryCatch(e2, cs2))
       }
-      
+
       n
     }
 

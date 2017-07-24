@@ -1,7 +1,7 @@
 package scsc.js
 
-object TreeWalk {
-  import Trees._
+class TreeWalk[M <: Machine](val machine: M) {
+  import machine.terms._
 
   trait Rewriter {
     def rewriteM(e: Exp): List[Exp] = {
@@ -30,8 +30,6 @@ object TreeWalk {
         IncDec(op, rewrite(e))
       case Delete(e) =>
         Delete(rewrite(e))
-      case New(e) =>
-        New(rewrite(e))
       case Typeof(e) =>
         Typeof(rewrite(e))
       case Void(e) =>
@@ -90,8 +88,8 @@ object TreeWalk {
         Undefined()
       case ObjectLit(es) =>
         ObjectLit(rewrite(es))
-      case Property(k, v, getter, setter) =>
-        Property(rewrite(k), rewrite(v), rewrite(getter), rewrite(setter))
+      case Property(k, v) =>
+        Property(rewrite(k), rewrite(v))
       case Return(e) =>
         Return(rewrite(e))
       case Yield(e) =>

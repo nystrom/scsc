@@ -1,12 +1,56 @@
 package scsc.js
 
-object PP {
-  import Trees._
+class PP[M <: Machine](val machine: M) {
+  import machine._
+  import terms._
+  import states._
 
   object P extends org.bitbucket.inkytonik.kiama.output.PrettyPrinter
 
   def pretty(t: Exp): String = P.layout(show(t))
   def ugly(t: Exp): String = P.layout(P.any(t))
+  def pretty(t: State): String = P.layout(show(t))
+  def ugly(t: State): String = P.layout(P.any(t))
+
+  private def show(t: State): P.Doc = {
+    import P._
+    t match {
+      case Ev(e, ρ, σ, k) =>
+        text("Ev") <>
+          nest(
+            line <> text("e") <+> text("=") <+> show(e) <>
+            line <> text("e") <+> text("=") <+> any(e) <>
+            line <> text("ρ") <+> text("=") <+> any(ρ) <>
+            line <> text("σ") <+> text("=") <+> any(σ) <>
+            line <> text("k") <+> text("=") <+> any(k)
+        )
+      case Co(v, σ, k) =>
+        text("Co") <>
+          nest(
+            line <> text("v") <+> text("=") <+> show(v) <>
+            line <> text("v") <+> text("=") <+> any(v) <>
+            line <> text("σ") <+> text("=") <+> any(σ) <>
+            line <> text("k") <+> text("=") <+> any(k)
+          )
+      case Unwinding(j, σ, k) =>
+        text("Unwinding") <>
+          nest(
+            line <> text("j") <+> text("=") <+> show(j) <>
+            line <> text("j") <+> text("=") <+> any(j) <>
+            line <> text("σ") <+> text("=") <+> any(σ) <>
+            line <> text("k") <+> text("=") <+> any(k)
+          )
+      case Re(e, σ, k) =>
+        text("Re") <>
+          nest(
+            line <> text("e") <+> text("=") <+> show(e) <>
+            line <> text("e") <+> text("=") <+> any(e) <>
+            line <> text("σ") <+> text("=") <+> any(σ) <>
+            line <> text("k") <+> text("=") <+> any(k)
+          )
+      case s => any(s) <> line
+    }
+  }
 
   implicit def cvt(e: List[Exp]): List[P.Doc] = e.map(show)
 
@@ -30,8 +74,6 @@ object PP {
         show(e) <> text("--")
       case Delete(e) =>
         text("delete") <> parens(show(e))
-      case New(e) =>
-        text("new") <> parens(show(e))
       case Typeof(e) =>
         text("typeof") <> parens(show(e))
       case Void(e) =>
@@ -107,7 +149,7 @@ object PP {
         text("undefined")
       case ObjectLit(es) =>
         braces(hsep(es, comma))
-      case Property(k, v, getter, setter) =>
+      case Property(k, v) =>
         show(k) <> colon <+> show(v)
       case Return(Some(e)) =>
         text("return") <+> show(e)
