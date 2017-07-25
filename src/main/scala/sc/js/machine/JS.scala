@@ -17,7 +17,6 @@ object JS extends Machine {
 
   object Parser extends Parser[this.type](this)
   object TreeWalk extends TreeWalk[this.type](this)
-  object PP extends PP[this.type](this)
   object Globals extends Globals[this.type](this)
 
   // Set up the initial environment and store.
@@ -42,11 +41,15 @@ object JS extends Machine {
     case class Ev(focus: Term, ρ: Env, σ: Store, k: Cont) extends super.Ev
     case class Co(focus: Value, σ: Store, k: Cont) extends super.Co
     case class Unwinding(jump: Jump, σ: Store, k: Cont) extends super.Unwinding
+
+    object PP extends sc.imp.machine.PPStates[this.type](this)
   }
 
   object JSTerms extends Terms {
     type MachineType = JS.type
     val machine = JS
+
+    object PP extends PP[this.type](this)
   }
 
   object JSContinuations extends Continuations {

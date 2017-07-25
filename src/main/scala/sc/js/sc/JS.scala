@@ -17,7 +17,6 @@ object JS extends Machine {
 
   object Parser extends sc.js.machine.Parser[JS.type](JS)
   object TreeWalk extends sc.js.machine.TreeWalk[JS.type](JS)
-  object PP extends sc.js.machine.PP[JS.type](JS)
   object Globals extends sc.js.machine.Globals[JS.type](JS)
 
   // Set up the initial environment and store.
@@ -51,11 +50,15 @@ object JS extends Machine {
     object CoSplit extends CoSplit[machine.type](machine)
     object EvSplit extends EvSplit[machine.type](machine)
     object Rollback extends Rollback[machine.type](machine)
+
+    object PP extends sc.imp.machine.PPStates[this.type](this)
   }
 
   object JSTerms extends Terms {
     type MachineType = JS.type
     val machine = JS
+
+    object PP extends sc.js.machine.PP[this.type](this)
   }
 
   object JSContinuations extends Continuations {

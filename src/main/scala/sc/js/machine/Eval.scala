@@ -2,7 +2,7 @@ package sc.js.machine
 
 object Eval {
   import JS._
-  import terms._
+  import terms.{PP => _, _}
   import states._
 
   def eval(e: Exp): Exp = {

@@ -1,8 +1,7 @@
 package sc.js.machine
 
-class PP[M <: Machine](m: M) extends sc.imp.machine.PP[M](m) {
-  import machine._
-  import terms._
+class PP[T <: Trees](t: T) extends sc.imp.machine.PP(t) {
+  import trees._
 
   private implicit def cvt(e: List[Exp]): List[P.Doc] = e.map(show)
 

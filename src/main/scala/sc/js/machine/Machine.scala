@@ -9,6 +9,5 @@ trait Machine extends sc.imp.machine.Machine {
 
   val Parser: Parser[this.type]
   val TreeWalk: TreeWalk[this.type]
-  val PP: PP[this.type]
   val Globals: Globals[this.type]
 }

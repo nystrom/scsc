@@ -33,6 +33,8 @@ object Imp extends Machine {
     case class Ev(focus: Term, ρ: Env, σ: Store, k: Cont) extends super.Ev
     case class Co(focus: Value, σ: Store, k: Cont) extends super.Co
     case class Unwinding(jump: Jump, σ: Store, k: Cont) extends super.Unwinding
+
+    object PP extends PPStates[this.type](this)
   }
 
   object ImpTerms extends Terms {
@@ -57,6 +59,8 @@ object Imp extends Machine {
     def addDeclarations(e: Exp, ρ: Env, σ: Store): (List[Exp], Env, Store) = (Nil, ρ, σ)
 
     object Loop extends Loop
+
+    object PP extends PP[this.type](this)
   }
 
   object ImpContinuations extends Continuations {

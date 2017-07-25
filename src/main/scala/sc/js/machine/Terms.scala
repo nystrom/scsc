@@ -1,16 +1,22 @@
 package sc.js.machine
 
-trait Terms extends sc.imp.machine.Terms {
+trait Terms extends sc.imp.machine.Terms with Trees {
   type MachineType <: Machine { type TermsType = Terms.this.type }
 
   import machine._
-
-  private type Name = String
-
   import envs.Env
   import stores._
   import states._
   import continuations._
+
+  val PP: PP[this.type]
+
+  implicit class PPDecorate2(n: Term) {
+    def pretty: String = PP.pretty(n)
+    def ugly: String = PP.ugly(n)
+  }
+
+  private type Name = String
 
   def doCall(op: Operator, operands: List[Value], ρ: Env, σ: Store, k: Cont): Option[State] = {
     // Pad the arguments with undefined.
@@ -186,13 +192,6 @@ trait Terms extends sc.imp.machine.Terms {
 
     }
   }
-
-  object JSArray {
-    case object Delete extends Operator
-    case object MethodAddress extends Operator
-  }
-
-  // override def doCall(funAndArgs: List[Value], ρ: Env, σ: Store, k: Cont): Option[State]
 
   def evalPrim(prim: Name, args: List[Value], ρ: Env, σ: Store): Option[(Exp, Store)] = {
     val r = (prim, args) match {
@@ -417,7 +416,7 @@ trait Terms extends sc.imp.machine.Terms {
       case (Binary.||, CvtBool(n1), CvtBool(n2)) => Some(Bool(n1 || n2))
 
       case (JSBinary.BIND, v1, v2) =>
-        println("ERROR: unimplemented ${Binary(op, v1, v2).pretty}")
+        println("ERROR: unimplemented ${PP.pretty(Binary(op, v1, v2))}")
         None
 
       case (JSBinary.COMMALEFT, v1, v2) => Some(v1)
@@ -471,12 +470,10 @@ trait Terms extends sc.imp.machine.Terms {
 
       // Failure
       case (op, v1, v2) =>
-        println(s"ERROR: cannot apply ${Binary(op, v1, v2).pretty}")
+        println("ERROR: cannot apply ${PP.pretty(Binary(op, v1, v2))}")
         None
     }
   }
-
-  case class Residual(x: Name) extends Value with Var
 
   def evalPredicate(v: Value): Option[Boolean] = v match {
     case CvtBool(b) => Some(b)
@@ -524,15 +521,6 @@ trait Terms extends sc.imp.machine.Terms {
   }
 
   object Loop extends Loop
-
-  import states._
-  import stores._
-  import continuations._
-
-  implicit class PPDecorate(n: Exp) {
-    def pretty: String = PP.pretty(n)
-    def ugly: String = PP.ugly(n)
-  }
 
   object CvtPrim {
     def unapply(e: Exp) = e match {
@@ -604,82 +592,4 @@ trait Terms extends sc.imp.machine.Terms {
     def unapply(e: Value) = Some(e)
   }
 
-/*
-  def fv(n: Exp): Set[Name] = {
-    import sc.js.machine.TreeWalk._
-
-    class FV() extends Rewriter {
-      import scala.collection.mutable.HashSet
-
-      val vars = HashSet.empty[Name]
-      def getVars = vars.toSet
-      val defs = HashSet.empty[Name]
-      def getDefs = defs.toSet
-
-      override def rewrite(t: Exp): Exp = t match {
-        case t @ Local(x) =>
-          vars += x
-          t
-        case t @ Lambda(xs, e) =>
-          vars ++= (fv(e) -- xs)
-          t
-        case t @ Scope(e) =>
-          vars ++= fv(e)
-          t
-        case t @ VarDef(x, _) =>
-          defs += x
-          super.rewrite(t)
-        case t =>
-          super.rewrite(t)
-      }
-    }
-
-    val t = new FV()
-    t.rewrite(n)
-    t.getVars -- t.getDefs
-  }
-  */
-
-  // JS-specific binary operators.
-
-  object JSUnary {
-    case object TYPEOF extends Operator
-  }
-
-  object JSBinary {
-    case object BIND extends Operator
-    case object COMMALEFT extends Operator
-    case object COMMARIGHT extends Operator
-    case object === extends Operator
-    case object IN extends Operator
-    case object INSTANCEOF extends Operator
-    case object !== extends Operator
-  }
-
-  object JSNary {
-    case object NewCall extends Operator
-    case object MethodCall extends Operator
-  }
-
-  // JS-specific expressions.
-
-  type Bool = BooleanLit
-  val Bool = BooleanLit
-  type Num = DoubleLit
-  val Num = DoubleLit
-
-  case class XML(v: String) extends Lit
-  case class Regex(v: String, opts: String) extends Lit
-  case class Prim(name: String) extends Lit
-
-  case class Delete(e: Exp) extends Exp
-  case class Typeof(e: Exp) extends Exp
-  case class Void(e: Exp) extends Exp
-  case class NewCall(f: Exp, args: List[Exp]) extends Exp        // MISSING
-  case class ForIn(label: Option[Name], init: Exp, modify: Exp, body: Exp) extends Exp // MISSING
-  case class ForEach(label: Option[Name], init: Exp, test: Exp, modify: Exp, body: Exp) extends Exp // MISSING
-  case class Yield(e: Option[Exp]) extends Exp  // MISSING
-  case class Case(test: Option[Exp], body: Exp) extends Exp // MISSING
-  case class Switch(e: Exp, cases: List[Exp]) extends Exp // MISSING
-  case class With(exp: Exp, body: Exp) extends Exp  // MISSING
 }

@@ -11,6 +11,13 @@ trait States extends machine.States {
   import stores._
   import continuations._
 
+  val PP: PPStates[this.type]
+
+  implicit class PPDecorate(n: State) {
+    def pretty: String = PP.pretty(n)
+    def ugly: String = PP.ugly(n)
+  }
+
   trait State extends StateLike
   trait Ev extends State with EvalLike {
     def step = eval(this)
