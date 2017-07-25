@@ -18,20 +18,15 @@ trait States extends machine.States {
     def ugly: String = PP.ugly(n)
   }
 
-  trait State extends StateLike
-  trait Ev extends State with EvalLike {
-    def step = eval(this)
-  }
-  trait Co extends State with ContinueLike {
-    def step = k match {
+  abstract override def step(s: State) = s match {
+    case s @ Ev(_, _, _, _) => eval(s)
+    case s @ Co(_, _, k) => k match {
       case Nil => None
-      case frame::k => frame.step(this)
+      case frame::k => frame.step(s)
     }
-  }
-  trait Unwinding extends State with UnwindingLike {
-    def step = k match {
+    case s @ Unwinding(_, _, k) => k match {
       case Nil => None
-      case frame::k => frame.unwind(this)
+      case frame::k => frame.unwind(s)
     }
   }
 }

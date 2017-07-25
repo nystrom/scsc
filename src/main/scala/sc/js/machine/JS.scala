@@ -35,13 +35,6 @@ object JS extends Machine {
     import stores._
     import continuations._
 
-    object Ev extends EvFactory
-    object Co extends CoFactory
-    object Unwinding extends UnwindingFactory
-    case class Ev(focus: Term, ρ: Env, σ: Store, k: Cont) extends super.Ev
-    case class Co(focus: Value, σ: Store, k: Cont) extends super.Co
-    case class Unwinding(jump: Jump, σ: Store, k: Cont) extends super.Unwinding
-
     object PP extends sc.imp.machine.PPStates[this.type](this)
   }
 

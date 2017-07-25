@@ -12,27 +12,9 @@ trait States extends machine.States {
   import continuations._
 
   // Like a Continue, but with a residual expression in the focus.
-  trait ResidualLike extends StateLike {
-    def residual: Term
-    def σ: Store
-    def k: List[Frame]
-  }
+  case class Re(residual: Term, σ: Store, k: List[Frame]) extends State
 
-  type Re <: State with ResidualLike
-  val Re: ResidualFactory
-  trait ResidualFactory {
-    def apply(focus: Term, σ: Store, k: Cont): Re
-    def unapply(s: Re): Option[(Term, Store, Cont)]
-  }
-
+  // split a state. Like step we don't define it as a member of State
   import sc.core.sc.Unsplit.Unsplitter
-
   def split(s: State): Option[(List[State], Unsplitter[State])] = None
-
-  // Mixin to States
-  trait Splittable {
-    def split: Option[(List[State], Unsplitter[State])]
-  }
-
-  type State <: StateLike with Splittable
 }

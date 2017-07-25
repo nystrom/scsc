@@ -86,12 +86,12 @@ class CoSplit[M <: Machine](m: M) extends sc.imp.sc.CoSplit[M](m) {
     case Co(v, σ, k) =>
       k match {
         case DoTypeof(ρ1)::k =>
-          Ev(Typeof(v), ρ1, σ, k).split
+          states.split(Ev(Typeof(v), ρ1, σ, k))
 
         case EvalArgs(op, args, ρ1)::k =>
           op match {
             case JSNary.NewCall =>
-              Ev(NewCall(v, args), ρ1, σ, k).split
+              states.split(Ev(NewCall(v, args), ρ1, σ, k))
             case _ =>
               super.split(s)
           }
@@ -101,7 +101,7 @@ class CoSplit[M <: Machine](m: M) extends sc.imp.sc.CoSplit[M](m) {
           op match {
             case JSNary.NewCall =>
               val fun::args = operands
-              Ev(NewCall(fun, args), ρ1, σ, k).split
+              states.split(Ev(NewCall(fun, args), ρ1, σ, k))
             case _ =>
               super.split(s)
           }

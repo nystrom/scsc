@@ -8,6 +8,4 @@ trait States extends sc.js.machine.States with sc.imp.sc.States {
   val Rollback: Rollback[machine.type]
 
   val ReStep: ResidualStep[machine.type]
-
-  override def step(s: State) = super.step(s)
 }

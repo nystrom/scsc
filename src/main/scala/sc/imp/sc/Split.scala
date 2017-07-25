@@ -552,30 +552,30 @@ class CoSplit[M <: Machine](m: M) extends Split[M](m) {
           // Split the loop.
           // If the split fails, we'll end up rebuilding
           // the Ev, then splitting again.
-          Ev(e, ρ1, σ1, k).split
+          states.split(Ev(e, ρ1, σ1, k))
 
         // In general, recreate the term and split it.
         // If the split fails, we'll end up rebuilding the term
         case DoAssign(op, lhs, ρ1)::k =>
-          Ev(Assign(op, lhs, v), ρ1, σ, k).split
+          states.split(Ev(Assign(op, lhs, v), ρ1, σ, k))
 
         case DoIncDec(op, ρ1)::k =>
-          Ev(IncDec(op, v), ρ1, σ, k).split
+          states.split(Ev(IncDec(op, v), ρ1, σ, k))
 
         case DoUnaryOp(op, ρ1)::k =>
-          Ev(Unary(op, v), ρ1, σ, k).split
+          states.split(Ev(Unary(op, v), ρ1, σ, k))
 
         case DoBinaryOp(op, v1, ρ1)::k =>
-          Ev(Binary(op, v1, v), ρ1, σ, k).split
+          states.split(Ev(Binary(op, v1, v), ρ1, σ, k))
 
         case EvalArgs(op, args, ρ1)::k =>
           op match {
             case Nary.Call =>
-              Ev(Call(v, args), ρ1, σ, k).split
+              states.split(Ev(Call(v, args), ρ1, σ, k))
             case Nary.InitObject =>
-              Ev(ObjectLit(v::args), ρ1, σ, k).split
+              states.split(Ev(ObjectLit(v::args), ρ1, σ, k))
             case Nary.InitArray =>
-              Ev(ArrayLit(v::args), ρ1, σ, k).split
+              states.split(Ev(ArrayLit(v::args), ρ1, σ, k))
           }
 
         case EvalMoreArgs(op, pending, done, ρ1)::k =>
@@ -583,15 +583,15 @@ class CoSplit[M <: Machine](m: M) extends Split[M](m) {
           op match {
             case Nary.Call =>
               val fun::args = operands
-              Ev(Call(fun, args), ρ1, σ, k).split
+              states.split(Ev(Call(fun, args), ρ1, σ, k))
             case Nary.InitObject =>
-              Ev(ObjectLit(operands), ρ1, σ, k).split
+              states.split(Ev(ObjectLit(operands), ρ1, σ, k))
             case Nary.InitArray =>
-              Ev(ArrayLit(operands), ρ1, σ, k).split
+              states.split(Ev(ArrayLit(operands), ρ1, σ, k))
           }
 
         case DoArrayOp(op, a, ρ1)::k =>
-          Ev(Index(a, v), ρ1, σ, k).split
+          states.split(Ev(Index(a, v), ρ1, σ, k))
 
         case k =>
           None

@@ -35,17 +35,6 @@ object JS extends Machine {
     import stores._
     import continuations._
 
-    object Ev extends EvFactory
-    object Co extends CoFactory
-    object Unwinding extends UnwindingFactory
-    object Re extends ResidualFactory
-    case class Ev(focus: Term, ρ: Env, σ: Store, k: Cont) extends super.Ev
-    case class Co(focus: Value, σ: Store, k: Cont) extends super.Co
-    case class Unwinding(jump: Jump, σ: Store, k: Cont) extends super.Unwinding
-    case class Re(residual: Exp, σ: Store, k: Cont) extends super.Re {
-      def step = ReStep.step(this)
-    }
-
     object ReStep extends ResidualStep[machine.type](machine)
     object CoSplit extends CoSplit[machine.type](machine)
     object EvSplit extends EvSplit[machine.type](machine)

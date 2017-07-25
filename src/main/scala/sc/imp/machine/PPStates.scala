@@ -10,7 +10,7 @@ class PPStates[S <: States](val states: S) {
   // found   : sc.js.sc.JS.states.State
   // required: sc.js.sc.JS.states.State
   // and I'm tired and want to move on, so: use StateLike
-  def pretty(t: StateLike): String = t match {
+  def pretty(t: State): String = t match {
     case s: State => P.layout(show(s))
     case _ => ???
   }

@@ -6,20 +6,11 @@ trait States extends sc.imp.machine.States with sc.core.sc.States {
   type History = List[State]
 
   // Add split to the State interface
-  trait State extends StateLike with Splittable
-
-  trait Ev extends super.Ev with State {
-    def split = EvSplit.split(this)
-  }
-  trait Co extends super.Co with State {
-    def split = CoSplit.split(this)
-  }
-  trait Unwinding extends super.Unwinding with State {
-    def split = None
-  }
-
-  trait Re extends State with ResidualLike {
-    def split = None
+  abstract override def split(s: State) = s match {
+    case s @ Ev(_, _, _, _) => EvSplit.split(s)
+    case s @ Co(_, _, _) => CoSplit.split(s)
+    case s @ Unwinding(_, _, _) => None
+    case s @ Re(_, _, _) => None
   }
 
   val EvSplit: EvSplit[machine.type]

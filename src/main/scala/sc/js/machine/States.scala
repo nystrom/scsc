@@ -9,7 +9,7 @@ trait States extends sc.imp.machine.States {
   import stores._
 
   // override the step function for JS specific semantics
-  override def step(s: State) = s match {
+  override abstract def step(s: State) = s match {
     case Ev(focus, ρ, σ, k) =>
       focus match {
         case Typeof(e) =>
