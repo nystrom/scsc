@@ -1,4 +1,4 @@
-package scsc.js
+package scsc.js.machine
 
 import org.scalatest._
 
