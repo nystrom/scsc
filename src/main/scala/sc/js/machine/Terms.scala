@@ -5,36 +5,12 @@ trait Terms extends sc.imp.machine.Terms {
 
   import machine._
 
+  private type Name = String
+
   import envs.Env
   import stores._
   import states._
   import continuations._
-
-  def reify(e: Exp): Exp = {
-    import TreeWalk._
-
-    object Reify extends Rewriter {
-      override def rewrite(e: Exp): Exp = e match {
-        case Path(_, path) => super.rewrite(path)
-        case e => super.rewrite(e)
-      }
-    }
-
-    Reify.rewrite(e)
-  }
-
-  def unreify(e: Exp): Exp = {
-    import TreeWalk._
-
-    object Unreify extends Rewriter {
-      override def rewrite(e: Exp): Exp = e match {
-        case Residual(x) => Local(x)
-        case e => super.rewrite(e)
-      }
-    }
-
-    Unreify.rewrite(e)
-  }
 
   def doCall(op: Operator, operands: List[Value], ρ: Env, σ: Store, k: Cont): Option[State] = {
     // Pad the arguments with undefined.

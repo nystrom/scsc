@@ -5,16 +5,26 @@ import sc.core.machine
 trait Stores extends machine.Stores {
   type MachineType <: Machine { type StoresType = Stores.this.type }
 
+  // A blob is a structure in the store.
+  // A blob should not be used directly as a value.
   trait Blob
 
   import machine._
   import machine.terms._
+
+  private type Name = String
+
+  val NullLoc: HeapLoc = FreshHeapLoc()
+
+  // A stack frame
+  case class StackFrameBlob(outer: HeapLoc, slots: List[(Name, HeapLoc)]) extends Blob
 
   case class ObjectBlob(props: List[(Name, HeapLoc)]) extends Blob
   case class ArrayBlob(props: List[(Int, HeapLoc)]) extends Blob
   case class LambdaBlob(e: Lambda) extends Blob
 
   def scan(blob: Blob) = blob match {
+    case StackFrameBlob(outer, slots) => outer :: slots.sortBy(_._1).map(_._2)
     case ObjectBlob(props) => props.sortBy(_._1).map(_._2)
     case ArrayBlob(props) => props.sortBy(_._1).map(_._2)
     case _ => Nil

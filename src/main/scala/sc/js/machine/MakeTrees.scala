@@ -14,6 +14,8 @@ class MakeTrees[M <: Machine](val machine: M) {
   import scala.collection.mutable.ListBuffer
   import scala.collection.JavaConverters._
 
+  private type Name = String
+
   implicit class JL[A](xs: java.util.List[A]) {
     def toList = xs.asScala.toList
   }

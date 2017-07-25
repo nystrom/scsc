@@ -5,7 +5,7 @@ trait Terms extends sc.core.machine.Terms {
 
   import machine._
 
-  type Name = String
+  private type Name = String
 
   type Term = Exp
   trait Exp extends Product

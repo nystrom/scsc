@@ -9,6 +9,8 @@ trait Envs extends machine.Envs {
   import machine.stores.Loc
   import scala.collection.immutable.SortedMap
 
+  type Name = String
+
   type Env = SortedMap[Name, Loc]
   val ρempty = SortedMap()
 }

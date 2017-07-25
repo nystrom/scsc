@@ -5,8 +5,9 @@ trait Envs {
   val machine: MachineType
 
   import machine._
-  import terms.Name
   import stores.Loc
+
+  type Name
 
   type Env <: Map[Name, Loc]
   val ρempty: Env

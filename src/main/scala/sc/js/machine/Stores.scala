@@ -6,7 +6,7 @@ trait Stores extends sc.imp.machine.Stores {
   import machine._
   import machine.terms._
 
-  case class JSBlob(typeof: String, proto: HeapLoc, lambda: Option[Lambda], props: List[(Name, HeapLoc)]) extends Blob
+  case class JSBlob(typeof: String, proto: HeapLoc, lambda: Option[Lambda], props: List[(String, HeapLoc)]) extends Blob
 
   override def scan(blob: Blob) = blob match {
     case JSBlob(typeof, proto, lambda, props) => proto :: props.sortBy(_._1).map(_._2)
