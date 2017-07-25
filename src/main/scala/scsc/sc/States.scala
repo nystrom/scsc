@@ -27,7 +27,7 @@ trait States extends machine.States {
 
   import scsc.core.Unsplit.Unsplitter
 
-  def split(s: State): Option[(List[State], Unsplitter[State])]
+  def split(s: State): Option[(List[State], Unsplitter[State])] = None
 
   // Mixin to States
   trait Splittable {

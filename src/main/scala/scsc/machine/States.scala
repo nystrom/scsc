@@ -10,7 +10,7 @@ trait States {
   import envs.Env
   import terms.{Term, Value, Jump}
 
-  def step(s: State): Option[State]
+  def step(s: State): Option[State] = s.step
 
   type State <: StateLike
 

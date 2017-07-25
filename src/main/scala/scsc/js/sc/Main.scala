@@ -1,4 +1,4 @@
-package scsc.js
+package scsc.js.sc
 
 import org.bitbucket.inkytonik.kiama.util.{REPL, REPLConfig, Source, Console, Positions}
 
@@ -11,7 +11,7 @@ object Main extends REPL {
 
   object Posns extends Positions
 
-  override val prompt = "\nJS> "
+  override val prompt = "\nJSSC> "
 
   def processline(source: Source, console: Console, config: REPLConfig): Option[REPLConfig] = {
     val input = source.content.trim
@@ -32,7 +32,7 @@ object Main extends REPL {
   }
 
   def process(source: Source, e: Exp, config: REPLConfig) {
-    val result = Eval.eval(e)
+    val result = scsc.js.sc.Eval.eval(e)
     config.output().emitln(result)
     config.output().emitln(PP.pretty(result))
   }

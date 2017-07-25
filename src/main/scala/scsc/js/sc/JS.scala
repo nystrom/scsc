@@ -1,4 +1,4 @@
-package scsc.js
+package scsc.js.sc
 
 // concrete implementation of the machine
 // this is just to ensure everything compiles
@@ -15,10 +15,10 @@ object JS extends Machine {
   val continuations = JSContinuations
   val terms = JSTerms
 
-  object Parser extends Parser[this.type](this)
-  object TreeWalk extends TreeWalk[this.type](this)
-  object PP extends PP[this.type](this)
-  object Globals extends Globals[this.type](this)
+  object Parser extends scsc.js.Parser[JS.type](JS)
+  object TreeWalk extends scsc.js.TreeWalk[JS.type](JS)
+  object PP extends scsc.js.PP[JS.type](JS)
+  object Globals extends scsc.js.Globals[JS.type](JS)
 
   // Set up the initial environment and store.
   // lazy val ρ0: envs.Env = Globals.ρ0
@@ -39,9 +39,18 @@ object JS extends Machine {
     object Ev extends EvFactory
     object Co extends CoFactory
     object Unwinding extends UnwindingFactory
+    object Re extends ResidualFactory
     case class Ev(focus: Term, ρ: Env, σ: Store, k: Cont) extends super.Ev
     case class Co(focus: Value, σ: Store, k: Cont) extends super.Co
     case class Unwinding(jump: Jump, σ: Store, k: Cont) extends super.Unwinding
+    case class Re(residual: Exp, σ: Store, k: Cont) extends super.Re {
+      def step = ReStep.step(this)
+    }
+
+    object ReStep extends ResidualStep[machine.type](machine)
+    object CoSplit extends CoSplit[machine.type](machine)
+    object EvSplit extends EvSplit[machine.type](machine)
+    object Rollback extends Rollback[machine.type](machine)
   }
 
   object JSTerms extends Terms {

@@ -11,8 +11,6 @@ trait States extends machine.States {
   import stores._
   import continuations._
 
-  def step(s: State) = s.step
-
   trait State extends StateLike
   trait Ev extends State with EvalLike {
     def step = eval(this)

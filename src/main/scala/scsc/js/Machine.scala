@@ -9,16 +9,8 @@ trait Machine extends imp.Machine {
   type ContinuationsType <: Continuations { type MachineType = Machine.this.type }
   type TermsType <: Terms { type MachineType = Machine.this.type }
 
-  object Parser extends Parser[this.type](this)
-  object TreeWalk extends TreeWalk[this.type](this)
-  object PP extends PP[this.type](this)
-
-  object Globals extends Globals[this.type](this)
-
-  // Set up the initial environment and store.
-  // lazy val ρ0: envs.Env = Globals.ρ0
-  // lazy val σ0: stores.Store = Globals.σ0
-
-  lazy val ρ0: envs.Env = Globals.ρMin
-  lazy val σ0: stores.Store = Globals.σMin
+  val Parser: Parser[this.type]
+  val TreeWalk: TreeWalk[this.type]
+  val PP: PP[this.type]
+  val Globals: Globals[this.type]
 }

@@ -9,7 +9,16 @@ class PP[M <: Machine](val machine: M) {
 
   def pretty(t: Exp): String = P.layout(show(t))
   def ugly(t: Exp): String = P.layout(P.any(t))
-  def pretty(t: State): String = P.layout(show(t))
+
+  // HACK: we should take a state here but the Scala compiler complains with,
+  // essentially:
+  // found   : scsc.js.sc.JS.states.State
+  // required: scsc.js.sc.JS.states.State
+  // and I'm tired and want to move on, so: use StateLike
+  def pretty(t: StateLike): String = t match {
+    case s: State => P.layout(show(s))
+    case _ => ???
+  }
   def ugly(t: State): String = P.layout(P.any(t))
 
   protected def show(t: State): P.Doc = {
