@@ -364,32 +364,27 @@ trait Terms extends machine.Terms {
         // Object and array literals and lambdas.
         ////////////////////////////////////////////////////////////////
 
-        // Create an empty object
-        case ObjectLit(Nil) => Some {
-          val loc = FreshHeapLoc()
-          val path = Path(loc, ObjectLit(Nil))
-          val blob = ObjectBlob(Nil)
-          Co(path, σ.assign(loc, blob, ρ), k)
-        }
-
-        // Initialize a non-empty object.
-        case ObjectLit(ps) => Some {
-          Ev(ObjectLit(Nil), ρ, σ, EvalArgs(Nary.InitObject, ps, ρ)::k)
-        }
-
         case Property(key, value) =>
           Some(Ev(key, ρ, σ, EvalBinaryOpRight(Binary.Pair, value, ρ)::k))
 
-        case ArrayLit(Nil) => Some {
-          val loc = FreshHeapLoc()
-          val path = Path(loc, ArrayLit(Nil))
-          val blob = ArrayBlob(Nil)
-          Co(path, σ.assign(loc, blob, ρ), k)
-        }
+        // Create an empty object
+        case ObjectLit(Nil) =>
+          doCall(Nary.InitObject, Nil, ρ, σ, k)
 
         // Initialize a non-empty object.
-        case ArrayLit(es) => Some {
-          Ev(ArrayLit(Nil), ρ, σ, EvalArgs(Nary.InitArray, es, ρ)::k)
+        case ObjectLit(p::ps) => Some {
+          // val q::qs = (p::ps) flatMap {
+          //   case Property(k, v) => k::v::Nil
+          // }
+          Ev(p, ρ, σ, EvalMoreArgs(Nary.InitObject, ps, Nil, ρ)::k)
+        }
+
+        case ArrayLit(Nil) =>
+          doCall(Nary.InitArray, Nil, ρ, σ, k)
+
+        // Initialize a non-empty object.
+        case ArrayLit(e::es) => Some {
+          Ev(e, ρ, σ, EvalMoreArgs(Nary.InitArray, es, Nil, ρ)::k)
         }
 
         // Put a lambda in the heap.

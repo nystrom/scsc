@@ -401,6 +401,8 @@ trait Terms extends sc.imp.machine.Terms {
 
   def evalBinaryOp(op: Operator, v1: Value, v2: Value): Option[Value] = {
     (op, v1, v2) match {
+      case (Binary.Pair, v1, v2) => Some(PairValue(v1, v2))
+
       case (Binary.+, StringLit(n1), StringLit(n2)) => Some(StringLit(n1 + n2))
       case (Binary.+, StringLit(n1), CvtString(n2)) => Some(StringLit(n1 + n2))
       case (Binary.+, CvtString(n1), StringLit(n2)) => Some(StringLit(n1 + n2))
