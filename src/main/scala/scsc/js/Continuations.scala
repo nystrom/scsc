@@ -20,7 +20,7 @@ trait Continuations extends imp.Continuations {
     }
   }
 
-  case class DoTypeof() extends Frame {
+  case class DoTypeof(ρ: Env) extends Frame {
     override def step(s: Co) = s match {
       case Co(v, σ, _::k) =>
         v match {
@@ -34,10 +34,10 @@ trait Continuations extends imp.Continuations {
               case Some(BlobClosure(JSBlob(typeof, _, _, _), _)) =>
                 Some(Co(StringLit(typeof), σ, k))
               case Some(ValueClosure(v)) =>
-                Some(Co(v, σ, DoTypeof()::k))
+                Some(Co(v, σ, DoTypeof(ρ)::k))
               case Some(LocClosure(loc)) =>
                 // The address of an object
-                Some(Co(Path(loc, path), σ, DoTypeof()::k))
+                Some(Co(Path(loc, path), σ, DoTypeof(ρ)::k))
               case _ =>
                 super.step(s)
             }

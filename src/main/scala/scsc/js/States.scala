@@ -15,7 +15,7 @@ trait States extends imp.States {
     case Ev(focus, ρ, σ, k) =>
       focus match {
         case Typeof(e) =>
-          Some(Ev(e, ρ, σ, DoTypeof()::k))
+          Some(Ev(e, ρ, σ, DoTypeof(ρ)::k))
         case Void(e) =>
           // void(e) just evaluates e and discards it
           Some(Ev(e, ρ, σ, FocusCont(Undefined())::k))
