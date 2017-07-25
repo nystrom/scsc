@@ -1,22 +1,12 @@
 package scsc.core
 
-object Unsplit {
-  type Unsplitter[State] = List[List[State]] => UnsplitResult[State]
-
-  sealed trait UnsplitResult[State]
-  case class Resplit[State](ss: List[State], unsplit: Unsplitter[State]) extends UnsplitResult[State] {
-    require(ss.nonEmpty)
-  }
-  case class UnsplitOk[State](s: State) extends UnsplitResult[State]
-  case class UnsplitFail[State]() extends UnsplitResult[State]
-}
-
 // The supercompiler for language L is implemented as an interpreter of MetaStates.
 // A State is the state of the L-interpreter.
 // A MetaState is the state of the supercompiler and consists of a command, a history
 // of State and a MetaContinuation.
 trait SC[State] {
   sealed trait MetaState
+
   case class Drive(state: State, history: History, k: MetaCont) extends MetaState {
     override def toString = s"Drive($state, _, $k)"
   }
@@ -131,10 +121,18 @@ trait SC[State] {
           case _ =>
             println("REASSEMBLE FAILED: REBUILD")
             // reassemble failed (or the meta whistle blew)
-            // we need to just back out of the split entirely
-            Rebuild(s0, h0, k)
+            // rollback the current history, causing a residualization
+            interp.rollback(s::h) match {
+              case s1::h1 =>
+                println("ROLLBACK: DRIVE")
+                Drive(s1, h1, k)
+              case Nil =>
+                println("ROLLBACK: POP SPLIT")
+                Rebuild(s0, h0, k)
+            }
         }
 
+      // FIXME: need to cleanup the states here to avoid two calls to rollback
       case Rebuild(s, h, Nil) =>
         println("REBUILD: ROLLBACK")
         interp.rollback(s::h) match {
