@@ -5,4 +5,4 @@ CP=$(cat $WD/.classpath)
 OPTS=$(cat $WD/.sbtopts)
 LOG=-Dlogger.file=$WD/src/main/resources/logback.xml
 
-scala -cp $CP $LOG $LIB $OPTS scsc.js.sc.Main "$@"
+scala -cp $CP $LOG $LIB $OPTS sc.js.sc.Main "$@"
