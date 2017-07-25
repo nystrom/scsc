@@ -66,7 +66,7 @@ class ResidualStep[M <: Machine](val machine: M) {
 
       case DoAssign(op, lhs, ρ1)::k => Some {
         // Normal assignment... the result is the rhs value
-        Re(Assign(op, reify(lhs), e), σ, k)
+        Re(Assign(op, lhs, e), σ, k)
       }
 
       case DoIncDec(op, ρ1)::k => Some {
@@ -78,11 +78,11 @@ class ResidualStep[M <: Machine](val machine: M) {
       }
 
       case EvalBinaryOpRight(op, e2, ρ1)::k => Some {
-        Re(Binary(op, e, reify(e2)), σ, k)
+        Re(Binary(op, e, e2), σ, k)
       }
 
       case DoBinaryOp(op, v1, ρ1)::k => Some {
-        Re(Binary(op, reify(v1), e), σ, k)
+        Re(Binary(op, v1, e), σ, k)
       }
 
       ////////////////////////////////////////////////////////////////
