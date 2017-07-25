@@ -47,7 +47,7 @@ class Rollback[M <: Machine](val machine: M) {
       // and ensure that ReStep reconstructs
       // the landing pad.
       // This prevents break and continue from
-      // appearing outside a loop or return outside
+      // appearing outside a loop, or return outside
       // a function body.
       Some(rebuildUnwinding(j, σ, k)::tail)
 
@@ -66,11 +66,11 @@ class Rollback[M <: Machine](val machine: M) {
       Re(e, stores.simulateStore(e)(σ, ρ), k)
   }
 
-  def rebuildCo(e: Value, σ: Store, k: Cont): Re = {
-    Re(e, σ, k)
+  def rebuildCo(v: Value, σ: Store, k: Cont): Re = {
+    Re(v, σ, k)
   }
 
-  def rebuildUnwinding(e: Jump, σ: Store, k: Cont): Re = {
-    Re(e, σ, k)
+  def rebuildUnwinding(j: Jump, σ: Store, k: Cont): Re = {
+    Re(j, σ, k)
   }
 }
