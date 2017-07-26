@@ -1,6 +1,6 @@
-package sc.js.machine
+package sc.js.syntax
 
-trait Trees extends sc.imp.machine.Trees {
+trait Trees extends sc.imp.syntax.Trees {
   private type Name = String
 
   // New operators

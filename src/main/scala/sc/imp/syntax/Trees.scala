@@ -1,4 +1,4 @@
-package sc.imp.machine
+package sc.imp.syntax
 
 trait Trees {
   private type Name = String

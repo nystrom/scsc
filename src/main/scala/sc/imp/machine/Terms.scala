@@ -1,6 +1,6 @@
 package sc.imp.machine
 
-trait Terms extends sc.core.machine.Terms with Trees {
+trait Terms extends sc.core.machine.Terms with sc.imp.syntax.Trees {
   this: Stores =>
 
   type Term = Exp
