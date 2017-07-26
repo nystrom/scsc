@@ -3,3 +3,4 @@ target/
 .ensime_cache/
 *.broken
 .DS_Store
+.classpath
