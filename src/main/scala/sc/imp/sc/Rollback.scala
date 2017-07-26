@@ -1,12 +1,7 @@
 package sc.imp.sc
 
-class Rollback[M <: Machine](val machine: M) {
-  import machine._
-  import terms._
-  import states._
-  import continuations._
-  import envs._
-  import stores._
+trait Rollback {
+  this: States with Terms with Envs with Stores with Continuations =>
 
   // Rollback converts an active state to a residual state.
   // This happens either when splitting fails or when
@@ -60,8 +55,8 @@ class Rollback[M <: Machine](val machine: M) {
     case e =>
       println(s"simulating $e")
       println(s"initial σ = $σ")
-      println(s"  final σ = ${stores.simulateStore(e)(σ, ρ)}")
-      Re(e, stores.simulateStore(e)(σ, ρ), k)
+      println(s"  final σ = ${simulateStore(e)(σ, ρ)}")
+      Re(e, simulateStore(e)(σ, ρ), k)
   }
 
   def rebuildCo(v: Value, σ: Store, k: Cont): Re = {

@@ -2,16 +2,16 @@ package sc.js.sc
 
 import sc.core.sc.Unsplit._
 
-class EvSplit[M <: Machine](m: M) extends sc.imp.sc.EvSplit[M](m) {
-  import machine._
-  import terms._
-  import states._
-  import continuations._
-  import envs._
-  import stores._
-  import states.Rollback._
+import sc.imp.{sc => imp}
 
-  override def split(s: Ev): Option[(List[State], Unsplitter[State])] = s match {
+trait Split extends imp.Split with CoSplit with EvSplit with imp.Rollback {
+  this: Terms with Envs with Stores with Continuations with States =>
+}
+
+trait EvSplit extends imp.EvSplit {
+  this: Split with Terms with Envs with Stores with Continuations with States with imp.Rollback =>
+
+  override def evsplit(s: Ev): Option[(List[State], Unsplitter[State])] = s match {
     case Ev(e, ρ, σ, k) =>
       e match {
         case Delete(Index(e1, e2)) =>
@@ -69,31 +69,26 @@ class EvSplit[M <: Machine](m: M) extends sc.imp.sc.EvSplit[M](m) {
           }
 
         case _ =>
-          super.split(s)
+          super.evsplit(s)
       }
   }
 }
 
-class CoSplit[M <: Machine](m: M) extends sc.imp.sc.CoSplit[M](m) {
-  import machine._
-  import terms._
-  import states._
-  import continuations._
-  import envs._
-  import stores._
+trait CoSplit extends imp.CoSplit {
+  this: Split with Terms with Envs with Stores with Continuations with States with imp.Rollback =>
 
-  override def split(s: Co): Option[(List[State], Unsplitter[State])] = s match {
+  override def cosplit(s: Co): Option[(List[State], Unsplitter[State])] = s match {
     case Co(v, σ, k) =>
       k match {
         case DoTypeof(ρ1)::k =>
-          states.split(Ev(Typeof(v), ρ1, σ, k))
+          split(Ev(Typeof(v), ρ1, σ, k))
 
         case EvalArgs(op, args, ρ1)::k =>
           op match {
             case JSNary.NewCall =>
-              states.split(Ev(NewCall(v, args), ρ1, σ, k))
+              split(Ev(NewCall(v, args), ρ1, σ, k))
             case _ =>
-              super.split(s)
+              super.cosplit(s)
           }
 
         case EvalMoreArgs(op, pending, done, ρ1)::k =>
@@ -101,9 +96,9 @@ class CoSplit[M <: Machine](m: M) extends sc.imp.sc.CoSplit[M](m) {
           op match {
             case JSNary.NewCall =>
               val fun::args = operands
-              states.split(Ev(NewCall(fun, args), ρ1, σ, k))
+              split(Ev(NewCall(fun, args), ρ1, σ, k))
             case _ =>
-              super.split(s)
+              super.cosplit(s)
           }
 
         case k =>

@@ -2,8 +2,6 @@ package sc.js.sc
 
 object Eval {
   import JS._
-  import terms.{PP => _, _}
-  import states._
 
   def eval(e: Exp): Exp = {
     val s = inject(e)
@@ -17,8 +15,8 @@ object Eval {
 
   @scala.annotation.tailrec
   final def drive(s: State): State = {
-    println(s"DRIVE ${PP.pretty(s)}")
-    states.step(s) match {
+    println(s"DRIVE ${PPStates.pretty(s)}")
+    step(s) match {
       case Some(s1) =>
         drive(s1)
       case None =>

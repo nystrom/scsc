@@ -1,7 +1,7 @@
 package sc.js.machine
 
-class TreeWalk[M <: Machine](val machine: M) {
-  import machine.terms._
+class TreeWalk[T <: Terms](val trees: T) {
+  import trees._
 
   trait Rewriter {
     def rewriteM(e: Exp): List[Exp] = {

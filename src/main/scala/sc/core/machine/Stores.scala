@@ -1,12 +1,7 @@
 package sc.core.machine
 
 trait Stores {
-  type MachineType <: Machine { type StoresType = Stores.this.type }
-  val machine: MachineType
-
-  import machine._
-  import envs.Env
-  import terms.Value
+  this: Terms with Envs =>
 
   type Blob
 
@@ -48,6 +43,7 @@ trait Stores {
   def scan(b: Blob): List[HeapLoc]
 
   val σempty: Store = SortedMap()
+  val σ0: Store
 
   def assignValue(σ: Store, lhs: Loc, rhs: Value): Store = {
     σ + (lhs -> ValueClosure(rhs))
@@ -103,6 +99,7 @@ trait Stores {
 
       σnew.result
     }
+
 /*
     // garbage collect the store with respect to the environment.
     def gc(ρ: Env): Store = {

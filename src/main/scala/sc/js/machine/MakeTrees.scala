@@ -1,12 +1,12 @@
 package sc.js.machine
 
 // Make SCSC ASTs from Nashorn ASTs.
-class MakeTrees[M <: Machine](val machine: M) {
+class MakeTrees[M <: Terms](val trees: M) {
   import jdk.nashorn.internal.ir
   import jdk.nashorn.internal.parser.TokenType
 
-  import machine.terms._
-  import machine.TreeWalk
+  import trees._
+  import TreeWalk._
 
   import sc.js.machine.Visitor
   import sc.util.FreshVar

@@ -1,10 +1,7 @@
 package sc.js.machine
 
-class Globals[M <: Machine](val machine: M) {
+class Globals[M <: Terms with Envs with Stores](val machine: M) {
   import machine._
-  import terms._
-  import stores._
-  import envs._
 
   lazy val ρ0: Env = globalEnv._1
   lazy val σ0: Store = globalEnv._2

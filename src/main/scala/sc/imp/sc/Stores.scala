@@ -3,12 +3,7 @@ package sc.imp.sc
 import sc.imp.machine
 
 trait Stores extends sc.imp.machine.Stores with sc.core.sc.Stores {
-  type MachineType <: Machine { type StoresType = Stores.this.type }
-
-  import machine._
-  import terms._
-  import envs._
-  import stores._
+  this: Terms with Envs =>
 
   // TODO:
   // At this point, we run the machine in abstract interpretation mode

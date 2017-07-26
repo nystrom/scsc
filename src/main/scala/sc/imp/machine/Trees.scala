@@ -1,13 +1,6 @@
 package sc.imp.machine
 
 trait Trees {
-  val PP: PP[this.type]
-
-  implicit class PPDecorate(n: Exp) {
-    def pretty: String = PP.pretty(n)
-    def ugly: String = PP.ugly(n)
-  }
-
   private type Name = String
 
   trait Exp extends Product

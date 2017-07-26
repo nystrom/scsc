@@ -3,13 +3,6 @@ package sc.js.machine
 trait Trees extends sc.imp.machine.Trees {
   private type Name = String
 
-  val PP: PP[this.type]
-
-  implicit class PPDecorate3(n: Exp) {
-    def pretty: String = PP.pretty(n)
-    def ugly: String = PP.ugly(n)
-  }
-
   // New operators
   object JSArray {
     case object Delete extends Operator

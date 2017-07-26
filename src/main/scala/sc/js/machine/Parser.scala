@@ -4,15 +4,15 @@ import jdk.nashorn.internal.ir._
 import jdk.nashorn.internal.parser.{Parser => JSParser}
 
 // JS Parser using Nashorn
-class Parser[M <: Machine](val machine: M) {
+class Parser[T <: Terms](val trees: T) {
   import jdk.nashorn.internal.runtime.Context
   import jdk.nashorn.internal.runtime.ErrorManager
   import jdk.nashorn.internal.runtime.Source
   import jdk.nashorn.internal.runtime.options.Options
 
-  import machine.terms._
+  import trees._
 
-  object MakeTrees extends MakeTrees[machine.type](machine)
+  object MakeTrees extends MakeTrees[trees.type](trees)
 
   lazy val options = {
     val o = new Options("nashorn")

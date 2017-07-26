@@ -3,16 +3,11 @@ package sc.imp.machine
 import sc.core.machine
 
 trait Stores extends machine.Stores {
-  type MachineType <: Machine { type StoresType = Stores.this.type }
+  this: Terms with Envs =>
 
   // A blob is a structure in the store.
   // A blob should not be used directly as a value.
   trait Blob
-
-  import machine._
-  import machine.terms._
-
-  private type Name = String
 
   val NullLoc: HeapLoc = FreshHeapLoc()
 

@@ -1,12 +1,9 @@
 package sc.js.sc
 
-class ResidualStep[M <: Machine](m: M) extends sc.imp.sc.ResidualStep[M](m) {
-  import machine._
-  import terms._
-  import states._
-  import continuations._
+trait ReSemantics extends sc.imp.sc.ReSemantics {
+  this: Terms with States with Envs with Stores with Continuations =>
 
-  override def step(s: Re): Option[State] = s match {
+  override def rebuild(s: Re): Option[State] = s match {
     case Re(e @ residual, σ, k) => k match {
       case FocusCont(Undefined())::k =>
         Some(Re(Void(e), σ, k))
@@ -28,7 +25,7 @@ class ResidualStep[M <: Machine](m: M) extends sc.imp.sc.ResidualStep[M](m) {
           case JSNary.NewCall =>
             Some(Re(NewCall(e, args), σ, k))
           case _ =>
-            super.step(s)
+            super.rebuild(s)
         }
 
       case EvalMoreArgs(op, args, done, ρ1)::k =>
@@ -44,11 +41,11 @@ class ResidualStep[M <: Machine](m: M) extends sc.imp.sc.ResidualStep[M](m) {
           case JSNary.NewCall =>
             Some(Re(NewCall(e, args), σ, k))
           case _ =>
-            super.step(s)
+            super.rebuild(s)
         }
 
       case _ =>
-        super.step(s)
+        super.rebuild(s)
     }
   }
 }

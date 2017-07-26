@@ -4,8 +4,6 @@ import org.bitbucket.inkytonik.kiama.util.{REPL, REPLConfig, Source, Console, Po
 
 object Main extends REPL {
   import JS._
-  import states.{PP => _, _}
-  import terms._
 
   val banner = "Welcome to the Superconducting Supercompiler (JavaScript edition)!"
 

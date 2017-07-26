@@ -1,11 +1,7 @@
 package sc.core.machine
 
 trait Envs {
-  type MachineType <: Machine { type EnvsType = Envs.this.type }
-  val machine: MachineType
-
-  import machine._
-  import stores.Loc
+  this: Stores =>
 
   type Name
 

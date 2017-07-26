@@ -1,12 +1,9 @@
 package sc.imp.sc
 
-class ResidualStep[M <: Machine](val machine: M) {
-  import machine._
-  import terms._
-  import states._
-  import continuations._
-
-  def step(s: Re): Option[State] = s match {
+trait ReSemantics {
+  this: Terms with States with Envs with Stores with Continuations =>
+  
+  def rebuild(s: Re): Option[State] = s match {
     case Re(e @ residual, σ, k) => k match {
       case Nil => None
 

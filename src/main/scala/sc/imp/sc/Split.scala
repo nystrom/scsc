@@ -2,24 +2,12 @@ package sc.imp.sc
 
 import sc.core.sc.Unsplit._
 
-class Split[M <: Machine](val machine: M) {
-  import machine._
-  import terms._
-  import states._
-  import continuations._
-  import envs._
-  import stores._
-  import states.Rollback._
+trait Split extends CoSplit with EvSplit with Rollback {
+  this: Terms with Envs with Stores with Continuations with States =>
+}
 
-  val LONG_CONTINUATIONS = false
-  type Merger = (List[State], Cont) => Option[(List[State], Cont)]
-
-  // Split returns:
-  // - a list of starting states with a possibly truncated continuation
-  // - a function to merge split histories back into a new state from which
-  //   (hopefully) evaluation can resume
-  //   Unsplit should return a new state with the same continuation as the state
-  //   we're splitting.
+trait SplitArgs {
+  this: Terms with Envs with Stores with Continuations with States =>
 
   def splitArgs(args: List[Exp], ρ: Env, σ: Store): Option[State] = {
     args match {
@@ -61,172 +49,6 @@ class Split[M <: Machine](val machine: M) {
     }
   }
 
-  def splitBranch(test: Exp, ρ: Env, σ: Store, pass: Exp, fail: Exp, k: Cont): List[State] = {
-    val σ1 = stores.extendWithCond(test, σ, ρ, true)
-    val σ2 = stores.extendWithCond(test, σ, ρ, false)
-    List(Ev(pass, ρ, σ1, k), Ev(fail, ρ, σ2, k))
-  }
-
-  def findLandingPad(jump: Exp, k: Cont, acc: Cont = Nil): (Cont, Cont) = (jump, k) match {
-    case (_: Return, (frame: CallFrame)::k) => (acc :+ frame, k)
-    case (_: Throw, (frame: CatchFrame)::k) => (acc :+ frame, k)
-    case (Break(Some(x)), (frame @ BreakFrame(Some(y)))::k) if x == y => (acc :+ frame, k)
-    case (Continue(Some(x)), (frame @ ContinueFrame(Some(y)))::k) if x == y => (acc :+ frame, k)
-    case (Break(None), (frame: BreakFrame)::k) => (acc :+ frame, k)
-    case (Continue(None), (frame: ContinueFrame)::k) => (acc :+ frame, k)
-    case (_, frame::k) => findLandingPad(jump, k, acc :+ frame)
-    case (_, Nil) => (acc, Nil)
-  }
-
-  def mergeBranch(test: Exp, ρ0: Env, isCond: Boolean = false)(ss: List[State], k: Cont): Option[(List[State], Cont)] = {
-    (ss, k) match {
-      // To reconstruct the branch, compare the resulting states from the two branches.
-      // If we can reconcile, reconstruct the if or cond. We MUST residualize the test here.
-      // And return Nil for the continuation.
-      // If we cannot reconcile, return 2 states which will continue the split,
-      // pulling in more of the continuation. We should return the continuation not
-      // consumed by the resplit.
-
-      ////////////////////////////////////////////////////////////////
-      // Both Re
-      ////////////////////////////////////////////////////////////////
-
-      // Both branches halted normally with the same residual expression.
-      // Merge the values and resume computation with k.
-      case (List(Re(e1, σ1, Nil), Re(e2, σ2, Nil)), k) if e1 == e2 =>
-        val σ = σ1.merge(σ2)
-        e1 match {
-          case v: Value =>
-            // if the branches ended with a value, just resume with the value
-            // PROBLEM: if the branches changed the store in incompatible ways
-            // we need to residualize the different effects
-            Some((List(Co(v, σ, k)), Nil))
-          case e =>
-            Some((List(Re(e, σ, k)), Nil))
-        }
-
-      case (List(Re(e1, σ1, Nil), Re(e2, σ2, Nil)), k) =>
-        if (isCond) {
-          Some((List(Re(Cond(test, e1, e2), σ1.merge(σ2), k)), Nil))
-        }
-        else {
-          Some((List(Re(IfElse(test, e1, e2), σ1.merge(σ2), k)), Nil))
-        }
-/*
-      ////////////////////////////////////////////////////////////////
-      // Both Unwinding
-      ////////////////////////////////////////////////////////////////
-
-      // Both branches halted abnormally.
-      // We can try to merge the states and continue unwinding the stack.
-
-      case (List(Unwinding(jump1, σ1, Nil), Unwinding(jump2, σ2, Nil)), k) if jump1 == jump2 =>
-        // If the branches had no effects, we can just discard them.
-        Some((List(Unwinding(jump1, σ1.merge(σ2, ρ0), k)), Nil))
-
-      case (List(Unwinding(Return(Some(v1)), σ1, Nil), Unwinding(Return(Some(v2)), σ2, Nil)), k) =>
-        // merge two returns
-        // if (x) ... return 1 ... else return 2
-        // ->
-        // return x ? 1 : 2
-        Some((List(Re(Return(Some(Cond(test, v1, v2))), σ1.merge(σ2, ρ0), k)), Nil))
-
-      case (List(Unwinding(Throw(v1), σ1, Nil), Unwinding(Throw(v2), σ2, Nil)), k) =>
-        // merge two throws
-        Some((List(Re(Throw(Cond(test, v1, v2)), σ1.merge(σ2, ρ0), k)), Nil))
-
-      case (List(Unwinding(jump1, σ1, Nil), Unwinding(jump2, σ2, Nil)), k) =>
-        // cannot merge the jumps
-        // Extend the continuations past the next possible landing pad for both jumps
-        // Find the two landing pads and pick the one farthest out.
-        val (kConsumed1, kRemaining1) = findLandingPad(jump1, k)
-        val (kConsumed2, kRemaining2) = findLandingPad(jump2, k)
-        val (kConsumed, kRemaining) = if (kConsumed1.length >= kConsumed2.length) (kConsumed1, kRemaining1) else (kConsumed2, kRemaining2)
-        kConsumed match {
-          case Nil => None
-          case _ =>
-            Some((List(Unwinding(jump1, σ1, kConsumed), Unwinding(jump2, σ2, kConsumed)), kRemaining))
-        }
-
-      ////////////////////////////////////////////////////////////////
-      // One Unwinding, one Halt
-      ////////////////////////////////////////////////////////////////
-
-      case (List(Unwinding(jump1, σ1, Nil), Re(v2: Value, σ2, Nil)), k) =>
-        // one branch completed abnormally, the other normally.
-        // Extend the continuations past the landing pad for the jump
-        val (kConsumed, kRemaining) = findLandingPad(jump1, k)
-        kConsumed match {
-          case Nil => None
-          case _ =>
-            Some((List(Unwinding(jump1, σ1, kConsumed), Co(v2, σ2, kConsumed)), kRemaining))
-        }
-
-      case (List(Re(v1: Value, σ1, Nil), Unwinding(jump2, σ2, Nil)), k) =>
-        // one branch completed normally, the other abnormally.
-        // Extend the continuations past the landing pad for the jump
-        val (kConsumed, kRemaining) = findLandingPad(jump2, k)
-        kConsumed match {
-          case Nil => None
-          case _ =>
-            Some((List(Co(v1, σ1, kConsumed), Unwinding(jump2, σ2, kConsumed)), kRemaining))
-        }
-
-      ////////////////////////////////////////////////////////////////
-      // One Unwinding, one Stuck
-      ////////////////////////////////////////////////////////////////
-
-      case (List(Unwinding(jump1, σ1, Nil), Co(v2, σ2, k2)), k) =>
-        // one branch completed abnormally, the other is stuck.
-        // Extend the continuations past the landing pad for the jump
-        val (kConsumed, kRemaining) = findLandingPad(jump1, k)
-        kConsumed match {
-          case Nil => None
-          case _ =>
-            Some((List(Unwinding(jump1, σ1, kConsumed), Co(v2, σ2, k2 ++ kConsumed)), kRemaining))
-        }
-
-      case (List(Co(v1, σ1, k1), Unwinding(jump2, σ2, Nil)), k) =>
-        // one branch is stuck, the other completed abnormally.
-        // Extend the continuations past the landing pad for the jump
-        val (kConsumed, kRemaining) = findLandingPad(jump2, k)
-        kConsumed match {
-          case Nil => None
-          case _ =>
-            Some((List(Co(v1, σ1, k1 ++ kConsumed), Unwinding(jump2, σ2, kConsumed)), kRemaining))
-        }
-
-      ////////////////////////////////////////////////////////////////
-      // One Halt, one Stuck
-      ////////////////////////////////////////////////////////////////
-
-      case (List(Re(v1: Value, σ1, k1), Co(v2, σ2, k2)), frame::k) =>
-        // one branch completed abnormally, the other normally.
-        // pull in a frame from after the merge point
-        Some((List(Co(v1, σ1, frame::k1), Co(v2, σ2, k2 :+ frame)), k))
-
-      case (List(Co(v1, σ1, k1), Re(v2: Value, σ2, k2)), frame::k) =>
-        Some((List(Co(v1, σ1, k1 :+ frame), Co(v2, σ2, frame::k2)), k))
-
-      ////////////////////////////////////////////////////////////////
-      // Both Stuck (probably the whistle blew)
-      ////////////////////////////////////////////////////////////////
-
-      case (List(s1, s2), frame::k) =>
-        def extendCont(s: State, frame: ContFrame) = s match {
-          case Co(v1, σ1, k1) => Co(v1, σ1, k1 :+ frame)
-          case Unwinding(jump1, σ1, k1) => Unwinding(jump1, σ1, k1 :+ frame)
-          case Ev(e1, ρ1, σ1, k1) => Ev(e1, ρ1, σ1, k1 :+ frame)
-          case Re(e1, σ1, k1) => Re(e1, σ1, k1 :+ frame)
-        }
-        // Extend the continuations to see if they get unstuck
-        Some((List(extendCont(s1, frame), extendCont(s2, frame)), k))
-*/
-      // error
-      case (states, k) => None
-    }
-  }
-
   // Search for the first Ev that matches the given Co
   // Returns (_, Nil) if not found
   def findMatchingEv(hist: List[State])(k: Cont): (List[State], List[State]) = hist match {
@@ -243,16 +65,12 @@ class Split[M <: Machine](val machine: M) {
   }
 }
 
-class EvSplit[M <: Machine](m: M) extends Split[M](m) {
-  import machine._
-  import terms._
-  import states._
-  import continuations._
-  import envs._
-  import stores._
-  import states.Rollback._
+trait EvSplit extends SplitArgs {
+  this: Split with Terms with Envs with Stores with Continuations with States with Rollback =>
 
-  def split(s: Ev): Option[(List[State], Unsplitter[State])] = s match {
+  import sc.core.sc.Unsplit._
+
+  def evsplit(s: Ev): Option[(List[State], Unsplitter[State])] = s match {
     case Ev(e, ρ, σ, k) =>
       e match {
         case Index(e1, e2) =>
@@ -494,13 +312,183 @@ class EvSplit[M <: Machine](m: M) extends Split[M](m) {
   }
 }
 
-class CoSplit[M <: Machine](m: M) extends Split[M](m) {
-  import machine._
-  import terms._
-  import states._
-  import continuations._
-  import envs._
-  import stores._
+trait SplitBranch {
+  this: Terms with Envs with Stores with Continuations with States with Rollback =>
+
+  val LONG_CONTINUATIONS = false
+
+  // Split returns:
+  // - a list of starting states with a possibly truncated continuation
+  // - a function to merge split histories back into a new state from which
+  //   (hopefully) evaluation can resume
+  //   Unsplit should return a new state with the same continuation as the state
+  //   we're splitting.
+
+  def splitBranch(test: Exp, ρ: Env, σ: Store, pass: Exp, fail: Exp, k: Cont): List[State] = {
+    val σ1 = extendWithCond(test, σ, ρ, true)
+    val σ2 = extendWithCond(test, σ, ρ, false)
+    List(Ev(pass, ρ, σ1, k), Ev(fail, ρ, σ2, k))
+  }
+
+  def findLandingPad(jump: Exp, k: Cont, acc: Cont = Nil): (Cont, Cont) = (jump, k) match {
+    case (_: Return, (frame: CallFrame)::k) => (acc :+ frame, k)
+    case (_: Throw, (frame: CatchFrame)::k) => (acc :+ frame, k)
+    case (Break(Some(x)), (frame @ BreakFrame(Some(y)))::k) if x == y => (acc :+ frame, k)
+    case (Continue(Some(x)), (frame @ ContinueFrame(Some(y)))::k) if x == y => (acc :+ frame, k)
+    case (Break(None), (frame: BreakFrame)::k) => (acc :+ frame, k)
+    case (Continue(None), (frame: ContinueFrame)::k) => (acc :+ frame, k)
+    case (_, frame::k) => findLandingPad(jump, k, acc :+ frame)
+    case (_, Nil) => (acc, Nil)
+  }
+
+  def mergeBranch(test: Exp, ρ0: Env, isCond: Boolean = false)(ss: List[State], k: Cont): Option[(List[State], Cont)] = {
+    (ss, k) match {
+      // To reconstruct the branch, compare the resulting states from the two branches.
+      // If we can reconcile, reconstruct the if or cond. We MUST residualize the test here.
+      // And return Nil for the continuation.
+      // If we cannot reconcile, return 2 states which will continue the split,
+      // pulling in more of the continuation. We should return the continuation not
+      // consumed by the resplit.
+
+      ////////////////////////////////////////////////////////////////
+      // Both Re
+      ////////////////////////////////////////////////////////////////
+
+      // Both branches halted normally with the same residual expression.
+      // Merge the values and resume computation with k.
+      case (List(Re(e1, σ1, Nil), Re(e2, σ2, Nil)), k) if e1 == e2 =>
+        val σ = σ1.merge(σ2)
+        e1 match {
+          case v: Value =>
+            // if the branches ended with a value, just resume with the value
+            // PROBLEM: if the branches changed the store in incompatible ways
+            // we need to residualize the different effects
+            Some((List(Co(v, σ, k)), Nil))
+          case e =>
+            Some((List(Re(e, σ, k)), Nil))
+        }
+
+      case (List(Re(e1, σ1, Nil), Re(e2, σ2, Nil)), k) =>
+        if (isCond) {
+          Some((List(Re(Cond(test, e1, e2), σ1.merge(σ2), k)), Nil))
+        }
+        else {
+          Some((List(Re(IfElse(test, e1, e2), σ1.merge(σ2), k)), Nil))
+        }
+/*
+      ////////////////////////////////////////////////////////////////
+      // Both Unwinding
+      ////////////////////////////////////////////////////////////////
+
+      // Both branches halted abnormally.
+      // We can try to merge the states and continue unwinding the stack.
+
+      case (List(Unwinding(jump1, σ1, Nil), Unwinding(jump2, σ2, Nil)), k) if jump1 == jump2 =>
+        // If the branches had no effects, we can just discard them.
+        Some((List(Unwinding(jump1, σ1.merge(σ2, ρ0), k)), Nil))
+
+      case (List(Unwinding(Return(Some(v1)), σ1, Nil), Unwinding(Return(Some(v2)), σ2, Nil)), k) =>
+        // merge two returns
+        // if (x) ... return 1 ... else return 2
+        // ->
+        // return x ? 1 : 2
+        Some((List(Re(Return(Some(Cond(test, v1, v2))), σ1.merge(σ2, ρ0), k)), Nil))
+
+      case (List(Unwinding(Throw(v1), σ1, Nil), Unwinding(Throw(v2), σ2, Nil)), k) =>
+        // merge two throws
+        Some((List(Re(Throw(Cond(test, v1, v2)), σ1.merge(σ2, ρ0), k)), Nil))
+
+      case (List(Unwinding(jump1, σ1, Nil), Unwinding(jump2, σ2, Nil)), k) =>
+        // cannot merge the jumps
+        // Extend the continuations past the next possible landing pad for both jumps
+        // Find the two landing pads and pick the one farthest out.
+        val (kConsumed1, kRemaining1) = findLandingPad(jump1, k)
+        val (kConsumed2, kRemaining2) = findLandingPad(jump2, k)
+        val (kConsumed, kRemaining) = if (kConsumed1.length >= kConsumed2.length) (kConsumed1, kRemaining1) else (kConsumed2, kRemaining2)
+        kConsumed match {
+          case Nil => None
+          case _ =>
+            Some((List(Unwinding(jump1, σ1, kConsumed), Unwinding(jump2, σ2, kConsumed)), kRemaining))
+        }
+
+      ////////////////////////////////////////////////////////////////
+      // One Unwinding, one Halt
+      ////////////////////////////////////////////////////////////////
+
+      case (List(Unwinding(jump1, σ1, Nil), Re(v2: Value, σ2, Nil)), k) =>
+        // one branch completed abnormally, the other normally.
+        // Extend the continuations past the landing pad for the jump
+        val (kConsumed, kRemaining) = findLandingPad(jump1, k)
+        kConsumed match {
+          case Nil => None
+          case _ =>
+            Some((List(Unwinding(jump1, σ1, kConsumed), Co(v2, σ2, kConsumed)), kRemaining))
+        }
+
+      case (List(Re(v1: Value, σ1, Nil), Unwinding(jump2, σ2, Nil)), k) =>
+        // one branch completed normally, the other abnormally.
+        // Extend the continuations past the landing pad for the jump
+        val (kConsumed, kRemaining) = findLandingPad(jump2, k)
+        kConsumed match {
+          case Nil => None
+          case _ =>
+            Some((List(Co(v1, σ1, kConsumed), Unwinding(jump2, σ2, kConsumed)), kRemaining))
+        }
+
+      ////////////////////////////////////////////////////////////////
+      // One Unwinding, one Stuck
+      ////////////////////////////////////////////////////////////////
+
+      case (List(Unwinding(jump1, σ1, Nil), Co(v2, σ2, k2)), k) =>
+        // one branch completed abnormally, the other is stuck.
+        // Extend the continuations past the landing pad for the jump
+        val (kConsumed, kRemaining) = findLandingPad(jump1, k)
+        kConsumed match {
+          case Nil => None
+          case _ =>
+            Some((List(Unwinding(jump1, σ1, kConsumed), Co(v2, σ2, k2 ++ kConsumed)), kRemaining))
+        }
+
+      case (List(Co(v1, σ1, k1), Unwinding(jump2, σ2, Nil)), k) =>
+        // one branch is stuck, the other completed abnormally.
+        // Extend the continuations past the landing pad for the jump
+        val (kConsumed, kRemaining) = findLandingPad(jump2, k)
+        kConsumed match {
+          case Nil => None
+          case _ =>
+            Some((List(Co(v1, σ1, k1 ++ kConsumed), Unwinding(jump2, σ2, kConsumed)), kRemaining))
+        }
+
+      ////////////////////////////////////////////////////////////////
+      // One Halt, one Stuck
+      ////////////////////////////////////////////////////////////////
+
+      case (List(Re(v1: Value, σ1, k1), Co(v2, σ2, k2)), frame::k) =>
+        // one branch completed abnormally, the other normally.
+        // pull in a frame from after the merge point
+        Some((List(Co(v1, σ1, frame::k1), Co(v2, σ2, k2 :+ frame)), k))
+
+      case (List(Co(v1, σ1, k1), Re(v2: Value, σ2, k2)), frame::k) =>
+        Some((List(Co(v1, σ1, k1 :+ frame), Co(v2, σ2, frame::k2)), k))
+
+      ////////////////////////////////////////////////////////////////
+      // Both Stuck (probably the whistle blew)
+      ////////////////////////////////////////////////////////////////
+
+      case (List(s1, s2), frame::k) =>
+        def extendCont(s: State, frame: ContFrame) = s match {
+          case Co(v1, σ1, k1) => Co(v1, σ1, k1 :+ frame)
+          case Unwinding(jump1, σ1, k1) => Unwinding(jump1, σ1, k1 :+ frame)
+          case Ev(e1, ρ1, σ1, k1) => Ev(e1, ρ1, σ1, k1 :+ frame)
+          case Re(e1, σ1, k1) => Re(e1, σ1, k1 :+ frame)
+        }
+        // Extend the continuations to see if they get unstuck
+        Some((List(extendCont(s1, frame), extendCont(s2, frame)), k))
+*/
+      // error
+      case (states, k) => None
+    }
+  }
 
   def splitBranchCont(isCond: Boolean, test: Exp, ρ: Env, σ: Store, e1: Exp, e2: Exp, k: Cont) = {
     def unsplit(k: Cont)(children: List[List[State]]): UnsplitResult[State] = {
@@ -537,8 +525,14 @@ class CoSplit[M <: Machine](m: M) extends Split[M](m) {
 
     Some((splits, unsplit(k) _))
   }
+}
 
-  def split(s: Co): Option[(List[State], Unsplitter[State])] = s match {
+trait CoSplit extends SplitBranch {
+  this: Split with Terms with Envs with Stores with Continuations with States with Rollback =>
+
+  import sc.core.sc.Unsplit._
+
+  def cosplit(s: Co): Option[(List[State], Unsplitter[State])] = s match {
     case Co(v, σ, k) =>
       k match {
         case BranchCont(e1, e2, ρ)::k =>
@@ -552,30 +546,30 @@ class CoSplit[M <: Machine](m: M) extends Split[M](m) {
           // Split the loop.
           // If the split fails, we'll end up rebuilding
           // the Ev, then splitting again.
-          states.split(Ev(e, ρ1, σ1, k))
+          split(Ev(e, ρ1, σ1, k))
 
         // In general, recreate the term and split it.
         // If the split fails, we'll end up rebuilding the term
         case DoAssign(op, lhs, ρ1)::k =>
-          states.split(Ev(Assign(op, lhs, v), ρ1, σ, k))
+          split(Ev(Assign(op, lhs, v), ρ1, σ, k))
 
         case DoIncDec(op, ρ1)::k =>
-          states.split(Ev(IncDec(op, v), ρ1, σ, k))
+          split(Ev(IncDec(op, v), ρ1, σ, k))
 
         case DoUnaryOp(op, ρ1)::k =>
-          states.split(Ev(Unary(op, v), ρ1, σ, k))
+          split(Ev(Unary(op, v), ρ1, σ, k))
 
         case DoBinaryOp(op, v1, ρ1)::k =>
-          states.split(Ev(Binary(op, v1, v), ρ1, σ, k))
+          split(Ev(Binary(op, v1, v), ρ1, σ, k))
 
         case EvalArgs(op, args, ρ1)::k =>
           op match {
             case Nary.Call =>
-              states.split(Ev(Call(v, args), ρ1, σ, k))
+              split(Ev(Call(v, args), ρ1, σ, k))
             case Nary.InitObject =>
-              states.split(Ev(ObjectLit(v::args), ρ1, σ, k))
+              split(Ev(ObjectLit(v::args), ρ1, σ, k))
             case Nary.InitArray =>
-              states.split(Ev(ArrayLit(v::args), ρ1, σ, k))
+              split(Ev(ArrayLit(v::args), ρ1, σ, k))
           }
 
         case EvalMoreArgs(op, pending, done, ρ1)::k =>
@@ -583,15 +577,15 @@ class CoSplit[M <: Machine](m: M) extends Split[M](m) {
           op match {
             case Nary.Call =>
               val fun::args = operands
-              states.split(Ev(Call(fun, args), ρ1, σ, k))
+              split(Ev(Call(fun, args), ρ1, σ, k))
             case Nary.InitObject =>
-              states.split(Ev(ObjectLit(operands), ρ1, σ, k))
+              split(Ev(ObjectLit(operands), ρ1, σ, k))
             case Nary.InitArray =>
-              states.split(Ev(ArrayLit(operands), ρ1, σ, k))
+              split(Ev(ArrayLit(operands), ρ1, σ, k))
           }
 
         case DoArrayOp(op, a, ρ1)::k =>
-          states.split(Ev(Index(a, v), ρ1, σ, k))
+          split(Ev(Index(a, v), ρ1, σ, k))
 
         case k =>
           None

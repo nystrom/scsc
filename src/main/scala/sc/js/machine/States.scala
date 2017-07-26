@@ -1,12 +1,7 @@
 package sc.js.machine
 
 trait States extends sc.imp.machine.States {
-  type MachineType <: Machine { type StatesType = States.this.type }
-
-  import machine._
-  import terms._
-  import continuations._
-  import stores._
+  this: Terms with Envs with Stores with Continuations with JSSemantics =>
 
   // override the step function for JS specific semantics
   override abstract def step(s: State) = s match {

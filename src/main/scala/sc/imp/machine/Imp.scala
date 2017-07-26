@@ -2,67 +2,24 @@ package sc.imp.machine
 
 // concrete implementation of the machine
 // this is just to ensure everything compiles
-object Imp extends Machine {
-  type StatesType = ImpStates.type
-  type EnvsType = ImpEnvs.type
-  type StoresType = ImpStores.type
-  type ContinuationsType = ImpContinuations.type
-  type TermsType = ImpTerms.type
+object Imp extends Machine with Terms with States with Envs with Stores with Continuations {
+  val ρ0 = ρempty
+  val σ0 = σempty
 
-  val states = ImpStates
-  val envs = ImpEnvs
-  val stores = ImpStores
-  val continuations = ImpContinuations
-  val terms = ImpTerms
+  def doCall(op: Operator, operands: List[Value], ρ: Env, σ: Store, k: Cont): Option[State] = None
 
-  val ρ0 = envs.ρempty
-  val σ0 = stores.σempty
+  def evalUnaryOp(op: Operator, v: Value): Option[Value] = None
+  def evalBinaryShortCircuitOp(op: Operator, v1: Value): Option[Value] = None
+  def evalBinaryOp(op: Operator, v1: Value, v2: Value): Option[Value] = None
 
-  object ImpStates extends States {
-    type MachineType = Imp.type
-    val machine = Imp
+  def evalArrayOp(op: Operator, array: Value, index: Value, σ: Store): Option[(Value, Store)] = None
 
-    object PP extends PPStates[this.type](this)
-  }
+  def evalPredicate(v: Value): Option[Boolean] = None
 
-  object ImpTerms extends Terms {
-    type MachineType = Imp.type
-    val machine = Imp
+  def addDeclarations(e: Exp, ρ: Env, σ: Store): (List[Exp], Env, Store) = (Nil, ρ, σ)
 
-    import envs.Env
-    import stores.Store
-    import continuations.Cont
-    import states.State
+  object Loop extends Loop
 
-    def doCall(op: Operator, operands: List[Value], ρ: Env, σ: Store, k: Cont): Option[State] = None
-
-    def evalUnaryOp(op: Operator, v: Value): Option[Value] = None
-    def evalBinaryShortCircuitOp(op: Operator, v1: Value): Option[Value] = None
-    def evalBinaryOp(op: Operator, v1: Value, v2: Value): Option[Value] = None
-
-    def evalArrayOp(op: Operator, array: Value, index: Value, σ: Store): Option[(Value, Store)] = None
-
-    def evalPredicate(v: Value): Option[Boolean] = None
-
-    def addDeclarations(e: Exp, ρ: Env, σ: Store): (List[Exp], Env, Store) = (Nil, ρ, σ)
-
-    object Loop extends Loop
-
-    object PP extends PP[this.type](this)
-  }
-
-  object ImpContinuations extends Continuations {
-    type MachineType = Imp.type
-    val machine = Imp
-  }
-
-  object ImpEnvs extends Envs {
-    type MachineType = Imp.type
-    val machine = Imp
-  }
-
-  object ImpStores extends Stores {
-    type MachineType = Imp.type
-    val machine = Imp
-  }
+  object PP extends PP[this.type](this)
+  object PPStates extends PPStates[this.type](this)
 }

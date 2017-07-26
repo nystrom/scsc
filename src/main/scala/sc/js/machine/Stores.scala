@@ -1,10 +1,7 @@
 package sc.js.machine
 
 trait Stores extends sc.imp.machine.Stores {
-  type MachineType <: Machine { type StoresType = Stores.this.type }
-
-  import machine._
-  import machine.terms._
+  this: Terms with Envs =>
 
   case class JSBlob(typeof: String, proto: HeapLoc, lambda: Option[Lambda], props: List[(String, HeapLoc)]) extends Blob
 
