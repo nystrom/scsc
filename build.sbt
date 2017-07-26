@@ -6,6 +6,8 @@ organization := "ch.usi.l3.scsc"
 
 version := "0.1"
 
+sourcesInBase := false
+
 // don't run tests in parallel... nashorn gets confused
 parallelExecution in Test := false
 
