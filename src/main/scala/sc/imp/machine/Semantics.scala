@@ -30,165 +30,181 @@ trait CoSemantics extends SemanticsBase {
   this: Terms with States with Envs with Stores with Continuations =>
 
   abstract override def continue(s: Co): Option[State] = s match {
-    case Co(v, σ, FinallyFrame(fin, ρ)::k) =>
-      // If we hit a finally block, evaluate the finally block and then resume.
-      Some(Ev(fin, ρ, σ, FocusCont(v)::k))
+    case Co(v, σ, k) => k match {
+      case FinallyFrame(fin, ρ)::k =>
+        // If we hit a finally block, evaluate the finally block and then resume.
+        Some(Ev(fin, ρ, σ, FocusCont(v)::k))
 
-    case Co(v, σ, DoThrow()::k) =>
-      Some(Unwinding(Throw(v), σ, k))
+      case DoThrow()::k =>
+        Some(Unwinding(Throw(v), σ, k))
 
-    case Co(v, σ, DoReturn()::k) => Some(Unwinding(Return(Some(v)), σ, k))
+      case DoReturn()::k => Some(Unwinding(Return(Some(v)), σ, k))
 
-    case Co(v, σ, DoUnaryOp(op, ρ)::k) =>
-      evalUnaryOp(op, v) map {
-        result => Co(result, σ, k)
-      }
+      case DoUnaryOp(op, ρ)::k =>
+        evalUnaryOp(op, v) map {
+          result => Co(result, σ, k)
+        }
 
-    case Co(v1, σ, EvalBinaryOpRight(op, e2, ρ)::k) =>
-      evalBinaryShortCircuitOp(op, v1) match {
-        case Some(v) => Some(Co(v, σ, k))
-        case None => Some(Ev(e2, ρ, σ, DoBinaryOp(op, v1, ρ)::k))
-      }
+      case EvalBinaryOpRight(op, e2, ρ)::k =>
+        val v1 = v
+        evalBinaryShortCircuitOp(op, v1) match {
+          case Some(v) => Some(Co(v, σ, k))
+          case None => Some(Ev(e2, ρ, σ, DoBinaryOp(op, v1, ρ)::k))
+        }
 
-    case Co(v2, σ, DoBinaryOp(op, v1, ρ)::k) =>
-      evalBinaryOp(op, v1, v2) map {
-        result => Co(result, σ, k)
-      }
+      case DoBinaryOp(op, v1, ρ)::k =>
+        val v2 = v
+        evalBinaryOp(op, v1, v2) map {
+          result => Co(result, σ, k)
+        }
 
-    case Co(argv, σ, EvalMoreArgs(op, pending, done, ρ)::k) =>
-      pending match {
-        case Nil => doCall(op, done :+ argv, ρ, σ, k)
-        case arg::args => Some(Ev(arg, ρ, σ, EvalMoreArgs(op, args, done :+ argv, ρ)::k))
-      }
+      case EvalMoreArgs(op, pending, done, ρ)::k =>
+        val argv = v
+        pending match {
+          case Nil => doCall(op, done :+ argv, ρ, σ, k)
+          case arg::args => Some(Ev(arg, ρ, σ, EvalMoreArgs(op, args, done :+ argv, ρ)::k))
+        }
 
-    case Co(fun, σ, EvalArgs(op, pending, ρ)::k) =>
-      // Used as the continuation of a function (method selector) value.
-      pending match {
-        case Nil => doCall(op, fun::Nil, ρ, σ, k)
-        case arg::args =>
-          Some(Ev(arg, ρ, σ, EvalMoreArgs(op, args, fun::Nil, ρ)::k))
-      }
+      case EvalArgs(op, pending, ρ)::k =>
+        val fun = v
+        // Used as the continuation of a function (method selector) value.
+        pending match {
+          case Nil => doCall(op, fun::Nil, ρ, σ, k)
+          case arg::args =>
+            Some(Ev(arg, ρ, σ, EvalMoreArgs(op, args, fun::Nil, ρ)::k))
+        }
 
-    // Ev(e) next
-    case Co(v, σ, SeqCont(e: Exp, ρ)::k) => Some(Ev(e, ρ, σ, k))
+      // Ev(e) next
+      case SeqCont(e: Exp, ρ)::k => Some(Ev(e, ρ, σ, k))
 
-    // Co(value) next
-    case Co(v, σ, FocusCont(value)::k) => Some(Co(value, σ, k))
+      // Co(value) next
+      case FocusCont(value)::k => Some(Co(value, σ, k))
 
-    // Unwinding(j) next
-    case Co(v, σ, JumpCont(j)::k) => Some(Unwinding(j, σ, k))
+      // Unwinding(j) next
+      case JumpCont(j)::k => Some(Unwinding(j, σ, k))
 
-    case Co(v, σ, (frame: AbsBranchCont)::k) =>
-      evalPredicate(v) match {
-        case Some(true) =>
-          Some(Ev(frame.pass, frame.ρ, σ, k))
-        case Some(false) =>
-          Some(Ev(frame.fail, frame.ρ, σ, k))
-        case _ =>
-          super.continue(s)
-      }
+      case (frame: AbsBranchCont)::k =>
+        evalPredicate(v) match {
+          case Some(true) =>
+            Some(Ev(frame.pass, frame.ρ, σ, k))
+          case Some(false) =>
+            Some(Ev(frame.fail, frame.ρ, σ, k))
+          case _ =>
+            super.continue(s)
+        }
 
-    case Co(test, σ, StartLoop(loop: Exp, ρ1: Env, σ1: Store)::k) =>
-      evalPredicate(test) match {
-        case Some(true) =>
-          loop match {
-            case Loop(label, body, next) =>
-              // Optimization: collapse consecutive break frames
-              val k1 = k match {
-                case BreakFrame(x)::knobreak if label == x => knobreak
-                case _ => k
-              }
-              Some(Ev(body, ρ1, σ, ContinueFrame(label)::SeqCont(next, ρ1)::BreakFrame(label)::k1))
-            case _ =>
-              super.continue(s)
-          }
-        case Some(false) =>
-          Some(Co(Undefined(), σ, k))
+      case StartLoop(loop: Exp, ρ1: Env, σ1: Store)::k =>
+        val test = v
+        evalPredicate(test) match {
+          case Some(true) =>
+            loop match {
+              case Loop(label, body, next) =>
+                // Optimization: collapse consecutive break frames
+                val k1 = k match {
+                  case BreakFrame(x)::knobreak if label == x => knobreak
+                  case _ => k
+                }
+                Some(Ev(body, ρ1, σ, ContinueFrame(label)::SeqCont(next, ρ1)::BreakFrame(label)::k1))
+              case _ =>
+                super.continue(s)
+            }
+          case Some(false) =>
+            Some(Co(Undefined(), σ, k))
 
-        case _ =>
-          super.continue(s)
-      }
+          case _ =>
+            super.continue(s)
+        }
 
-    // Assignment.
-    case Co(lhs: Var, σ, EvalAssignRhs(op: Option[Operator], rhs: Exp, ρ)::k) => Some(Ev(rhs, ρ, σ, DoAssign(op, lhs, ρ)::k))
+      // Assignment.
+      case EvalAssignRhs(op: Option[Operator], rhs: Exp, ρ)::k =>
+        v match {
+          case lhs: Var =>
+            Some(Ev(rhs, ρ, σ, DoAssign(op, lhs, ρ)::k))
+          case _ =>
+            super.continue(s)
+        }
 
-    case Co(rhs, σ, DoAssign(op: Option[Operator], lhs: Var, ρ)::k) =>
-      op match {
-        case None =>
-          lhs match {
-            case Path(loc, _) => Some(Co(rhs, σ.assign(loc, rhs), k))
-            case _ => super.continue(s)
-          }
-        case Some(op) =>
-          lhs match {
-            case Path(loc, _) =>
-              σ.get(loc) match {
-                case Some(ValueClosure(left)) =>
-                  val right = rhs
-                  evalBinaryOp(op, left, right) match {
-                    case Some(result: Value) =>
-                      Some(Co(result, σ.assign(loc, result), k))
-                    case None => super.continue(s)
-                  }
-                case _ => super.continue(s)
-              }
-            case _ => super.continue(s)
-          }
-      }
+      case DoAssign(op: Option[Operator], lhs: Var, ρ)::k =>
+        val rhs = v
+        op match {
+          case None =>
+            lhs match {
+              case Path(loc, _) => Some(Co(rhs, σ.assign(loc, rhs), k))
+              case _ => super.continue(s)
+            }
+          case Some(op) =>
+            lhs match {
+              case Path(loc, _) =>
+                σ.get(loc) match {
+                  case Some(ValueClosure(left)) =>
+                    val right = rhs
+                    evalBinaryOp(op, left, right) match {
+                      case Some(result: Value) =>
+                        Some(Co(result, σ.assign(loc, result), k))
+                      case None => super.continue(s)
+                    }
+                  case _ => super.continue(s)
+                }
+              case _ => super.continue(s)
+            }
+        }
 
-    // ++, --, etc.
-    case Co(v, σ, DoIncDec(op, ρ)::k) =>
-      v match {
-        case Path(loc, path) =>
-          σ.get(loc) match {
-            case Some(ValueClosure(oldValue)) =>
-              val binOp = op match {
-                case Prefix.++ => Binary.+
-                case Prefix.-- => Binary.-
-                case Postfix.++ => Binary.+
-                case Postfix.-- => Binary.-
-                case _ => ???
-              }
-              evalBinaryOp(binOp, oldValue, IntLit(1)) match {
-                case Some(newValue) =>
-                  val resultValue = op match {
-                    case Prefix.++ => newValue
-                    case Prefix.-- => newValue
-                    case Postfix.++ => oldValue
-                    case Postfix.-- => oldValue
-                    case _ => ???
-                  }
-                  Some(Co(resultValue, σ.assign(loc, newValue), k))
-                case _ =>
-                  super.continue(s)
-              }
-            case _ => super.continue(s)
-          }
-        case _ => super.continue(s)
-      }
+      // ++, --, etc.
+      case DoIncDec(op, ρ)::k =>
+        v match {
+          case Path(loc, path) =>
+            σ.get(loc) match {
+              case Some(ValueClosure(oldValue)) =>
+                val binOp = op match {
+                  case Prefix.++ => Binary.+
+                  case Prefix.-- => Binary.-
+                  case Postfix.++ => Binary.+
+                  case Postfix.-- => Binary.-
+                  case _ => ???
+                }
+                evalBinaryOp(binOp, oldValue, IntLit(1)) match {
+                  case Some(newValue) =>
+                    val resultValue = op match {
+                      case Prefix.++ => newValue
+                      case Prefix.-- => newValue
+                      case Postfix.++ => oldValue
+                      case Postfix.-- => oldValue
+                      case _ => ???
+                    }
+                    Some(Co(resultValue, σ.assign(loc, newValue), k))
+                  case _ =>
+                    super.continue(s)
+                }
+              case _ => super.continue(s)
+            }
+          case _ => super.continue(s)
+        }
 
-    case Co(array, σ, EvalIndex(op, index, ρ)::k) =>
-      Some(Ev(index, ρ, σ, DoArrayOp(op, array, ρ)::k))
+      case EvalIndex(op, index, ρ)::k =>
+        val array = v
+        Some(Ev(index, ρ, σ, DoArrayOp(op, array, ρ)::k))
 
-    case Co(index, σ, DoArrayOp(op, array, ρ)::k) =>
-      evalArrayOp(op, array, index, σ) match {
-        case Some((result, σ1)) => Some(Co(result, σ1, k))
-        case _ => super.continue(s)
-      }
+      case DoArrayOp(op, array, ρ)::k =>
+        val index = v
+        evalArrayOp(op, array, index, σ) match {
+          case Some((result, σ1)) => Some(Co(result, σ1, k))
+          case _ => super.continue(s)
+        }
 
-    // If we got here with a value, just throw out the defs.
-    // FIXME: careful: the value might be a location and we
-    // might have to residualize the path. I don't think this can
-    // happen though across a Scope boundary.
-    case Co(v, σ, PopScope(defs)::k) =>
-      Some(Co(v, σ, k))
+      // If we got here with a value, just throw out the defs.
+      // FIXME: careful: the value might be a location and we
+      // might have to residualize the path. I don't think this can
+      // happen though across a Scope boundary.
+      case PopScope(defs)::k =>
+        Some(Co(v, σ, k))
 
-    case Co(v, σ, (_: LandingFrame)::k) =>
-      // A landing frame is the target of unwinding jump.
-      // In normal execution, it's just popped.
-      Some(Co(v, σ, k))
+      case (_: LandingFrame)::k =>
+        // A landing frame is the target of unwinding jump.
+        // In normal execution, it's just popped.
+        Some(Co(v, σ, k))
 
-    case Co(v, σ, k) => super.continue(s)
+      case k => super.continue(s)
+    }
   }
 }
 
