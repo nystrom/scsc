@@ -1,7 +1,7 @@
 package sc.js.machine
 
-trait States extends sc.imp.machine.States {
-  this: Terms with Envs with Stores with Continuations with JSSemantics =>
+trait States extends sc.imp.machine.States with JSSemantics {
+  this: Terms with Envs with Stores with Continuations  =>
 
   // override the step function for JS specific semantics
   override abstract def step(s: State) = s match {

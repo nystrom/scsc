@@ -3,7 +3,7 @@ package sc.js.sc
 import org.bitbucket.inkytonik.kiama.util.{REPL, REPLConfig, Source, Console, Positions}
 
 object Main extends REPL {
-  import JS._
+  import JSSC._
 
   val banner = "Welcome to the Superconducting Supercompiler (JavaScript edition)!"
 
@@ -30,7 +30,7 @@ object Main extends REPL {
   }
 
   def process(source: Source, e: Exp, config: REPLConfig) {
-    val result = sc.js.sc.Eval.eval(e)
+    val result = sc.js.sc.JSSC.supercompile(e)
     config.output().emitln(result)
     config.output().emitln(PP.pretty(result))
   }

@@ -1,5 +1,5 @@
 package sc.js.sc
 
-trait States extends sc.js.machine.States with sc.imp.sc.States {
-  this: sc.js.machine.Terms with Envs with Stores with sc.js.machine.Continuations with sc.js.machine.JSSemantics with Split =>
+trait States extends sc.js.machine.States with sc.imp.sc.States with Split {
+  this: sc.js.machine.Terms with Envs with Stores with sc.js.machine.Continuations =>
 }

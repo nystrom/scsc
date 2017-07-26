@@ -2,7 +2,7 @@ package sc.imp.sc
 
 import sc.core.sc.Unsplit._
 
-trait Split extends CoSplit with EvSplit with Rollback {
+trait Split extends sc.core.sc.Split with CoSplit with EvSplit with Rollback {
   this: sc.imp.machine.Terms with Envs with Stores with sc.imp.machine.Continuations with States =>
 }
 
@@ -70,7 +70,7 @@ trait EvSplit extends SplitArgs {
 
   import sc.core.sc.Unsplit._
 
-  def evsplit(s: Ev): Option[(List[State], Unsplitter[State])] = s match {
+  abstract override def evsplit(s: Ev): Option[(List[State], Unsplitter[State])] = s match {
     case Ev(e, ρ, σ, k) =>
       e match {
         case Index(e1, e2) =>
@@ -532,7 +532,7 @@ trait CoSplit extends SplitBranch {
 
   import sc.core.sc.Unsplit._
 
-  def cosplit(s: Co): Option[(List[State], Unsplitter[State])] = s match {
+  abstract override def cosplit(s: Co): Option[(List[State], Unsplitter[State])] = s match {
     case Co(v, σ, k) =>
       k match {
         case BranchCont(e1, e2, ρ)::k =>

@@ -6,12 +6,13 @@ import sc.imp.{sc => imp}
 
 trait Split extends imp.Split with CoSplit with EvSplit with imp.Rollback {
   this: sc.js.machine.Terms with Envs with Stores with sc.js.machine.Continuations with States =>
+
 }
 
 trait EvSplit extends imp.EvSplit {
   this: Split with sc.js.machine.Terms with Envs with Stores with sc.js.machine.Continuations with States with imp.Rollback =>
 
-  override def evsplit(s: Ev): Option[(List[State], Unsplitter[State])] = s match {
+  abstract override def evsplit(s: Ev): Option[(List[State], Unsplitter[State])] = s match {
     case Ev(e, ρ, σ, k) =>
       e match {
         case Delete(Index(e1, e2)) =>
@@ -77,7 +78,7 @@ trait EvSplit extends imp.EvSplit {
 trait CoSplit extends imp.CoSplit {
   this: Split with sc.js.machine.Terms with Envs with Stores with sc.js.machine.Continuations with States with imp.Rollback =>
 
-  override def cosplit(s: Co): Option[(List[State], Unsplitter[State])] = s match {
+  abstract override def cosplit(s: Co): Option[(List[State], Unsplitter[State])] = s match {
     case Co(v, σ, k) =>
       k match {
         case DoTypeof(ρ1)::k =>
