@@ -1,7 +1,5 @@
 package sc.core.sc
 
-import sc.core.machine
-
-trait Envs extends machine.Envs {
+trait Envs extends sc.core.machine.Envs {
   this: Stores =>
 }

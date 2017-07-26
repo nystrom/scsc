@@ -1,7 +1,5 @@
 package sc.core.sc
 
-import sc.core.machine
-
-trait Stores extends machine.Stores {
-  this: Terms with Envs =>
+trait Stores extends sc.core.machine.Stores {
+  this: sc.core.machine.Terms with Envs =>
 }

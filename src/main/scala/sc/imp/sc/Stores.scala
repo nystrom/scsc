@@ -1,9 +1,7 @@
 package sc.imp.sc
 
-import sc.imp.machine
-
 trait Stores extends sc.imp.machine.Stores with sc.core.sc.Stores {
-  this: Terms with Envs =>
+  this: sc.imp.machine.Terms with Envs =>
 
   // TODO:
   // At this point, we run the machine in abstract interpretation mode

@@ -3,11 +3,11 @@ package sc.imp.sc
 import sc.core.sc.Unsplit._
 
 trait Split extends CoSplit with EvSplit with Rollback {
-  this: Terms with Envs with Stores with Continuations with States =>
+  this: sc.imp.machine.Terms with Envs with Stores with Continuations with States =>
 }
 
 trait SplitArgs {
-  this: Terms with Envs with Stores with Continuations with States =>
+  this: sc.imp.machine.Terms with Envs with Stores with Continuations with States =>
 
   def splitArgs(args: List[Exp], ρ: Env, σ: Store): Option[State] = {
     args match {
@@ -66,7 +66,7 @@ trait SplitArgs {
 }
 
 trait EvSplit extends SplitArgs {
-  this: Split with Terms with Envs with Stores with Continuations with States with Rollback =>
+  this: Split with sc.imp.machine.Terms with Envs with Stores with Continuations with States with Rollback =>
 
   import sc.core.sc.Unsplit._
 
@@ -313,7 +313,7 @@ trait EvSplit extends SplitArgs {
 }
 
 trait SplitBranch {
-  this: Terms with Envs with Stores with Continuations with States with Rollback =>
+  this: sc.imp.machine.Terms with Envs with Stores with Continuations with States with Rollback =>
 
   val LONG_CONTINUATIONS = false
 
@@ -528,7 +528,7 @@ trait SplitBranch {
 }
 
 trait CoSplit extends SplitBranch {
-  this: Split with Terms with Envs with Stores with Continuations with States with Rollback =>
+  this: Split with sc.imp.machine.Terms with Envs with Stores with Continuations with States with Rollback =>
 
   import sc.core.sc.Unsplit._
 

@@ -1,8 +1,8 @@
 package sc.imp.sc
 
 trait ReSemantics {
-  this: Terms with States with Envs with Stores with Continuations =>
-  
+  this: sc.imp.machine.Terms with States with Envs with Stores with Continuations =>
+
   def rebuild(s: Re): Option[State] = s match {
     case Re(e @ residual, σ, k) => k match {
       case Nil => None

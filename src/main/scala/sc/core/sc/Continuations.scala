@@ -1,6 +1,4 @@
 package sc.core.sc
 
-import sc.core.machine
-
-trait Continuations extends machine.Continuations {
+trait Continuations extends sc.core.machine.Continuations {
 }

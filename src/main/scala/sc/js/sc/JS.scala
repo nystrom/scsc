@@ -1,6 +1,7 @@
 package sc.js.sc
 
 import sc.js.machine.JSSemantics
+import sc.js.machine.Terms
 
 // concrete implementation of the machine
 // this is just to ensure everything compiles

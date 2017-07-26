@@ -1,9 +1,7 @@
 package sc.core.sc
 
-import sc.core.machine
-
-trait States extends machine.States {
-  this: Terms with Envs with Stores with Continuations =>
+trait States extends sc.core.machine.States {
+  this: sc.core.machine.Terms with Envs with Stores with Continuations =>
 
   // Like a Continue, but with a residual expression in the focus.
   case class Re(residual: Term, σ: Store, k: List[Frame]) extends State
