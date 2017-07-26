@@ -5,7 +5,7 @@ import sc.js.machine.Terms
 
 // concrete implementation of the machine
 // this is just to ensure everything compiles
-object JS extends Machine with States with Terms with Continuations with Envs with Stores with JSSemantics with Split {
+object JS extends Machine with States with Terms with sc.js.machine.Continuations with Envs with Stores with JSSemantics with Split {
   object Parser extends sc.js.syntax.Parser[this.type](this)
   object TreeWalk extends sc.js.syntax.TreeWalk[this.type](this)
   object Globals extends sc.js.machine.Globals[this.type](this)

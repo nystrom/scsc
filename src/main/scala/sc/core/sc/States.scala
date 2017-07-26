@@ -1,7 +1,7 @@
 package sc.core.sc
 
 trait States extends sc.core.machine.States {
-  this: sc.core.machine.Terms with Envs with Stores with Continuations =>
+  this: sc.core.machine.Terms with Envs with Stores with sc.core.machine.Continuations =>
 
   // Like a Continue, but with a residual expression in the focus.
   case class Re(residual: Term, σ: Store, k: List[Frame]) extends State

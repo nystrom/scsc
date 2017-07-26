@@ -1,7 +1,7 @@
 package sc.imp.sc
 
 trait Rollback {
-  this: States with sc.imp.machine.Terms with Envs with Stores with Continuations =>
+  this: States with sc.imp.machine.Terms with Envs with Stores with sc.imp.machine.Continuations =>
 
   // Rollback converts an active state to a residual state.
   // This happens either when splitting fails or when

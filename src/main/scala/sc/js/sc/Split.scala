@@ -5,11 +5,11 @@ import sc.core.sc.Unsplit._
 import sc.imp.{sc => imp}
 
 trait Split extends imp.Split with CoSplit with EvSplit with imp.Rollback {
-  this: sc.js.machine.Terms with Envs with Stores with Continuations with States =>
+  this: sc.js.machine.Terms with Envs with Stores with sc.js.machine.Continuations with States =>
 }
 
 trait EvSplit extends imp.EvSplit {
-  this: Split with sc.js.machine.Terms with Envs with Stores with Continuations with States with imp.Rollback =>
+  this: Split with sc.js.machine.Terms with Envs with Stores with sc.js.machine.Continuations with States with imp.Rollback =>
 
   override def evsplit(s: Ev): Option[(List[State], Unsplitter[State])] = s match {
     case Ev(e, ρ, σ, k) =>
@@ -75,7 +75,7 @@ trait EvSplit extends imp.EvSplit {
 }
 
 trait CoSplit extends imp.CoSplit {
-  this: Split with sc.js.machine.Terms with Envs with Stores with Continuations with States with imp.Rollback =>
+  this: Split with sc.js.machine.Terms with Envs with Stores with sc.js.machine.Continuations with States with imp.Rollback =>
 
   override def cosplit(s: Co): Option[(List[State], Unsplitter[State])] = s match {
     case Co(v, σ, k) =>

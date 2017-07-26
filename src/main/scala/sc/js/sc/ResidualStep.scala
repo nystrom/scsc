@@ -1,7 +1,7 @@
 package sc.js.sc
 
 trait ReSemantics extends sc.imp.sc.ReSemantics {
-  this: sc.js.machine.Terms with States with Envs with Stores with Continuations =>
+  this: sc.js.machine.Terms with States with Envs with Stores with sc.js.machine.Continuations =>
 
   override def rebuild(s: Re): Option[State] = s match {
     case Re(e @ residual, σ, k) => k match {
