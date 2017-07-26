@@ -1,5 +1,7 @@
 package sc.core.sc
 
+import sc.util.PPAny
+
 // The supercompiler for language L is implemented as an interpreter of MetaStates.
 // A State is the state of the L-interpreter.
 // A MetaState is the state of the supercompiler and consists of a command, a history
@@ -59,7 +61,7 @@ trait SC[State] {
   final def meta(ms: MetaState, mss: List[MetaState]): MetaState = {
     lazy val metaStop = metaWhistle(ms::mss)
 
-    println(s"META STATE $ms")
+    println(s"META STATE ${PPAny.ugly(ms)}")
     val next = ms match {
       case Drive(s, h, k) =>
         interp.fold(s::h) match {
