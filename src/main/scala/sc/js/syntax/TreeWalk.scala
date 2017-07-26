@@ -1,6 +1,6 @@
-package sc.js.machine
+package sc.js.syntax
 
-class TreeWalk[T <: Terms](val trees: T) {
+class TreeWalk[T <: Trees](val trees: T) {
   import trees._
 
   trait Rewriter {
@@ -20,8 +20,6 @@ class TreeWalk[T <: Terms](val trees: T) {
     def rewrite(e: Exp): Exp = e match {
       case Prim(name) =>
         Prim(name)
-      case Path(address, path) =>
-        Path(address, rewrite(path))
       case Residual(x) =>
         Residual(x)
       case Unary(op, e) =>
@@ -112,6 +110,10 @@ class TreeWalk[T <: Terms](val trees: T) {
         DoWhile(label, rewrite(body), rewrite(cond))
       case With(exp, body) =>
         With(rewrite(exp), rewrite(body))
+
+      // Handle other cases (Path, in particular)
+      case e =>
+        e
 
       // case Loc(address) =>
       //   Loc(address)

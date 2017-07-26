@@ -1,14 +1,15 @@
-package sc.js.machine
+package sc.js.syntax
 
 // Make SCSC ASTs from Nashorn ASTs.
-class MakeTrees[M <: Terms](val trees: M) {
+class MakeTrees[T <: Trees](val trees: T) {
   import jdk.nashorn.internal.ir
   import jdk.nashorn.internal.parser.TokenType
 
   import trees._
+
+  object TreeWalk extends TreeWalk[trees.type](trees)
   import TreeWalk._
 
-  import sc.js.machine.Visitor
   import sc.util.FreshVar
 
   import scala.collection.mutable.ListBuffer
@@ -20,7 +21,7 @@ class MakeTrees[M <: Terms](val trees: M) {
     def toList = xs.asScala.toList
   }
 
-  object Debug extends Visitor {
+  object Debug extends NashornVisitor {
     override def enterDefault(n: ir.Node) = {
       println(s"enter ${n.getClass.getName} $n")
       super.enterDefault(n)
@@ -100,7 +101,7 @@ class MakeTrees[M <: Terms](val trees: M) {
   // Default implementation of NodeOperatorVisitor.
   // All methods are implemented uselessly mainly so we can copy-paste into
   // subclasses more easily.
-  class TreeBuilder extends Visitor {
+  class TreeBuilder extends NashornVisitor {
     var stack: List[Exp] = Nil
 
     // Wrap e in an explicit load expression.

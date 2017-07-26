@@ -20,6 +20,6 @@ object Imp extends Machine with Terms with States with Envs with Stores with Con
 
   object Loop extends Loop
 
-  object PP extends PP[this.type](this)
+  object PP extends sc.imp.syntax.PP[this.type](this)
   object PPStates extends PPStates[this.type](this)
 }

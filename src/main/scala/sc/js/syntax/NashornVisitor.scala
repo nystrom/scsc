@@ -1,4 +1,4 @@
-package sc.js.machine
+package sc.js.syntax
 
 import jdk.nashorn.internal.ir.visitor._
 import jdk.nashorn.internal.ir._
@@ -6,7 +6,7 @@ import jdk.nashorn.internal.ir._
 // Default implementation of NodeOperatorVisitor.
 // All methods are implemented uselessly mainly so we can copy-paste into
 // subclasses more easily.
-class Visitor extends NodeOperatorVisitor[LexicalContext](new LexicalContext) {
+class NashornVisitor extends NodeOperatorVisitor[LexicalContext](new LexicalContext) {
   protected override def enterDefault(node: Node): Boolean = true
   protected override def leaveDefault(node: Node): Node = node
 

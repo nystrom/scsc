@@ -1,10 +1,10 @@
-package sc.js.machine
+package sc.js.syntax
 
 import jdk.nashorn.internal.ir._
 import jdk.nashorn.internal.parser.{Parser => JSParser}
 
 // JS Parser using Nashorn
-class Parser[T <: Terms](val trees: T) {
+class Parser[T <: Trees](val trees: T) {
   import jdk.nashorn.internal.runtime.Context
   import jdk.nashorn.internal.runtime.ErrorManager
   import jdk.nashorn.internal.runtime.Source

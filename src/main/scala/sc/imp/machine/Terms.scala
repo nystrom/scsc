@@ -8,7 +8,7 @@ trait Terms extends sc.core.machine.Terms with sc.imp.syntax.Trees {
 
   case class Path(loc: Loc, path: Exp) extends Value with Var
 
-  val PP: PP[this.type]
+  val PP: sc.imp.syntax.PP[this.type]
 
   implicit class PPDecorate(n: Exp) {
     def pretty: String = PP.pretty(n)

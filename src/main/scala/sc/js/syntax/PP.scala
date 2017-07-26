@@ -1,6 +1,6 @@
-package sc.js.machine
+package sc.js.syntax
 
-class PP[T <: sc.js.syntax.Trees](t: T) extends sc.imp.machine.PP(t) {
+class PP[T <: Trees](t: T) extends sc.imp.syntax.PP(t) {
   import trees._
 
   private implicit def cvt(e: List[Exp]): List[P.Doc] = e.map(show)

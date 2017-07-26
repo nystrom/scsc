@@ -1,6 +1,6 @@
-package sc.imp.machine
+package sc.imp.syntax
 
-class PP[T <: sc.imp.syntax.Trees](val trees: T) {
+class PP[T <: Trees](val trees: T) {
   import trees._
 
   protected object P extends org.bitbucket.inkytonik.kiama.output.PrettyPrinter
