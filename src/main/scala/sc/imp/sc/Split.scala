@@ -212,6 +212,7 @@ trait EvSplit extends SplitArgs {
                   val σtop = σ.merge(σ2)
                   Resplit(Ev(While(label, test, body), ρ, σtop, k)::Nil, unsplit _)
                 }
+              case _ => UnsplitFail()
             }
           }
 
@@ -250,6 +251,7 @@ trait EvSplit extends SplitArgs {
                   val σtop = σ.merge(σ2)
                   Resplit(Ev(DoWhile(label, body, test), ρ, σtop, k)::Nil, unsplit _)
                 }
+              case _ => UnsplitFail()
             }
           }
 
@@ -300,6 +302,7 @@ trait EvSplit extends SplitArgs {
                   val σtop = σ.merge(σ2)
                   Resplit(Ev(For(label, Empty(), test, iter, body), ρ, σtop, k)::Nil, unsplit _)
                 }
+              case _ => UnsplitFail()
             }
           }
 
