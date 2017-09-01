@@ -43,27 +43,57 @@ trait Whistles[State] {
     def blow(h: History) = h.length > maxDepth
   }
 
-  def tagOf(a: Any): Any = a match {
-    case n: Int if n > 3 => 3
-    case n: Int if n < -3 => -3
-    case n: Int => n
-    case n: Long if n > 3 => 3
-    case n: Long if n < -3 => -3
-    case n: Long => n
-    case n: Float => 0.0
-    case n: Double => 0.0
-    case n: Char => n
-    case n: String => ""
-    case n: Boolean => n
-    case n => n.getClass.getName
+  type Bag = Map[Any, Int]
+  object Bag {
+    def apply(): Bag = Map()
+    def apply(xs: Any*): Bag = {
+      xs.foldLeft(Bag()) {
+        case (bag, v) =>
+          bag.get(v) match {
+            case Some(n) => bag + (v -> (1+n))
+            case None => bag + (v -> 1)
+          }
+      }
+    }
+  }
+
+  def tagOf(a: Any): Option[Any] = a match {
+    case n: Int if n > 3 => Some(3)
+    case n: Int if n < -3 => Some(-3)
+    case n: Int => Some(n)
+    case n: Long if n > 3 => Some(3)
+    case n: Long if n < -3 => Some(-3)
+    case n: Long => Some(n)
+    case n: Float => Some(0.0)
+    case n: Double => Some(0.0)
+    case n: Char => Some(n)
+    case n: String => Some("")
+    case n: Boolean => Some(n)
+    case n => Some(n.getClass.getName)
   }
 
   def tagbag(s: State) = {
     import org.bitbucket.inkytonik.kiama.rewriting.Rewriter._
-    lazy val makeBag = collectl[Any] {
-      case n => tagOf(n)
+
+    def mergeBags(b1: Bag, b2: Bag) = {
+      b2.foldLeft(b1) {
+        case (bag, (v, m)) =>
+          bag.get(v) match {
+            case Some(n) => bag + (v -> (m+n))
+            case None => bag + (v -> m)
+          }
+      }
     }
-    makeBag(s)
+
+    lazy val toBag: PartialFunction[Any, Bag] = {
+      case (n: Any) =>
+        tagOf(n) match {
+          case Some(v) => Bag(v)
+          case None => Bag()
+        }
+    }
+
+    everything(Bag())(mergeBags _)(toBag)(s)
   }
 
   def size(s: State): Int = {
@@ -76,9 +106,9 @@ trait Whistles[State] {
   case object TagbagWhistle extends Whistle {
     def isSmaller(s1: State, s2: State): Boolean = {
       import org.bitbucket.inkytonik.kiama.util.Comparison.same
-      val bag1 = tagbag(s1)
-      val bag2 = tagbag(s2)
-      same(s1, s2) || (bag1.length < bag2.length && bag1.toSet == bag2.toSet)
+      lazy val bag1 = tagbag(s1)
+      lazy val bag2 = tagbag(s2)
+      same(s1, s2) || (bag1.keySet == bag2.keySet && bag1.values.sum <= bag2.values.sum)
     }
 
     def blow(h: History) = {
