@@ -46,6 +46,7 @@ trait Supercompiler extends Machine with sc.js.machine.Terms with States with En
             case _ => None
           }
         }
+        
         h.tails collectFirst {
           case Generalizes(h) => h
         }
