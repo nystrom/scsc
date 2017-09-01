@@ -34,11 +34,25 @@ object Main extends REPL {
       val reader = new StringReader(input)
       try {
         val node = new Parser().parse(reader, "(input)", 1)
-        translate(node)
-      } finally {
+        Some(translate(node))
+      }
+      catch {
+        case ex: org.mozilla.javascript.EvaluatorException =>
+          None
+      }
+      finally {
         reader.close()
       }
     }
+  }
+
+  override def processfile(filename: String, config: REPLConfig): REPLConfig = {
+    val s = Parser.fromFile(filename)
+    object SC extends sc.jsai.sc.Supercompiler
+    val result = SC.supercompile(s)
+    config.output().emitln(result)
+    config.output().emitln(sc.util.PPAny.ugly(result))
+    sys.exit(0)
   }
 
   def processline(source: Source, console: Console, config: REPLConfig): Option[REPLConfig] = {
@@ -46,9 +60,12 @@ object Main extends REPL {
     input match {
       case "" =>
       case input =>
-        val t = Parser.fromString(input)
-        config.output().emitln(t)
-        process(source, t, config)
+        Parser.fromString(input) match {
+          case Some(t) =>
+            config.output().emitln(t)
+            process(source, t, config)
+          case None =>
+        }
     }
 
     Some(config)
