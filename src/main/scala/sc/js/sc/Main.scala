@@ -11,6 +11,24 @@ object Main extends REPL {
 
   override val prompt = "\nJSSC> "
 
+  def processExp(e: Exp, config: REPLConfig) {
+    val result = sc.js.sc.JSSC.supercompile(e)
+    config.output().emitln(result)
+    config.output().emitln(PP.pretty(result))
+  }
+
+  override def processfile(filename: String, config: REPLConfig): REPLConfig = {
+    val result = Parser.fromFile(filename)
+    result match {
+      case Some(t) =>
+        config.output().emitln(t)
+        processExp(t, config)
+      case None =>
+        config.output().emitln("could not parse")
+    }
+    sys.exit(0)
+  }
+
   def processline(source: Source, console: Console, config: REPLConfig): Option[REPLConfig] = {
     val input = source.content.trim
     input match {
@@ -30,8 +48,6 @@ object Main extends REPL {
   }
 
   def process(source: Source, e: Exp, config: REPLConfig) {
-    val result = sc.js.sc.JSSC.supercompile(e)
-    config.output().emitln(result)
-    config.output().emitln(PP.pretty(result))
+    processExp(e, config)
   }
 }
