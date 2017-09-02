@@ -46,7 +46,7 @@ trait Supercompiler extends Machine with sc.js.machine.Terms with States with En
             case _ => None
           }
         }
-        
+
         h.tails collectFirst {
           case Generalizes(h) => h
         }
@@ -54,7 +54,7 @@ trait Supercompiler extends Machine with sc.js.machine.Terms with States with En
 
     // Construct a new state from the current history.
     // This is not allowed to fail!
-    // Since states in the history are all equivalent, we can just reutrn
+    // Since states in the history are all equivalent, we can just return
     // any state in the history, but clearly the first (newest) state is best.
     // However, the point is to be able to produce a residual term from
     // the state, so we actually try to convert the history to a Re.
