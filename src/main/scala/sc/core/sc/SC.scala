@@ -93,7 +93,7 @@ trait SC[State] {
 
       case Split(s, h, k) =>
         interp.split(s) match {
-          case Some((first::rest, unsplit)) if ! metaStop =>
+          case Some((first::rest, unsplit)) =>
             println(s"SPLIT SUCCESS: DRIVE")
             Drive(first, Nil, RunSplit(rest, Nil, s, h, unsplit)::k)
           case _ =>
