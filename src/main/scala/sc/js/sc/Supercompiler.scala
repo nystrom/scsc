@@ -20,7 +20,7 @@ trait Supercompiler extends Machine with sc.js.machine.Terms with States with En
     // Check if we should stop driving.
     def whistle(h: History): Boolean = theWhistle.blow(h)
 
-    val theWhistle: Whistle = DepthWhistle(50) | (MightDivergeWhistle & TagbagWhistle)
+    val theWhistle: Whistle = DepthWhistle(100) | (MightDivergeWhistle & TagbagWhistle)
     // val theWhistle: Whistle = DepthWhistle(100) | ((LoopWhistle() | RecursiveCallWhistle()) & HEWhistle())
     // val theWhistle: Whistle = DepthWhistle(100)
     // val theWhistle: Whistle = NoWhistle
