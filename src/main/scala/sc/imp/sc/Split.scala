@@ -158,16 +158,19 @@ trait EvSplit extends SplitArgs {
               def unsplit(children: List[List[State]]): UnsplitResult[State] = {
                 def collect(n: Int) = new {
                   def unapply(ss: List[State]): Option[(List[Exp], Store)] = {
+                    println(s"unapply ss= $ss")
                     val values = ss collect {
                       case Re(e, _, Nil) => e
                     }
+                    println(s"unapply values = $values")
+                    println(s"unapply n = $n")
                     if (values.length == n)
                       Some((values, ss.last.asInstanceOf[Re].σ))
                     else
                       None
                   }
                 }
-                val pat = collect(args.length)
+                val pat = collect(args.length+1)
                 unsplitArgs[UnsplitResult[State]](children)(UnsplitFail()) {
                   case pat(values, σ1) =>
                     UnsplitOk(rebuildEv(Call(fun, values), ρ, σ1, k))
@@ -537,7 +540,26 @@ trait CoSplit extends SplitBranch {
 
   abstract override def cosplit(s: Co): Option[(List[State], Unsplitter[State])] = s match {
     case Co(v, σ, k) =>
+    println(s"cosplit $s")
       k match {
+        case Nil =>
+          // trivial split, just return the same state and then rebuild with it
+          def trivialUnsplit(children: List[List[State]]): UnsplitResult[State] = {
+            val inputs = children collect { case s::_ => s }
+            inputs match {
+              case s::Nil =>
+                UnsplitOk(s)
+              case _ =>
+                UnsplitFail()
+            }
+          }
+
+          println(s"trivial split")
+
+          // convert to a Re to avoid infinite loop
+
+          Some((Re(v, σ, k)::Nil, trivialUnsplit _))
+
         case BranchCont(e1, e2, ρ)::k =>
           splitBranchCont(false, v, ρ, σ, e1, e2, k)
 

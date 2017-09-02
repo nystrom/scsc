@@ -3,7 +3,7 @@ package sc.imp.sc
 trait ReSemantics {
   this: sc.imp.machine.Terms with States with Envs with Stores with sc.imp.machine.Continuations =>
 
-  def rebuild(s: Re): Option[State] = s match {
+  abstract override def rebuild(s: Re): Option[State] = s match {
     case Re(e @ residual, σ, k) => k match {
       case Nil => None
 
