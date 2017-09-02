@@ -57,13 +57,21 @@ trait Whistles[State] {
     }
   }
 
+  val tagThreshold = 10
+
   def tagOf(a: Any): Option[Any] = a match {
-    case n: Int if n > 3 => Some(3)
-    case n: Int if n < -3 => Some(-3)
+    case n: Int if n > tagThreshold => Some(tagThreshold)
+    case n: Int if n < -tagThreshold => Some(-tagThreshold)
     case n: Int => Some(n)
-    case n: Long if n > 3 => Some(3)
-    case n: Long if n < -3 => Some(-3)
+    case n: Long if n > tagThreshold => Some(tagThreshold)
+    case n: Long if n < -tagThreshold => Some(-tagThreshold)
     case n: Long => Some(n)
+    case n: Float if n == n.toInt && n > tagThreshold => Some(tagThreshold)
+    case n: Float if n == n.toInt && n < -tagThreshold => Some(-tagThreshold)
+    case n: Double if n == n.toInt && n > tagThreshold => Some(tagThreshold)
+    case n: Double if n == n.toInt && n < -tagThreshold => Some(-tagThreshold)
+    case n: Float if n == n.toInt => Some(n.toInt)
+    case n: Double if n == n.toInt => Some(n.toInt)
     case n: Float => Some(0.0)
     case n: Double => Some(0.0)
     case n: Char => Some(n)
@@ -127,10 +135,10 @@ $prev < $s
     }
   }
 
-  class FoldWhistle(ws: List[Whistle], f: (Boolean, Boolean) => Boolean) extends Whistle {
+  class FoldWhistle(ws: List[Whistle], z: Boolean, f: (Boolean, Boolean) => Boolean) extends Whistle {
     def blow(h: History) = {
       ws match {
-        case Nil => false
+        case Nil => z
         case w::ws =>
           println(s"Whistle $w says ${w.blow(h)}")
           ws.foldLeft(w.blow(h)) {
@@ -142,6 +150,6 @@ $prev < $s
     }
   }
 
-  case class AllWhistle(ws: List[Whistle]) extends FoldWhistle(ws, _ && _)
-  case class AnyWhistle(ws: List[Whistle]) extends FoldWhistle(ws, _ || _)
+  case class AllWhistle(ws: List[Whistle]) extends FoldWhistle(ws, true, _ && _)
+  case class AnyWhistle(ws: List[Whistle]) extends FoldWhistle(ws, false, _ || _)
 }
