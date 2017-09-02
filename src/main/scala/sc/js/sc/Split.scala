@@ -103,7 +103,7 @@ trait CoSplit extends imp.CoSplit {
           }
 
         case k =>
-          None
+          super.cosplit(s)
       }
     }
 }
