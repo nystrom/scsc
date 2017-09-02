@@ -3,6 +3,20 @@ package sc.imp.sc
 trait ReSemantics {
   this: sc.imp.machine.Terms with States with Envs with Stores with sc.imp.machine.Continuations =>
 
+  def reify(e: Exp) = {
+    import org.bitbucket.inkytonik.kiama.rewriting.Rewriter._
+
+    lazy val fixPaths = rule[Exp] {
+      case Path(_, path) => path
+      case e => e
+    }
+
+    fixPaths(e) match {
+      case Some(e: Exp) => e
+      case _ => e
+    }
+  }
+
   abstract override def rebuild(s: Re): Option[State] = s match {
     case Re(e @ residual, σ, k) => k match {
       case Nil => None
@@ -13,11 +27,11 @@ trait ReSemantics {
       // here. Instead, return None, this will cause the
       // us to get stuck and we'll split.
       case BranchCont(t, f, ρ)::k => Some {
-        Re(IfElse(e, t, f), σ, k)
+        Re(IfElse(e, reify(t), reify(f)), σ, k)
       }
 
       case CondBranchCont(t, f, ρ)::k => Some {
-        Re(Cond(e, t, f), σ, k)
+        Re(Cond(e, reify(t), reify(f)), σ, k)
       }
 
       case PopScope(defs)::k => Some {
@@ -50,7 +64,7 @@ trait ReSemantics {
 
       // Change the focus
       case FocusCont(v2)::k => Some {
-        Re(Seq(e, v2), σ, k)
+        Re(Seq(e, reify(v2)), σ, k)
       }
 
       ////////////////////////////////////////////////////////////////
@@ -63,7 +77,7 @@ trait ReSemantics {
 
       case DoAssign(op, lhs, ρ1)::k => Some {
         // Normal assignment... the result is the rhs value
-        Re(Assign(op, lhs, e), σ, k)
+        Re(Assign(op, reify(lhs), e), σ, k)
       }
 
       case DoIncDec(op, ρ1)::k => Some {
@@ -79,7 +93,7 @@ trait ReSemantics {
       }
 
       case DoBinaryOp(op, v1, ρ1)::k => Some {
-        Re(Binary(op, v1, e), σ, k)
+        Re(Binary(op, reify(v1), e), σ, k)
       }
 
       ////////////////////////////////////////////////////////////////
@@ -105,11 +119,11 @@ trait ReSemantics {
         val operands = done ++ (e::args)
         op match {
           case Nary.InitObject =>
-            Some(Re(ObjectLit(operands), σ, k))
+            Some(Re(ObjectLit(operands map reify), σ, k))
           case Nary.InitArray =>
-            Some(Re(ArrayLit(operands), σ, k))
+            Some(Re(ArrayLit(operands map reify), σ, k))
           case Nary.Call =>
-            val fun::args = operands
+            val fun::args = operands map reify
             Some(Re(Call(fun, args), σ, k))
           case _ =>
             None
