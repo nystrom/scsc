@@ -31,12 +31,12 @@ trait ReSemantics {
       // discard useless break and continue frames
       // but wrap in a useless loop so that residual
       // breaks and continues still work.
-      case BreakFrame(_)::k => Some {
-        Re(e, σ, k)
+      case BreakFrame(label)::k => Some {
+        Re(DoWhile(label, e, BooleanLit(false)), σ, k)
       }
 
-      case ContinueFrame(_)::k => Some {
-        Re(e, σ, k)
+      case ContinueFrame(label)::k => Some {
+        Re(DoWhile(label, e, BooleanLit(false)), σ, k)
       }
 
       ////////////////////////////////////////////////////////////////
