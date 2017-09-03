@@ -19,6 +19,10 @@ residualization of loops, functions, and exceptions.
 
 In a CESK interpreter, the interpreter state is given by a 4-tuple:
 (control, environment, store, kontinuation [sic])~\cite{cesk}.
+Unlike with Felleisen and Friedman's CESK machine, continuations
+are not stored in the store. This simplifies the rewrite rules
+somewhat at the cost of not supporting
+first-class continuations. 
 We implement the interpreter using
 ``apply, eval, continue'' style of Danvy~\cite{danvy}.
 An eval state $\c{Ev}(e, \rho, \sigma, k)$
@@ -34,7 +38,7 @@ operation.
 Our implementation treats apply states (which apply operations)
 as a special case of continue states.
 
-For example, the evaluate the assignment \c{x = 1+2}, the interpreter goes through the following
+For example, to evaluate the assignment \c{x = 1+2}, the interpreter goes through the following
 states:
 \begin{align*}
 & \c{Ev}(\c{x = 1+2}, \rho, \sigma, \bullet) \\ 
@@ -215,10 +219,9 @@ Values include memory locations $\ell$.
 \subsection{Driving}
 
 The operational semantics of the language are given in Figure~\ref{fig:imp-cesk}.
-As described above, machine states are either \c{Ev} or \c{Co} states.
-Unlike with Felleisen and Friedman's CESK machine, continuations
-are not stored in the store (because the language does not support first-class
-continuations). 
+As described above, machine states are either \c{Ev} or \c{Co} states
+and first-class continuations are not supported, unlike in 
+Felleisen and Friedman's CESK machine~\cite{cesk}.
 The rules are largely standard.
 The \c{var} epxression allocates a location and
 adds \c{x} to the scope (rule \textsc{Ev-let}).

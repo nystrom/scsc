@@ -108,12 +108,12 @@ evaluated and $k$ is the continuation of the expression.
 The initial state of the evaluation is the pair of the expression and the
 empty continuation:
   \[
-    \c{map(_ + 1, zs)};~k = \bullet
+    \c{map(\_+1, zs)};~k = \bullet
   \]
 Since the list argument is statically unknown, 
 we pass an \emph{abstract value} into the 
 \c{map} function.
-To keep the presentation simple, we substitute the actual arguemnts for the
+To keep the presentation simple, we substitute the actual arguments for the
 formal parameters.
   \[
     \begin{array}{l}
@@ -126,7 +126,7 @@ The body of \c{map}
 performs a pattern match on the abstract value \c{zs}).
 However, since \c{zs} is not statically known, the evaluator has reached an impasse.
 Here the supercompiler steps in and 
-\emph{splits} the evaluation state into two: oone where \c{zs} is \c{Nil}, the
+\emph{splits} the evaluation state into two: one where \c{zs} is \c{Nil}, the
 other where it is not.
 
 Assuming \c{zs} is \c{Nil}, we arrive immediately in this state:
@@ -246,9 +246,9 @@ If both \c{step} and \c{split} fail, the supercompiler calls \c{rollback}.
 This takes the history of states the supercompiler executed (up to the
 previous split), and returns a new history, which replaces the old.
 This Orwellian rewriting of history is needed by some interpreter
-implementations to help construct residuals program in later states.
+implementations to help construct residual programs in later states.
 
-The \c{fold} method attempt to fold the current state (the last
+The \c{fold} method attempts to fold the current state (the last
 state in the history) with a previous state. A new generalized state
 is returned. Fold is called before each attempt to \c{step}.
 
@@ -257,7 +257,7 @@ of a history.
 If it returns \c{true} (``the whistle blows''), the supercompiler stops driving as if \c{step}
 returned \c{None}. Our framework provides several whistle implementations
 that can be used by the interpreter. Different whistle implementations are
-a topic of ongoing research.
+a topic of ongoing research~\cite{whistles64}.
 
 \begin{figure*}
   \begin{verbatim}
@@ -282,7 +282,7 @@ trait Interpreter[State] {
   def whistle(h: History): Boolean
 }
   \end{verbatim}
-  \caption{Interprter trait}
+  \caption{Interpreter trait}
   \label{fig:interpreter}
 \end{figure*}
 
